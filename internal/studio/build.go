@@ -52,6 +52,7 @@ type Builder struct {
 	sdk       string
 	goCommand string
 	slot      chan struct{}
+	hosted    bool
 }
 
 // NewBuilder accepts the trusted SDK location chosen by the operator, never by a graph.
@@ -110,6 +111,9 @@ func (b *Builder) buildProgram(ctx context.Context, wf workflow.Workflow, raw []
 	}
 	defer os.RemoveAll(dir)
 	env := buildEnv()
+	if b.hosted {
+		env = append(env, "GOMAXPROCS=2")
+	}
 	version := exec.CommandContext(ctx, b.goCommand, "env", "GOVERSION")
 	version.Env = env
 	version.Dir = dir
@@ -126,7 +130,11 @@ func (b *Builder) buildProgram(ctx context.Context, wf workflow.Workflow, raw []
 			return nil, err
 		}
 	}
-	command := exec.CommandContext(ctx, b.goCommand, "build", "-mod=readonly", "-buildvcs=false", "-trimpath", "-ldflags=-s -w", "-o", "program.wasm", ".")
+	args := []string{"build", "-mod=readonly", "-buildvcs=false", "-trimpath", "-ldflags=-s -w", "-o", "program.wasm"}
+	if b.hosted {
+		args = append(args, "-p=2")
+	}
+	command := exec.CommandContext(ctx, b.goCommand, append(args, ".")...)
 	command.Dir, command.Env = dir, env
 	configureBuildProcess(command)
 	output := &boundedOutput{limit: 64 << 10}

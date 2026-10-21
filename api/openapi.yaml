@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.23"
+  version: "1.24"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Run reads require ownership, operator authority or explicit community sharing to a current member; payment orders and run mutations remain owner-scoped. A hidden resource answers 404. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -8422,6 +8422,750 @@ paths:
             "application/json":
               "schema":
                 "$ref": "#/components/schemas/Error"
+  "/studio/catalog":
+    "get":
+      "operationId": "getStudioCatalog"
+      "summary": "Read the hosted workflow primitive catalog."
+      "description": "Scoped API credentials require measurements:read for the catalog and measurements:write for validation or builds. Added in API 1.24. Requires an authenticated account, including in local development; a signed-in browser session does not need an account key. Cookie-authenticated POST requests require X-Debuglet-CSRF. POST operations use existing account request admission and allow at most one in-flight request per account and four across the dispatcher; the worker builds at most one bundle at a time. Excess work is refused promptly with 429 and Retry-After: 1, without queueing. Hosted compilation is optional and returns 503 when disabled or unavailable. Requests are forwarded only to the configured local compiler socket, without credentials or cookies. Responses are limited to 33554432 bytes. Cancellation and deadlines stop the compiler request. The worker operation deadline is six minutes; the dispatcher transport deadline is six minutes and ten seconds."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+      "responses":
+        "200":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioCatalog"
+        "400":
+          "description": "Malformed source, unexpected query or body, invalid request, or unsupported API version."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "401":
+          "description": "An authenticated account is required."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "Session CSRF proof is missing or invalid, or the credential does not permit this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The encoded request exceeds the operation body limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "429":
+          "description": "Account request admission or bounded compiler capacity is exhausted; retry later."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+            "Retry-After":
+              "description": "Suggested seconds before retrying when capacity or request admission is exhausted."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "500":
+          "description": "The dispatcher could not complete request admission."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "502":
+          "description": "The compiler response was invalid, incomplete, or larger than 33554432 bytes."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "503":
+          "description": "Hosted compilation is disabled or the configured compiler is unavailable."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "504":
+          "description": "The compiler request exceeded its deadline."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  "/studio/validate":
+    "post":
+      "operationId": "validateStudioWorkflow"
+      "summary": "Validate a workflow with the hosted compiler."
+      "description": "Scoped API credentials require measurements:read for the catalog and measurements:write for validation or builds. Added in API 1.24. Requires an authenticated account, including in local development; a signed-in browser session does not need an account key. Cookie-authenticated POST requests require X-Debuglet-CSRF. POST operations use existing account request admission and allow at most one in-flight request per account and four across the dispatcher; the worker builds at most one bundle at a time. Excess work is refused promptly with 429 and Retry-After: 1, without queueing. Hosted compilation is optional and returns 503 when disabled or unavailable. Requests are forwarded only to the configured local compiler socket, without credentials or cookies. Responses are limited to 33554432 bytes. Cancellation and deadlines stop the compiler request. The worker operation deadline is six minutes; the dispatcher transport deadline is six minutes and ten seconds. Accepts one application/json object, at most 1048576 bytes. Validation returns 200 with diagnostics even for semantically invalid source; build returns 422 for invalid source or a compilation failure. A build neither submits nor executes guest code."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "X-Debuglet-CSRF"
+          "in": "header"
+          "required": false
+          "description": "Required for cookie-authenticated POST requests; repeat the session CSRF token."
+          "schema":
+            "type": "string"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/StudioWorkflow"
+      "responses":
+        "200":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioValidation"
+        "400":
+          "description": "Malformed source, unexpected query or body, invalid request, or unsupported API version."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "401":
+          "description": "An authenticated account is required."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "Session CSRF proof is missing or invalid, or the credential does not permit this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The encoded request exceeds the operation body limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "415":
+          "description": "Content-Type must be application/json."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "429":
+          "description": "Account request admission or bounded compiler capacity is exhausted; retry later."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+            "Retry-After":
+              "description": "Suggested seconds before retrying when capacity or request admission is exhausted."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "500":
+          "description": "The dispatcher could not complete request admission."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "502":
+          "description": "The compiler response was invalid, incomplete, or larger than 33554432 bytes."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "503":
+          "description": "Hosted compilation is disabled or the configured compiler is unavailable."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "504":
+          "description": "The compiler request exceeded its deadline."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  "/studio/build":
+    "post":
+      "operationId": "buildStudioWorkflow"
+      "summary": "Compile a workflow into a portable bundle."
+      "description": "Scoped API credentials require measurements:read for the catalog and measurements:write for validation or builds. Added in API 1.24. Requires an authenticated account, including in local development; a signed-in browser session does not need an account key. Cookie-authenticated POST requests require X-Debuglet-CSRF. POST operations use existing account request admission and allow at most one in-flight request per account and four across the dispatcher; the worker builds at most one bundle at a time. Excess work is refused promptly with 429 and Retry-After: 1, without queueing. Hosted compilation is optional and returns 503 when disabled or unavailable. Requests are forwarded only to the configured local compiler socket, without credentials or cookies. Responses are limited to 33554432 bytes. Cancellation and deadlines stop the compiler request. The worker operation deadline is six minutes; the dispatcher transport deadline is six minutes and ten seconds. Accepts one application/json object, at most 1048576 bytes. Validation returns 200 with diagnostics even for semantically invalid source; build returns 422 for invalid source or a compilation failure. A build neither submits nor executes guest code."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "X-Debuglet-CSRF"
+          "in": "header"
+          "required": false
+          "description": "Required for cookie-authenticated POST requests; repeat the session CSRF token."
+          "schema":
+            "type": "string"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/StudioWorkflow"
+      "responses":
+        "200":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioBundle"
+        "400":
+          "description": "Malformed source, unexpected query or body, invalid request, or unsupported API version."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "401":
+          "description": "An authenticated account is required."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "Session CSRF proof is missing or invalid, or the credential does not permit this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The encoded request exceeds the operation body limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "415":
+          "description": "Content-Type must be application/json."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "422":
+          "description": "The source cannot be compiled. Validation diagnostics are included when available."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioError"
+        "429":
+          "description": "Account request admission or bounded compiler capacity is exhausted; retry later."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+            "Retry-After":
+              "description": "Suggested seconds before retrying when capacity or request admission is exhausted."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "500":
+          "description": "The dispatcher could not complete request admission."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "502":
+          "description": "The compiler response was invalid, incomplete, or larger than 33554432 bytes."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "503":
+          "description": "Hosted compilation is disabled or the configured compiler is unavailable."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "504":
+          "description": "The compiler request exceeded its deadline."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  "/studio/experiments/validate":
+    "post":
+      "operationId": "validateStudioExperiment"
+      "summary": "Validate coordinated experiment source."
+      "description": "Scoped API credentials require measurements:read for the catalog and measurements:write for validation or builds. Added in API 1.24. Requires an authenticated account, including in local development; a signed-in browser session does not need an account key. Cookie-authenticated POST requests require X-Debuglet-CSRF. POST operations use existing account request admission and allow at most one in-flight request per account and four across the dispatcher; the worker builds at most one bundle at a time. Excess work is refused promptly with 429 and Retry-After: 1, without queueing. Hosted compilation is optional and returns 503 when disabled or unavailable. Requests are forwarded only to the configured local compiler socket, without credentials or cookies. Responses are limited to 33554432 bytes. Cancellation and deadlines stop the compiler request. The worker operation deadline is six minutes; the dispatcher transport deadline is six minutes and ten seconds. Accepts one application/json object, at most 4194304 bytes. Validation returns 200 with diagnostics even for semantically invalid source; build returns 422 for invalid source or a compilation failure. A build neither submits nor executes guest code."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "X-Debuglet-CSRF"
+          "in": "header"
+          "required": false
+          "description": "Required for cookie-authenticated POST requests; repeat the session CSRF token."
+          "schema":
+            "type": "string"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/StudioExperiment"
+      "responses":
+        "200":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioExperimentValidation"
+        "400":
+          "description": "Malformed source, unexpected query or body, invalid request, or unsupported API version."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "401":
+          "description": "An authenticated account is required."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "Session CSRF proof is missing or invalid, or the credential does not permit this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The encoded request exceeds the operation body limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "415":
+          "description": "Content-Type must be application/json."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "429":
+          "description": "Account request admission or bounded compiler capacity is exhausted; retry later."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+            "Retry-After":
+              "description": "Suggested seconds before retrying when capacity or request admission is exhausted."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "500":
+          "description": "The dispatcher could not complete request admission."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "502":
+          "description": "The compiler response was invalid, incomplete, or larger than 33554432 bytes."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "503":
+          "description": "Hosted compilation is disabled or the configured compiler is unavailable."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "504":
+          "description": "The compiler request exceeded its deadline."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  "/studio/experiments/build":
+    "post":
+      "operationId": "buildStudioExperiment"
+      "summary": "Compile coordinated participant workflows."
+      "description": "Scoped API credentials require measurements:read for the catalog and measurements:write for validation or builds. Added in API 1.24. Requires an authenticated account, including in local development; a signed-in browser session does not need an account key. Cookie-authenticated POST requests require X-Debuglet-CSRF. POST operations use existing account request admission and allow at most one in-flight request per account and four across the dispatcher; the worker builds at most one bundle at a time. Excess work is refused promptly with 429 and Retry-After: 1, without queueing. Hosted compilation is optional and returns 503 when disabled or unavailable. Requests are forwarded only to the configured local compiler socket, without credentials or cookies. Responses are limited to 33554432 bytes. Cancellation and deadlines stop the compiler request. The worker operation deadline is six minutes; the dispatcher transport deadline is six minutes and ten seconds. Accepts one application/json object, at most 4194304 bytes. Validation returns 200 with diagnostics even for semantically invalid source; build returns 422 for invalid source or a compilation failure. A build neither submits nor executes guest code."
+      "parameters":
+        - "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        - "name": "X-Debuglet-CSRF"
+          "in": "header"
+          "required": false
+          "description": "Required for cookie-authenticated POST requests; repeat the session CSRF token."
+          "schema":
+            "type": "string"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/StudioExperiment"
+      "responses":
+        "200":
+          "description": "Request completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioExperimentBundle"
+        "400":
+          "description": "Malformed source, unexpected query or body, invalid request, or unsupported API version."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "401":
+          "description": "An authenticated account is required."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "Session CSRF proof is missing or invalid, or the credential does not permit this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The encoded request exceeds the operation body limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "415":
+          "description": "Content-Type must be application/json."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "422":
+          "description": "The source cannot be compiled. Validation diagnostics are included when available."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioError"
+        "429":
+          "description": "Account request admission or bounded compiler capacity is exhausted; retry later."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+            "Retry-After":
+              "description": "Suggested seconds before retrying when capacity or request admission is exhausted."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "500":
+          "description": "The dispatcher could not complete request admission."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "502":
+          "description": "The compiler response was invalid, incomplete, or larger than 33554432 bytes."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "503":
+          "description": "Hosted compilation is disabled or the configured compiler is unavailable."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/StudioFailure"
+        "504":
+          "description": "The compiler request exceeded its deadline."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
 components:
   securitySchemes:
     bearerAuth:
@@ -8908,7 +9652,7 @@ components:
           $ref: "#/components/schemas/IssuedCredential"
     Error:
       type: "object"
-      description: "Error envelope of every failure. Branch on code; message is a bounded diagnostic for a human and must not be parsed. A minor version may add codes, so treat an unknown code as a plain failure of the status it arrived with."
+      description: "Dispatcher error envelope. Studio compiler failures may instead use StudioError as documented on those operations. Branch on code; message is a bounded diagnostic for a human and must not be parsed. A minor version may add codes, so treat an unknown code as a plain failure of the status it arrived with."
       additionalProperties: false
       required:
         - "code"
@@ -12649,3 +13393,449 @@ components:
         "refund_address":
           "type": "string"
           "description": "Sui address controlled by the owner; 0x followed by 1 to 64 hexadecimal digits."
+
+    "StudioValue":
+      "oneOf":
+        - "type": "string"
+        - "type": "number"
+        - "type": "boolean"
+        - "type": "object"
+          "additionalProperties": true
+          "nullable": true
+        - "type": "array"
+          "items":
+            "$ref": "#/components/schemas/StudioValue"
+    "StudioPosition":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "x"
+        - "y"
+      "properties":
+        "x":
+          "type": "number"
+        "y":
+          "type": "number"
+    "StudioEndpoint":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "node"
+        - "port"
+      "properties":
+        "node":
+          "type": "string"
+        "port":
+          "type": "string"
+    "StudioEdge":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "kind"
+        - "from"
+        - "to"
+      "properties":
+        "kind":
+          "type": "string"
+        "from":
+          "$ref": "#/components/schemas/StudioEndpoint"
+        "to":
+          "$ref": "#/components/schemas/StudioEndpoint"
+    "StudioNode":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "id"
+        - "block"
+      "properties":
+        "id":
+          "type": "string"
+        "block":
+          "type": "string"
+        "inputs":
+          "type": "object"
+          "additionalProperties": true
+          "description": "Named input values; each may contain arbitrary JSON. Block and port types are checked by validation."
+        "position":
+          "$ref": "#/components/schemas/StudioPosition"
+    "StudioPort":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "name"
+        - "type"
+      "properties":
+        "name":
+          "type": "string"
+        "type":
+          "type": "string"
+        "required":
+          "type": "boolean"
+        "default":
+          "$ref": "#/components/schemas/StudioValue"
+    "StudioBlock":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "id"
+        - "label"
+        - "category"
+        - "description"
+        - "pure"
+        - "inputs"
+        - "outputs"
+        - "control_outputs"
+      "properties":
+        "id":
+          "type": "string"
+        "label":
+          "type": "string"
+        "category":
+          "type": "string"
+        "description":
+          "type": "string"
+        "pure":
+          "type": "boolean"
+        "inputs":
+          "type": "array"
+          "items":
+            "$ref": "#/components/schemas/StudioPort"
+        "outputs":
+          "type": "array"
+          "items":
+            "$ref": "#/components/schemas/StudioPort"
+        "control_outputs":
+          "type": "array"
+          "items":
+            "type": "string"
+    "StudioCatalog":
+      "type": "array"
+      "items":
+        "$ref": "#/components/schemas/StudioBlock"
+      "description": "Built-in workflow primitives available in this compiler version."
+    "StudioCustomBlock":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "id"
+        - "label"
+        - "inputs"
+        - "outputs"
+        - "code"
+      "properties":
+        "id":
+          "type": "string"
+        "label":
+          "type": "string"
+        "inputs":
+          "type": "array"
+          "items":
+            "$ref": "#/components/schemas/StudioPort"
+          "nullable": true
+        "outputs":
+          "type": "array"
+          "items":
+            "$ref": "#/components/schemas/StudioPort"
+          "nullable": true
+        "code":
+          "type": "string"
+          "description": "Go function body compiled into the guest; it is not executed during a build."
+    "StudioGroup":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "id"
+        - "label"
+        - "node_ids"
+      "properties":
+        "id":
+          "type": "string"
+        "label":
+          "type": "string"
+        "node_ids":
+          "type": "array"
+          "items":
+            "type": "string"
+        "position":
+          "$ref": "#/components/schemas/StudioPosition"
+    "StudioChannel":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "id"
+        - "from"
+        - "to"
+        - "type"
+      "properties":
+        "id":
+          "type": "string"
+        "from":
+          "type": "string"
+        "to":
+          "type": "string"
+        "type":
+          "type": "string"
+        "response_type":
+          "type": "string"
+    "StudioExperimentContext":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "participant"
+        - "fingerprint"
+        - "participants"
+        - "channels"
+      "properties":
+        "participant":
+          "type": "string"
+        "fingerprint":
+          "type": "string"
+        "participants":
+          "type": "array"
+          "items":
+            "type": "string"
+        "channels":
+          "type": "array"
+          "items":
+            "$ref": "#/components/schemas/StudioChannel"
+          "nullable": true
+      "description": "Participant context injected by the experiment builder. Source participants must omit it; it does not grant executor or network permissions."
+    "StudioWorkflow":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "version"
+        - "name"
+        - "entry"
+        - "nodes"
+        - "edges"
+      "properties":
+        "version":
+          "type": "integer"
+          "description": "Current workflow format is version 1; unsupported versions produce validation diagnostics."
+        "experiment":
+          "$ref": "#/components/schemas/StudioExperimentContext"
+        "name":
+          "type": "string"
+        "entry":
+          "type": "string"
+        "nodes":
+          "type": "array"
+          "items":
+            "$ref": "#/components/schemas/StudioNode"
+          "nullable": true
+        "edges":
+          "type": "array"
+          "items":
+            "$ref": "#/components/schemas/StudioEdge"
+          "nullable": true
+        "custom_blocks":
+          "type": "array"
+          "items":
+            "$ref": "#/components/schemas/StudioCustomBlock"
+        "groups":
+          "type": "array"
+          "items":
+            "$ref": "#/components/schemas/StudioGroup"
+      "description": "Portable workflow source. Semantic errors are returned as diagnostics. Unknown JSON fields are rejected. Maximum encoded request size is 1048576 bytes."
+    "StudioParticipant":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "id"
+        - "workflow"
+      "properties":
+        "id":
+          "type": "string"
+        "label":
+          "type": "string"
+        "workflow":
+          "$ref": "#/components/schemas/StudioWorkflow"
+    "StudioExperiment":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "version"
+        - "kind"
+        - "name"
+        - "participants"
+        - "channels"
+      "properties":
+        "version":
+          "type": "integer"
+          "description": "Current experiment format is version 1."
+        "kind":
+          "type": "string"
+          "description": "Current source kind is experiment."
+        "name":
+          "type": "string"
+        "participants":
+          "type": "array"
+          "items":
+            "$ref": "#/components/schemas/StudioParticipant"
+          "nullable": true
+        "channels":
+          "type": "array"
+          "items":
+            "$ref": "#/components/schemas/StudioChannel"
+          "nullable": true
+      "description": "Two or three coordinated workflow participants with declared message channels. Maximum encoded request size is 4194304 bytes; each participant workflow remains bounded to 1048576 bytes. Unsupported version, kind and participant arrangements produce diagnostics."
+    "StudioDiagnostic":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "message"
+      "properties":
+        "node":
+          "type": "string"
+        "port":
+          "type": "string"
+        "message":
+          "type": "string"
+    "StudioExperimentDiagnostic":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "message"
+      "properties":
+        "participant":
+          "type": "string"
+        "node":
+          "type": "string"
+        "port":
+          "type": "string"
+        "message":
+          "type": "string"
+    "StudioValidation":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "diagnostics"
+      "properties":
+        "diagnostics":
+          "type": "array"
+          "items":
+            "$ref": "#/components/schemas/StudioDiagnostic"
+    "StudioExperimentValidation":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "diagnostics"
+      "properties":
+        "diagnostics":
+          "type": "array"
+          "items":
+            "$ref": "#/components/schemas/StudioExperimentDiagnostic"
+    "StudioError":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "error"
+      "properties":
+        "error":
+          "type": "string"
+        "diagnostics":
+          "type": "array"
+          "items":
+            "$ref": "#/components/schemas/StudioExperimentDiagnostic"
+      "description": "Compiler failure. Validation errors include structured diagnostics; transport, authentication and admission failures use the dispatcher Error envelope."
+    "StudioFailure":
+      "oneOf":
+        - "$ref": "#/components/schemas/Error"
+        - "$ref": "#/components/schemas/StudioError"
+    "StudioBundle":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "version"
+        - "workflow"
+        - "workflow_json"
+        - "source"
+        - "workflow_sha256"
+        - "wasm_sha256"
+        - "wasm"
+        - "destinations"
+        - "require_icmp"
+      "properties":
+        "version":
+          "type": "integer"
+          "enum":
+            - 1
+        "workflow":
+          "$ref": "#/components/schemas/StudioWorkflow"
+        "workflow_json":
+          "type": "string"
+        "source":
+          "type": "string"
+        "workflow_sha256":
+          "type": "string"
+          "pattern": "^[0-9a-f]{64}$"
+        "wasm_sha256":
+          "type": "string"
+          "pattern": "^[0-9a-f]{64}$"
+        "wasm":
+          "type": "string"
+          "format": "byte"
+        "destinations":
+          "type": "array"
+          "items":
+            "type": "string"
+          "nullable": true
+        "require_icmp":
+          "type": "boolean"
+      "description": "Compiled workflow bundle, including canonical source and base64-encoded WASM. Digests are SHA-256. Building does not submit or execute the guest; executor selection and policy are separate submission choices."
+    "StudioParticipantBundle":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "id"
+        - "bundle"
+      "properties":
+        "id":
+          "type": "string"
+        "label":
+          "type": "string"
+        "bundle":
+          "$ref": "#/components/schemas/StudioBundle"
+    "StudioExperimentBundle":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "version"
+        - "kind"
+        - "experiment"
+        - "experiment_json"
+        - "experiment_sha256"
+        - "participants"
+        - "require_tcp_listener"
+        - "program_bytes"
+        - "encoded_program_bytes"
+      "properties":
+        "version":
+          "type": "integer"
+          "enum":
+            - 1
+        "kind":
+          "type": "string"
+          "enum":
+            - "experiment_bundle"
+        "experiment":
+          "$ref": "#/components/schemas/StudioExperiment"
+        "experiment_json":
+          "type": "string"
+        "experiment_sha256":
+          "type": "string"
+          "pattern": "^[0-9a-f]{64}$"
+        "participants":
+          "type": "array"
+          "items":
+            "$ref": "#/components/schemas/StudioParticipantBundle"
+        "require_tcp_listener":
+          "type": "boolean"
+        "program_bytes":
+          "type": "integer"
+          "minimum": 0
+        "encoded_program_bytes":
+          "type": "integer"
+          "minimum": 0
+      "description": "Compiled coordinated experiment bundle, at most 33554432 bytes. Program byte counts describe raw and base64-encoded participant WASM. Building does not submit or execute participants."

@@ -564,6 +564,7 @@ func startHTTPServer(ctx context.Context, lis net.Listener, manager *dispatcher.
 		return proxyErr
 	}
 	handler := api.NewHandler(manager, db, logger,
+		api.Studio(cfg.Studio),
 		api.ExecutorOnboarding(cfg.ExecutorOnboarding, issuer),
 		api.AttributionTrustedProxies(trustedProxies),
 		api.MetricsStateDirectory(filepath.Dir(cfg.Database.Path)),

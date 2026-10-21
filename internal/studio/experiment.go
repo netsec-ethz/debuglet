@@ -11,8 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime"
-	"net/http"
 
 	"github.com/netsec-ethz/debuglet/pkg/workflow"
 )
@@ -115,46 +113,4 @@ func (b *Builder) BuildExperiment(ctx context.Context, e workflow.Experiment) (*
 		return nil, errors.New("compiled experiment bundle exceeds 32 MiB")
 	}
 	return result, nil
-}
-
-func experimentRoutes(mux *http.ServeMux, builder *Builder, token string) {
-	handler := func(build bool) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			if r.Header.Get("X-Studio-Token") != token {
-				writeError(w, 403, errors.New("open the studio page again to obtain its session token"))
-				return
-			}
-			content, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-			if err != nil || content != "application/json" {
-				writeError(w, 415, errors.New("Content-Type must be application/json"))
-				return
-			}
-			r.Body = http.MaxBytesReader(w, r.Body, MaxExperimentBytes)
-			e, err := DecodeExperiment(r.Body)
-			if err != nil {
-				writeError(w, 400, err)
-				return
-			}
-			if !build {
-				ds := workflow.ValidateExperiment(e)
-				if ds == nil {
-					ds = []workflow.ExperimentDiagnostic{}
-				}
-				writeJSON(w, 200, map[string]any{"diagnostics": ds})
-				return
-			}
-			if builder == nil {
-				writeError(w, 503, errors.New("compiler unavailable; configure --sdk"))
-				return
-			}
-			bundle, err := builder.BuildExperiment(r.Context(), e)
-			if err != nil {
-				writeError(w, 422, err)
-				return
-			}
-			writeJSON(w, 200, bundle)
-		}
-	}
-	mux.HandleFunc("POST /studio/api/experiments/validate", handler(false))
-	mux.HandleFunc("POST /studio/api/experiments/build", handler(true))
 }

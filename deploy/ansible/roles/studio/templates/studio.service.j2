@@ -1,0 +1,64 @@
+[Unit]
+Description=Debuglet hosted workflow compiler
+After=local-fs.target
+
+[Service]
+Type=simple
+User={{ studio_user }}
+Group={{ studio_socket_group }}
+RuntimeDirectory={{ studio_runtime_directory }}
+RuntimeDirectoryMode=0750
+# Only the verified compiler inputs and this socket directory are visible.
+RootDirectory={{ studio_prefix }}/{{ studio_source_sha }}
+MountAPIVFS=yes
+BindPaths=/run/{{ studio_runtime_directory }}:/run/studio
+TemporaryFileSystem=/tmp:rw,nosuid,nodev,noexec,size={{ studio_temporary_bytes }},mode=1777
+WorkingDirectory=/tmp
+Environment=PATH=/go/bin
+Environment=HOME=/tmp
+Environment=TMPDIR=/tmp
+Environment=GOCACHE=/tmp/gocache
+Environment=GOMODCACHE=/modules
+Environment=GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOENV=off GOWORK=off
+ExecStart=/bin/dbl-studio worker --socket /run/studio/build.sock --sdk /sdk
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=5
+KillMode=control-group
+UMask=0007
+
+# Build timeout/cancellation is enforced by the worker for every request.
+# cgroup bounds include the compiler and its children; tmpfs is an aggregate
+# bound on temporary files and the compiler cache, including failed builds.
+CPUQuota={{ studio_cpu_quota }}
+MemoryHigh={{ studio_memory_high }}
+MemoryMax={{ studio_memory_max }}
+MemorySwapMax=0
+TasksMax={{ studio_tasks_max }}
+LimitNOFILE=1024
+LimitCORE=0
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+ProtectSystem=strict
+ReadWritePaths=/tmp /run/studio
+ProtectHome=yes
+ProtectProc=invisible
+ProcSubset=pid
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier={{ studio_service_name }}
+
+[Install]
+WantedBy=multi-user.target

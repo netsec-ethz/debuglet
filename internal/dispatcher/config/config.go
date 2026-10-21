@@ -29,6 +29,7 @@ type DispatcherConfig struct {
 	ExecutorOnboarding ExecutorOnboardingConfig `toml:"executor_onboarding"`
 	Attribution        AttributionConfig        `toml:"attribution"`
 	Allowance          AllowanceConfig          `toml:"allowance"`
+	Studio             StudioConfig             `toml:"studio"`
 	// Executors holds optional operator display metadata by executor ID.
 	Executors map[string]ExecutorDisplay `toml:"executors"`
 	Metadata  MetadataConfig             `toml:"metadata"`
@@ -179,6 +180,9 @@ func DecodeConfig(data []byte) (*DispatcherConfig, configcheck.Document, error) 
 // keys are applied by LoadConfig before this runs, so every value seen here is
 // the one the daemon would actually use.
 func (cfg *DispatcherConfig) Validate() error {
+	if err := cfg.Studio.Validate(); err != nil {
+		return err
+	}
 	if err := cfg.Egress.Validate(); err != nil {
 		return err
 	}

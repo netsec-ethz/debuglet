@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 ETH Zurich
 
-// Command dbl-studio edits and compiles visual measurement workflows locally.
+// Command dbl-studio edits and compiles visual measurement workflows.
 package main
 
 import (
@@ -30,11 +30,11 @@ func main() {
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: dbl-studio catalog|validate|build|validate-experiment|build-experiment|serve|mcp [options]")
+		return errors.New("usage: dbl-studio catalog|validate|build|validate-experiment|build-experiment|serve|worker|mcp [options]")
 	}
 	command := args[0]
 	if command == "--help" || command == "-h" || command == "help" {
-		_, err := fmt.Fprintln(stdout, "usage: dbl-studio catalog|validate|build|validate-experiment|build-experiment|serve|mcp [options]\nUse <command> -h for options.")
+		_, err := fmt.Fprintln(stdout, "usage: dbl-studio catalog|validate|build|validate-experiment|build-experiment|serve|worker|mcp [options]\nUse <command> -h for options.")
 		return err
 	}
 	flags := flag.NewFlagSet("dbl-studio "+command, flag.ContinueOnError)
@@ -47,6 +47,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	dispatcher := flags.String("dispatcher", "", "owned loopback development dispatcher origin for the console API proxy")
 	caFile := flags.String("ca-file", "", "additional PEM CA for the fixed dispatcher HTTPS connection")
 	workspace := flags.String("workspace", "", "directory for MCP workflow and bundle files")
+	socket := flags.String("socket", "", "absolute Unix socket path for the hosted compiler worker")
 	if err := flags.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -55,6 +56,20 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if flags.NArg() != 0 {
 		return errors.New("unexpected positional arguments")
+	}
+	if command == "worker" {
+		var unsupported string
+		flags.Visit(func(f *flag.Flag) {
+			if f.Name != "socket" && f.Name != "sdk" {
+				unsupported = f.Name
+			}
+		})
+		if unsupported != "" {
+			return fmt.Errorf("worker does not support --%s; use only --socket and --sdk", unsupported)
+		}
+		if *socket == "" || *sdk == "" {
+			return errors.New("worker requires --socket and --sdk")
+		}
 	}
 	var builder *studio.Builder
 	if *sdk != "" {
@@ -69,6 +84,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return json.NewEncoder(stdout).Encode(workflow.Catalog())
 	case "serve":
 		return studio.Serve(ctx, builder, studio.ServerConfig{Address: *address, UI: *ui, Dispatcher: *dispatcher, CAFile: *caFile}, func(address string) { fmt.Fprintln(stderr, "Open", address) })
+	case "worker":
+		return studio.ServeWorker(ctx, builder, *socket, func(path string) { fmt.Fprintln(stderr, "Studio compiler listening on", path) })
 	case "mcp":
 		if *workspace == "" {
 			return errors.New("mcp requires --workspace for editable workflows and build bundles")

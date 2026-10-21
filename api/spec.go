@@ -15,7 +15,7 @@ var OpenAPI []byte
 const (
 	// Version is the HTTP API contract version as major.minor. It equals the
 	// info.version field of OpenAPI.
-	Version = "1.23"
+	Version = "1.24"
 	// Major is the compatibility number of Version. Clients that require a
 	// different major version are answered with an explicit incompatibility
 	// error instead of a best-effort response.
@@ -49,7 +49,8 @@ const (
 	// 1.21 added authenticated historical attribution exports.
 	// 1.22 added owner-managed executor presentation labels.
 	// 1.23 added communities, shared experiments and funded community measurements.
-	Minor = 23
+	// 1.24 added authenticated hosted workflow and experiment compilation.
+	Minor = 24
 	// VersionHeader carries the contract version a client requires on requests
 	// and the version the dispatcher implements on responses.
 	VersionHeader = "Debuglet-API-Version"

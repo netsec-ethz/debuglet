@@ -1,0 +1,10 @@
+---
+# Install compiler first; enable dispatcher_studio_socket_path only afterward.
+# Uses normal pinned provisioner and host-key checks, without touching data.
+- import_playbook: preflight.yml
+
+- name: Deploy optional hosted Studio compiler
+  hosts: dispatcher
+  become: true
+  roles:
+    - studio

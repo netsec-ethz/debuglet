@@ -2,6 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/ci-install-candidate.sh
+python3 -m unittest discover -v -s deploy/studio -p 'test_*.py'
 bash scripts/package.sh
 (cd "${CI_PACKAGE_DIR:-.cache/ci/packages}" && sha256sum --check --strict SHA256SUMS-compatibility)
 work="$(mktemp -d "${TMPDIR:-/tmp}/debuglet-package-check.XXXXXXXX")"

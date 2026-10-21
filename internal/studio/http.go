@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"mime"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -21,8 +20,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/netsec-ethz/debuglet/pkg/workflow"
 )
 
 type ServerConfig struct {
@@ -81,48 +78,20 @@ func NewHandler(builder *Builder, config ServerConfig, origin string) (http.Hand
 	}
 	token := hex.EncodeToString(tokenBytes)
 	mux := http.NewServeMux()
-	experimentRoutes(mux, builder, token)
 	mux.HandleFunc("GET /studio/api/session", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"token": token}) })
-	mux.HandleFunc("GET /studio/api/catalog", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, workflow.Catalog()) })
-	mutate := func(fn func(http.ResponseWriter, *http.Request, workflow.Workflow)) http.HandlerFunc {
+	var compiler authoringCompiler
+	if builder != nil {
+		compiler = builder
+	}
+	authoringRoutes(mux, compiler, "/studio/api", func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("X-Studio-Token") != token {
 				writeError(w, 403, errors.New("open the studio page again to obtain its session token"))
 				return
 			}
-			mediaType, _, mediaErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
-			if mediaErr != nil || mediaType != "application/json" {
-				writeError(w, 415, errors.New("Content-Type must be application/json"))
-				return
-			}
-			r.Body = http.MaxBytesReader(w, r.Body, MaxWorkflowBytes)
-			wf, err := DecodeWorkflow(r.Body)
-			if err != nil {
-				writeError(w, 400, err)
-				return
-			}
-			fn(w, r, wf)
+			next(w, r)
 		}
-	}
-	mux.HandleFunc("POST /studio/api/validate", mutate(func(w http.ResponseWriter, r *http.Request, wf workflow.Workflow) {
-		diagnostics := workflow.Validate(wf)
-		if diagnostics == nil {
-			diagnostics = []workflow.Diagnostic{}
-		}
-		writeJSON(w, 200, map[string]any{"diagnostics": diagnostics})
-	}))
-	mux.HandleFunc("POST /studio/api/build", mutate(func(w http.ResponseWriter, r *http.Request, wf workflow.Workflow) {
-		if builder == nil {
-			writeError(w, 503, errors.New("compiler is unavailable; restart dbl-studio with --sdk pointing to the matching Debuglet checkout"))
-			return
-		}
-		bundle, err := builder.Build(r.Context(), wf)
-		if err != nil {
-			writeError(w, 422, err)
-			return
-		}
-		writeJSON(w, 200, bundle)
-	}))
+	})
 	if config.Dispatcher != "" {
 		target, err := url.Parse(config.Dispatcher)
 		if err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" || target.User != nil || target.RawQuery != "" || target.Fragment != "" || (target.Path != "" && target.Path != "/") {
