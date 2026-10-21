@@ -200,8 +200,13 @@ func TestEnrollmentRefusesUnenrolledNodes(t *testing.T) {
 // holding the new credential connects.
 func TestEnrollmentRotationAndRevocation(t *testing.T) {
 	f, store, nodes := enrolledControl(t)
-	f.connectedPeer(&lifecyclePeer{id: "executor", version: "A", token: issueToken(t, store, "executor")}, f.ca.ClientConfig(f.client, ""))
+	owned := f.connectedPeer(&lifecyclePeer{id: "executor", version: "A", token: issueToken(t, store, "executor")}, f.ca.ClientConfig(f.client, ""))
 	owner := f.registered("A")
+	ctx, cancel := context.WithTimeout(t.Context(), sessionTestWait)
+	defer cancel()
+	if err := owned.client.WaitReadyContext(ctx); err != nil {
+		t.Fatalf("bind acknowledgement before lease renewal: %v", err)
+	}
 	renew := func(identity *testtls.Identity, owner *SessionOwner, sequence uint64) error {
 		return f.directCall(identity, owner, func(ctx context.Context, client pb.DispatcherServiceClient) error {
 			_, err := client.RenewLease(ctx, &pb.RenewLeaseRequest{Sequence: sequence})
