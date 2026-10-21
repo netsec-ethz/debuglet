@@ -223,6 +223,12 @@ func Normalize(values map[string]any) (map[string]any, error) {
 func Pure(block string, in map[string]any) (map[string]any, error) {
 	var value any
 	switch block {
+	case "standard_deviation":
+		return standardDeviation(in)
+	case "histogram":
+		return histogram(in)
+	case "sort_rows":
+		return sortRows(in)
 	case "select_field":
 		return selectField(in)
 	case "filter_rows":

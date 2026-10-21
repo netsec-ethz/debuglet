@@ -54,10 +54,30 @@ func TestReportWorkflowHasNoHostRequirements(t *testing.T) {
 }
 
 func TestGeneratedReportWorkflowExecutesWASI(t *testing.T) {
+	outputs, counts := executeReportWorkflow(t, reportWorkflow())
+	wantRows := []any{map[string]any{"host": "one", "ok": true, "rtt_ms": float64(10)}, map[string]any{"host": "three", "ok": true, "rtt_ms": float64(20)}}
+	if !reflect.DeepEqual(outputs["table"]["rows"], wantRows) || !reflect.DeepEqual(outputs["table"]["columns"], []any{"host", "rtt_ms"}) {
+		t.Fatal("table lost selected rows or explicit columns:", outputs["table"])
+	}
+	if outputs["metric"]["value"] != float64(15) || outputs["metric"]["unit"] != "" {
+		t.Fatal("mean or default metric unit failed:", outputs["metric"])
+	}
+	if outputs["text"]["text"] != "Only successful samples are included." {
+		t.Fatal("report text lost:", outputs["text"])
+	}
+	for _, block := range []string{"report_table", "report_metric", "report_text"} {
+		if counts[block] != 1 {
+			t.Errorf("%s executed %d times; want once", block, counts[block])
+		}
+	}
+}
+
+func executeReportWorkflow(t *testing.T, w Workflow) (map[string]map[string]any, map[string]int) {
+	t.Helper()
 	if testing.Short() {
 		t.Skip("generated WASI program compilation")
 	}
-	p, err := Generate(reportWorkflow())
+	p, err := Generate(w)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,19 +125,5 @@ func TestGeneratedReportWorkflowExecutesWASI(t *testing.T) {
 		outputs[event.Node] = event.Outputs
 		counts[event.Block]++
 	}
-	wantRows := []any{map[string]any{"host": "one", "ok": true, "rtt_ms": float64(10)}, map[string]any{"host": "three", "ok": true, "rtt_ms": float64(20)}}
-	if !reflect.DeepEqual(outputs["table"]["rows"], wantRows) || !reflect.DeepEqual(outputs["table"]["columns"], []any{"host", "rtt_ms"}) {
-		t.Fatal("table lost selected rows or explicit columns:", outputs["table"])
-	}
-	if outputs["metric"]["value"] != float64(15) || outputs["metric"]["unit"] != "" {
-		t.Fatal("mean or default metric unit failed:", outputs["metric"])
-	}
-	if outputs["text"]["text"] != "Only successful samples are included." {
-		t.Fatal("report text lost:", outputs["text"])
-	}
-	for _, block := range []string{"report_table", "report_metric", "report_text"} {
-		if counts[block] != 1 {
-			t.Errorf("%s executed %d times; want once", block, counts[block])
-		}
-	}
+	return outputs, counts
 }

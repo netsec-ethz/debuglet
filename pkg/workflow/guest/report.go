@@ -115,11 +115,18 @@ func Report(block string, in map[string]any) (map[string]any, error) {
 		types = map[string]string{"title": "string", "rows": "any", "columns": "strings"}
 	case "report_text":
 		types = map[string]string{"title": "string", "text": "string"}
+	case "report_chart":
+		types = map[string]string{"title": "string", "rows": "any", "x": "string", "y": "string", "kind": "string", "x_label": "string", "y_label": "string"}
 	default:
 		return nil, fmt.Errorf("unsupported report block %s", block)
 	}
 	if err := Check(in, types); err != nil {
 		return nil, err
+	}
+	if block == "report_chart" {
+		if err := validateChart(in); err != nil {
+			return nil, err
+		}
 	}
 	if block == "report_table" {
 		columns := in["columns"].([]any)

@@ -1877,5 +1877,177 @@
     "control_outputs": [
       "next"
     ]
+  },
+  {
+    "id": "standard_deviation",
+    "label": "Standard deviation",
+    "category": "Analysis",
+    "description": "Spread of finite samples. sample divides squared deviations by n−1 and requires at least two values; population divides by n and requires at least one. Does not estimate confidence or statistical significance.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "values",
+        "type": "numbers",
+        "required": true
+      },
+      {
+        "name": "mode",
+        "type": "string",
+        "default": "sample"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "number"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "histogram",
+    "label": "Histogram",
+    "category": "Analysis",
+    "description": "Count values in 1–256 bins defined by strictly increasing finite edges. Bins include their lower edge and exclude their upper edge, except the final bin includes both. Rows contain lower, upper, midpoint and count. Underflow and overflow count values outside the edges; no samples are dropped.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "values",
+        "type": "numbers",
+        "required": true
+      },
+      {
+        "name": "edges",
+        "type": "numbers",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "rows",
+        "type": "any"
+      },
+      {
+        "name": "underflow",
+        "type": "number"
+      },
+      {
+        "name": "overflow",
+        "type": "number"
+      },
+      {
+        "name": "count",
+        "type": "number"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "sort_rows",
+    "label": "Sort rows",
+    "category": "Data",
+    "description": "Return rows ordered by one named field, ascending or descending. Equal keys retain input order. Every key must be a finite number or every key a string; strings use lexical order, without locale rules. Missing fields are errors. The input list is unchanged.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "rows",
+        "type": "any",
+        "required": true
+      },
+      {
+        "name": "field",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "order",
+        "type": "string",
+        "default": "ascending"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "rows",
+        "type": "any"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "report_chart",
+    "label": "Report chart",
+    "category": "Results",
+    "description": "Publish 1–256 rows with finite numeric x and y fields as a line or bar chart and an exact-value table. Lines connect points in input order on a numeric x axis; bars keep row order and include a zero baseline. Uses ordinary workflow output limits.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "title",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "rows",
+        "type": "any",
+        "required": true
+      },
+      {
+        "name": "x",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "y",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "kind",
+        "type": "string",
+        "default": "line"
+      },
+      {
+        "name": "x_label",
+        "type": "string",
+        "default": ""
+      },
+      {
+        "name": "y_label",
+        "type": "string",
+        "default": ""
+      }
+    ],
+    "outputs": [
+      {
+        "name": "title",
+        "type": "string"
+      },
+      {
+        "name": "rows",
+        "type": "any"
+      },
+      {
+        "name": "x",
+        "type": "string"
+      },
+      {
+        "name": "y",
+        "type": "string"
+      },
+      {
+        "name": "kind",
+        "type": "string"
+      },
+      {
+        "name": "x_label",
+        "type": "string"
+      },
+      {
+        "name": "y_label",
+        "type": "string"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
   }
 ]
