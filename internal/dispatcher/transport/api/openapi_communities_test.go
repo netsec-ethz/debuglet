@@ -17,7 +17,7 @@ import (
 
 // oaCommunityExchanges records the real collaboration lifecycle through the
 // same transport as the public contract test, including its /api deployment.
-func oaCommunityExchanges(t *testing.T, ctx context.Context, sdk *client.Client, recorder *oaRecorder, base, ownerToken string, owned client.Submission) {
+func oaCommunityExchanges(t *testing.T, f *ccFixture, ctx context.Context, sdk *client.Client, recorder *oaRecorder, base, ownerToken string, owned client.Submission) {
 	t.Helper()
 	member, err := sdk.CreateAccount(ctx, "contract community member")
 	if err != nil {
@@ -64,6 +64,18 @@ func oaCommunityExchanges(t *testing.T, ctx context.Context, sdk *client.Client,
 			}
 		}
 	}
+
+	// Use one retained report to exercise the library and source lifecycle through
+	// the same recorder, including the mounted API prefix.
+	libraryOutput(t, f, owned.IDs[0], "\n"+libraryEvent(7))
+	request(ownerToken, http.MethodPost, "/measurements/"+owned.TransactionID+"/source", sourceTestInput(t, owned), 201, nil)
+	request(ownerToken, http.MethodGet, "/runs/"+owned.IDs[0]+"/source", nil, 200, nil)
+	var highlight wire.Highlight
+	request(ownerToken, http.MethodPost, "/result-highlights", map[string]any{"run_id": owned.IDs[0], "event_index": 0, "name": "Contract result"}, 201, &highlight)
+	request(ownerToken, http.MethodGet, "/result-highlights", nil, 200, nil)
+	request(ownerToken, http.MethodGet, "/result-highlights/"+highlight.ID, nil, 200, nil)
+	request(ownerToken, http.MethodPatch, "/result-highlights/"+highlight.ID, map[string]string{"name": "Renamed result"}, 200, nil)
+	request(ownerToken, http.MethodDelete, "/result-highlights/"+highlight.ID, nil, 204, nil)
 
 	var community wire.Community
 	request(ownerToken, http.MethodPost, "/communities",

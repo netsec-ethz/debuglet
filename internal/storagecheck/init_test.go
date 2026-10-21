@@ -59,6 +59,8 @@ func TestBootstrapFresh(t *testing.T) {
 					"attribution_retention":          "singleton retained_from_ns",
 					"attribution_verify_budget":      "executor_id chain_id epoch used",
 					"attribution_receipt_keys":       "key_id public_key valid_from_ns valid_to_ns",
+					"measurement_sources":            "measurement_id user_id kind document document_sha256 programs",
+					"result_highlights":              "id user_id project_id debuglet_id event_index event_sha256 node_id block name note collection created_at",
 					"measurement_profiles":           "id user_id document",
 					"measurement_requests":           "debuglet_id document",
 					"measurement_execution":          "debuglet_id started_observed_ns terminal_observed_ns exit_code tcp_endpoint",
@@ -98,7 +100,7 @@ func TestBootstrapFresh(t *testing.T) {
 					"oauth_login_attempts":           "state_hash provider verifier nonce purpose session_selector expires_at",
 					"pending_identity_links":         "user_id provider issuer subject login session_selector expires_at",
 					"device_logins":                  "selector verifier_hash user_code_hash audience scopes label expires_at next_poll_at poll_interval state approver_session user_id",
-				}, []string{"account_recovery_pending", "account_run_reservations_live", "attribution_runs_source_idx", "chain_transfers_executor_idx", "communities_creator", "community_experiments_project", "community_funding_community", "community_funding_sponsor", "community_invitations_community", "community_measurements_measurement", "community_members_user", "community_projects_community", "community_topups_community", "debuglet_logs_sequence_idx", "debuglets_uuid_idx", "device_logins_expiry", "egress_grants_expiry", "executor_enrollment_tokens_executor_idx", "measurement_profiles_owner", "oauth_login_expiry", "owned_executors_user_idx", "payment_receipts_nonce_idx", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33})
+				}, []string{"account_recovery_pending", "account_run_reservations_live", "attribution_runs_source_idx", "chain_transfers_executor_idx", "communities_creator", "community_experiments_project", "community_funding_community", "community_funding_sponsor", "community_invitations_community", "community_measurements_measurement", "community_members_user", "community_projects_community", "community_topups_community", "debuglet_logs_sequence_idx", "debuglets_uuid_idx", "device_logins_expiry", "egress_grants_expiry", "executor_enrollment_tokens_executor_idx", "measurement_profiles_owner", "oauth_login_expiry", "owned_executors_user_idx", "payment_receipts_nonce_idx", "result_highlights_owner", "result_highlights_project", "result_highlights_run", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34})
 				dispatcherSchemaRoundTrip(t, db)
 			} else {
 				assertSchema(t, db, map[string]string{

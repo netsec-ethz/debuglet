@@ -52,8 +52,9 @@ its source or bundle and see the measurements associated with its revisions.
 A source-only experiment is editable but still needs compilation before it can
 run. A saved compiled bundle can be reused without a compiler while its source
 remains unchanged. Editing the source invalidates that compiled artifact; supply
-a matching rebuilt bundle to run the edited version. The hosted console does
-not compile source. See [workflow authoring](development/workflow-authoring.md)
+a matching rebuilt bundle to run the edited version. When the operator enables
+the [hosted compiler](operations/hosted-studio.md), the console can build that
+bundle. Otherwise, see [workflow authoring](development/workflow-authoring.md)
 for local compilation and bundle import.
 
 **Save new revision** updates an existing shared experiment; **Save a copy**
@@ -97,6 +98,20 @@ be unshared; attempting to remove their references returns 409. Expired
 reservations that admitted no run are cleaned up automatically. Retention limits
 and payload deletion continue to apply to the original measurement, so a
 reference does not guarantee that output remains available forever.
+
+## Collect useful results
+
+A project's results library collects highlights from its shared measurements:
+metrics, tables, charts, text reports and other emitted workflow values. Give a
+highlight a name, note and collection label, then follow it back to the run or
+its exact saved experiment source. Members can read the project's highlights;
+the highlight's creator or community owner can rename or remove one.
+
+A highlight is a reference to retained output, not a separate copy. The original
+measurement must remain shared into that project. Unsharing it, removing a
+member or deleting its payload removes the corresponding library access.
+Deleting a highlight leaves the original measurement and output unchanged.
+See [results](results.md) for personal highlights and editing a source copy.
 
 ## Pay from the community budget
 
@@ -145,6 +160,7 @@ measurements keep their existing payment flow.
 | Experiments in one project | 128 |
 | Revisions of one experiment | 32 |
 | Measurement references in one project | 1024 |
+| Result highlights in one project | 1024 |
 | Source and optional bundle in one save request | 24 MiB |
 | Retained experiment revision bytes in one community | 256 MiB |
 

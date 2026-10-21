@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.26"
+  version: "1.27"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Run reads require ownership, operator authority or explicit community sharing to a current member; payment orders and run mutations remain owner-scoped. A hidden resource answers 404. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -12,6 +12,860 @@ security:
   - bearerAuth: []
   - cookieAuth: []
 paths:
+  "/result-highlights":
+    "get":
+      "operationId": "listResultHighlights"
+      "summary": "Find saved result highlights."
+      "description": "Added in API 1.27. Requires measurements:read. Without project_id, lists the caller's personal library; a project requires current membership. Only references whose original run is still readable and retained are returned. Search matches saved metadata. List entries contain no copied output."
+      "parameters":
+        -
+          "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        -
+          "name": "project_id"
+          "in": "query"
+          "required": false
+          "schema":
+            "type": "string"
+            "format": "uuid"
+        -
+          "name": "search"
+          "in": "query"
+          "required": false
+          "schema":
+            "type": "string"
+          "description": "Case-insensitive saved metadata search, at most 256 UTF-8 bytes."
+        -
+          "name": "collection"
+          "in": "query"
+          "required": false
+          "schema":
+            "type": "string"
+          "description": "Exact collection label, at most 120 UTF-8 bytes."
+        -
+          "name": "limit"
+          "in": "query"
+          "required": false
+          "schema":
+            "type": "integer"
+            "format": "int64"
+            "minimum": 1
+            "maximum": 100
+          "description": "Defaults to 25."
+        -
+          "name": "offset"
+          "in": "query"
+          "required": false
+          "schema":
+            "type": "integer"
+            "format": "int64"
+            "minimum": 0
+            "maximum": 1000000
+          "description": "Defaults to zero."
+      "responses":
+        "200":
+          "description": "A bounded page of saved references."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/ResultHighlightPage"
+        "400":
+          "description": "The request, selector, filter or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or CSRF proof does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request or retained source/output exceeds its documented bound."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The storage operation could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+    "post":
+      "operationId": "createResultHighlight"
+      "summary": "Save one completed report or emitted value."
+      "description": "Added in API 1.27. Requires measurements:write. The dispatcher derives the event from the authorized run's retained output. Only completed report_metric, report_table, report_chart, report_text and emit events can be saved; failed events and intermediate block outputs cannot. event_index counts valid complete workflow events, including repeated executions and non-report blocks; it is not a node ID or report-only index. A project save requires current membership and an existing measurement share into that project. At most 1024 references per personal library or project."
+      "parameters":
+        -
+          "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        -
+          "name": "X-Debuglet-CSRF"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+          "description": "Required when using a cookie session."
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/CreateResultHighlight"
+      "responses":
+        "201":
+          "description": "The saved reference and its retained event."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/ResultHighlight"
+        "400":
+          "description": "The request, selector, filter or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or CSRF proof does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "409":
+          "description": "The immutable source differs, the selected event changed, or the saved-resource quota was reached."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "410":
+          "description": "The original run payload was deleted (payload_deleted)."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request or retained source/output exceeds its documented bound."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The storage operation could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  "/result-highlights/{id}":
+    "get":
+      "operationId": "getResultHighlight"
+      "summary": "Read a saved result and its origin."
+      "description": "Added in API 1.27. Requires measurements:read and current access to both the library and original run. The event is read from retained output and checked against its saved SHA-256; no separate output archive is created. A source reference is included when editable source is available."
+      "parameters":
+        -
+          "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        -
+          "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "responses":
+        "200":
+          "description": "The saved reference and exact retained event."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/ResultHighlight"
+        "400":
+          "description": "The request, selector, filter or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or CSRF proof does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "409":
+          "description": "The immutable source differs, the selected event changed, or the saved-resource quota was reached."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "410":
+          "description": "The original run payload was deleted (payload_deleted)."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request or retained source/output exceeds its documented bound."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The storage operation could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+    "patch":
+      "operationId": "updateResultHighlight"
+      "summary": "Change a highlight's title, note or collection."
+      "description": "Added in API 1.27. Requires measurements:write. Personal highlights are editable by their owner. Project highlights are editable by their creator or community owner while membership and source access remain valid. The source run and selected event are immutable. Omitted note and collection become empty."
+      "parameters":
+        -
+          "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        -
+          "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+        -
+          "name": "X-Debuglet-CSRF"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+          "description": "Required when using a cookie session."
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/ResultHighlightMetadata"
+      "responses":
+        "200":
+          "description": "Updated metadata and the retained event."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/ResultHighlight"
+        "400":
+          "description": "The request, selector, filter or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or CSRF proof does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "409":
+          "description": "The immutable source differs, the selected event changed, or the saved-resource quota was reached."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "410":
+          "description": "The original run payload was deleted (payload_deleted)."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request or retained source/output exceeds its documented bound."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The storage operation could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+    "delete":
+      "operationId": "deleteResultHighlight"
+      "summary": "Remove a saved result reference."
+      "description": "Added in API 1.27. Requires measurements:write and the same management authority as metadata editing. Removing a highlight does not delete or cancel the original measurement. Cookie sessions require X-Debuglet-CSRF."
+      "parameters":
+        -
+          "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        -
+          "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+        -
+          "name": "X-Debuglet-CSRF"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+          "description": "Required when using a cookie session."
+      "responses":
+        "204":
+          "description": "The reference was removed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+        "400":
+          "description": "The request, selector, filter or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or CSRF proof does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request or retained source/output exceeds its documented bound."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The storage operation could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  "/measurements/{id}/source":
+    "post":
+      "operationId": "attachMeasurementSource"
+      "summary": "Attach the immutable builder document to an admitted measurement."
+      "description": "Added in API 1.27. Requires measurements:write and ownership of every run in the measurement. Call after successful submission with exactly one program mapping per run. Every submitted SHA-256 must match retained admission provenance. Source uses the existing workflow or experiment authoring format, with a 4 MiB request bound. A mapping contains 1–1024 programs; one account can retain at most 1024 source attachments totaling 256 MiB. No program bytes are copied. The association records the source supplied by its owner; it does not prove that arbitrary WASM was compiled from that source. An identical attachment is idempotent; a different one returns 409. Deleting any participant's payload removes this attached group source."
+      "parameters":
+        -
+          "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        -
+          "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+        -
+          "name": "X-Debuglet-CSRF"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+          "description": "Required when using a cookie session."
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/AttachMeasurementSource"
+      "responses":
+        "201":
+          "description": "The immutable source attachment was created."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/MeasurementSource"
+        "200":
+          "description": "The identical immutable source attachment already exists."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/MeasurementSource"
+        "400":
+          "description": "The request, selector, filter or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or CSRF proof does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "409":
+          "description": "The immutable source differs, the selected event changed, or the saved-resource quota was reached."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "410":
+          "description": "The original run payload was deleted (payload_deleted)."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request or retained source/output exceeds its documented bound."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The storage operation could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+  "/runs/{id}/source":
+    "get":
+      "operationId": "getRunSource"
+      "summary": "Open the exact retained builder source for a run."
+      "description": "Added in API 1.27. Requires measurements:read and current read access to the retained run. Returns its immutable personal attachment or an exact community experiment revision still accessible through current membership and sharing. Historical or custom WASM runs without saved source return 404; deleted payloads return 410. Opening this document does not execute it. Editing a copy requires a new build, executor selection, quote and explicit submission."
+      "parameters":
+        -
+          "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        -
+          "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "responses":
+        "200":
+          "description": "The exact source document and program identities."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/MeasurementSource"
+        "400":
+          "description": "The request, selector, filter or required API version is invalid."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "The credential scope or CSRF proof does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "The resource is absent or not visible to this account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "410":
+          "description": "The original run payload was deleted (payload_deleted)."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request or retained source/output exceeds its documented bound."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "The storage operation could not be completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
   /me/presence:
     post:
       operationId: "updateConsolePresence"
@@ -9284,6 +10138,331 @@ components:
       name: "session_token"
       description: "The same session token in a cookie, for a browser client. A state-changing request authenticated this way must repeat the session's CSRF token, returned as csrf_token and set in the session_csrf cookie, in the X-Debuglet-CSRF header."
   schemas:
+    "ResultHighlightMetadata":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "name"
+      "properties":
+        "name":
+          "type": "string"
+          "description": "Trimmed title, 1–120 UTF-8 bytes."
+        "note":
+          "type": "string"
+          "description": "At most 2000 UTF-8 bytes; defaults to empty."
+        "collection":
+          "type": "string"
+          "description": "Trimmed label, at most 120 UTF-8 bytes; defaults to empty."
+    "CreateResultHighlight":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "run_id"
+        - "event_index"
+        - "name"
+      "properties":
+        "run_id":
+          "type": "string"
+          "format": "uuid"
+        "event_index":
+          "type": "integer"
+          "format": "int64"
+          "minimum": 0
+          "maximum": 999
+        "name":
+          "type": "string"
+          "description": "Trimmed title, 1–120 UTF-8 bytes."
+        "note":
+          "type": "string"
+          "description": "At most 2000 UTF-8 bytes; defaults to empty."
+        "collection":
+          "type": "string"
+          "description": "Trimmed label, at most 120 UTF-8 bytes; defaults to empty."
+        "project_id":
+          "type": "string"
+          "format": "uuid"
+    "ResultHighlightSummary":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "id"
+        - "name"
+        - "note"
+        - "collection"
+        - "created_by"
+        - "created_at"
+        - "can_manage"
+        - "run_id"
+        - "measurement_id"
+        - "event_index"
+        - "event_sha256"
+        - "node_id"
+        - "block"
+      "properties":
+        "id":
+          "type": "string"
+          "format": "uuid"
+        "name":
+          "type": "string"
+          "description": "Trimmed title, 1–120 UTF-8 bytes."
+        "note":
+          "type": "string"
+          "description": "At most 2000 UTF-8 bytes; defaults to empty."
+        "collection":
+          "type": "string"
+          "description": "Trimmed label, at most 120 UTF-8 bytes; defaults to empty."
+        "project_id":
+          "type": "string"
+          "format": "uuid"
+        "created_by":
+          "type": "string"
+          "format": "uuid"
+        "created_at":
+          "type": "string"
+          "format": "date-time"
+        "can_manage":
+          "type": "boolean"
+          "description": "Whether this caller may rename or remove this saved result."
+        "run_id":
+          "type": "string"
+          "format": "uuid"
+        "measurement_id":
+          "type": "string"
+        "event_index":
+          "type": "integer"
+          "format": "int64"
+          "minimum": 0
+          "maximum": 999
+        "event_sha256":
+          "type": "string"
+          "pattern": "^[a-f0-9]{64}$"
+        "node_id":
+          "type": "string"
+        "block":
+          "type": "string"
+    "ResultHighlight":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "id"
+        - "name"
+        - "note"
+        - "collection"
+        - "created_by"
+        - "created_at"
+        - "can_manage"
+        - "run_id"
+        - "measurement_id"
+        - "event_index"
+        - "event_sha256"
+        - "node_id"
+        - "block"
+        - "event"
+      "properties":
+        "id":
+          "type": "string"
+          "format": "uuid"
+        "name":
+          "type": "string"
+          "description": "Trimmed title, 1–120 UTF-8 bytes."
+        "note":
+          "type": "string"
+          "description": "At most 2000 UTF-8 bytes; defaults to empty."
+        "collection":
+          "type": "string"
+          "description": "Trimmed label, at most 120 UTF-8 bytes; defaults to empty."
+        "project_id":
+          "type": "string"
+          "format": "uuid"
+        "created_by":
+          "type": "string"
+          "format": "uuid"
+        "created_at":
+          "type": "string"
+          "format": "date-time"
+        "can_manage":
+          "type": "boolean"
+          "description": "Whether this caller may rename or remove this saved result."
+        "run_id":
+          "type": "string"
+          "format": "uuid"
+        "measurement_id":
+          "type": "string"
+        "event_index":
+          "type": "integer"
+          "format": "int64"
+          "minimum": 0
+          "maximum": 999
+        "event_sha256":
+          "type": "string"
+          "pattern": "^[a-f0-9]{64}$"
+        "node_id":
+          "type": "string"
+        "block":
+          "type": "string"
+        "event":
+          "$ref": "#/components/schemas/SavedWorkflowEvent"
+        "source":
+          "$ref": "#/components/schemas/MeasurementSourceReference"
+    "ResultHighlightPage":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "highlights"
+        - "total"
+        - "limit"
+        - "offset"
+      "properties":
+        "highlights":
+          "type": "array"
+          "items":
+            "$ref": "#/components/schemas/ResultHighlightSummary"
+        "total":
+          "type": "integer"
+          "format": "int64"
+          "minimum": 0
+        "limit":
+          "type": "integer"
+          "format": "int64"
+          "minimum": 1
+          "maximum": 100
+        "offset":
+          "type": "integer"
+          "format": "int64"
+          "minimum": 0
+          "maximum": 1000000
+    "SavedWorkflowEvent":
+      "type": "object"
+      "additionalProperties": true
+      "required":
+        - "schema"
+        - "workflow_sha256"
+        - "node_id"
+        - "block"
+        - "status"
+        - "outputs"
+      "properties":
+        "schema":
+          "type": "string"
+          "enum":
+            - "debuglet.workflow.v1"
+        "workflow_sha256":
+          "type": "string"
+          "pattern": "^[a-f0-9]{64}$"
+        "node_id":
+          "type": "string"
+        "block":
+          "type": "string"
+          "enum":
+            - "report_metric"
+            - "report_table"
+            - "report_chart"
+            - "report_text"
+            - "emit"
+        "status":
+          "type": "string"
+          "enum":
+            - "completed"
+        "outputs":
+          "type": "object"
+          "additionalProperties": true
+        "error":
+          "type": "string"
+        "duration_ms":
+          "type": "number"
+          "minimum": 0
+    "SourceProgram":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "run_id"
+        - "sha256"
+      "properties":
+        "run_id":
+          "type": "string"
+          "format": "uuid"
+        "sha256":
+          "type": "string"
+          "pattern": "^[a-f0-9]{64}$"
+    "MeasurementSourceReference":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "kind"
+        - "document_sha256"
+        - "measurement_id"
+      "properties":
+        "kind":
+          "type": "string"
+          "enum":
+            - "workflow"
+            - "experiment"
+        "document_sha256":
+          "type": "string"
+          "pattern": "^[a-f0-9]{64}$"
+        "measurement_id":
+          "type": "string"
+        "community_experiment_id":
+          "type": "string"
+          "format": "uuid"
+        "revision":
+          "type": "integer"
+          "format": "int64"
+          "minimum": 1
+    "MeasurementSource":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "kind"
+        - "document_sha256"
+        - "measurement_id"
+        - "document"
+        - "programs"
+      "properties":
+        "kind":
+          "type": "string"
+          "enum":
+            - "workflow"
+            - "experiment"
+        "document_sha256":
+          "type": "string"
+          "pattern": "^[a-f0-9]{64}$"
+        "measurement_id":
+          "type": "string"
+        "community_experiment_id":
+          "type": "string"
+          "format": "uuid"
+        "revision":
+          "type": "integer"
+          "format": "int64"
+          "minimum": 1
+        "document":
+          "type": "object"
+          "additionalProperties": true
+        "programs":
+          "type": "array"
+          "items":
+            "$ref": "#/components/schemas/SourceProgram"
+    "AttachMeasurementSource":
+      "type": "object"
+      "additionalProperties": false
+      "required":
+        - "kind"
+        - "document"
+        - "programs"
+      "properties":
+        "kind":
+          "type": "string"
+          "enum":
+            - "workflow"
+            - "experiment"
+        "document":
+          "type": "object"
+          "additionalProperties": true
+        "programs":
+          "type": "array"
+          "items":
+            "$ref": "#/components/schemas/SourceProgram"
     OwnedExecutor:
       type: "object"
       required:

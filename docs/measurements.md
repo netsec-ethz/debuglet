@@ -117,6 +117,19 @@ The console's reuse action opens a new editable request and clears the previous
 absolute schedule. It does not copy payment credentials. Reuse alone does not
 create retry lineage; use the explicit linked retry action for that purpose.
 
+## Reopen the source and keep a highlight
+
+A builder run with saved source can be opened as a new editable copy. A community
+run opens its recorded revision; later changes to that shared experiment do not
+change the original run. Rebuild and review the copy before submitting it. Runs
+without a saved builder document retain configuration reuse, but cannot recover
+an editable block graph from the WASM alone.
+
+Save a useful workflow output to the personal or project results library with a
+title, note and collection. Each highlight links back to its original run and
+available source. It remains subject to the run's current access and payload
+retention. See [results and source reuse](results.md).
+
 ## Request one linked retry
 
 A retry is a new execution linked to a parent run. The parent keeps its identity,

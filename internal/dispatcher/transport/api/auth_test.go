@@ -723,6 +723,14 @@ type authRoutePolicy struct {
 // It is the one place the expected policy is written down, and both the
 // runtime test below and the contract test compare against it.
 var authAccessMatrix = map[string]authRoutePolicy{
+	"GET /result-highlights":        {anonymous: http.StatusUnauthorized, target: "/result-highlights"},
+	"POST /result-highlights":       {anonymous: http.StatusUnauthorized, target: "/result-highlights", body: []byte(`{}`)},
+	"GET /result-highlights/:id":    {anonymous: http.StatusUnauthorized, target: "/result-highlights/" + authSampleID},
+	"PATCH /result-highlights/:id":  {anonymous: http.StatusUnauthorized, target: "/result-highlights/" + authSampleID, body: []byte(`{}`)},
+	"DELETE /result-highlights/:id": {anonymous: http.StatusUnauthorized, target: "/result-highlights/" + authSampleID},
+	"GET /runs/:id/source":          {anonymous: http.StatusUnauthorized, target: "/runs/" + authSampleID + "/source"},
+	"POST /measurements/:id/source": {anonymous: http.StatusUnauthorized, target: "/measurements/missing/source", body: []byte(`{}`)},
+
 	"GET /studio/catalog":                                         {anonymous: http.StatusUnauthorized, target: "/studio/catalog"},
 	"POST /studio/validate":                                       {anonymous: http.StatusUnauthorized, target: "/studio/validate", body: []byte(`{}`)},
 	"POST /studio/build":                                          {anonymous: http.StatusUnauthorized, target: "/studio/build", body: []byte(`{}`)},
