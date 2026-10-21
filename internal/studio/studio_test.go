@@ -18,7 +18,9 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/netsec-ethz/debuglet/internal/guestio"
 	"github.com/netsec-ethz/debuglet/pkg/workflow"
+	"github.com/tetratelabs/wazero"
 )
 
 func sampleWorkflow() workflow.Workflow {
@@ -251,6 +253,21 @@ func TestMCPBuildProducesOfflineWASIBundle(t *testing.T) {
 	}
 	if !bytes.HasPrefix(bundle.Wasm, []byte{0, 'a', 's', 'm', 1, 0, 0, 0}) {
 		t.Fatal("not a WASM module")
+	}
+	runtime := wazero.NewRuntime(ctx)
+	defer runtime.Close(ctx)
+	compiled, err := runtime.CompileModule(ctx, bundle.Wasm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer compiled.Close(ctx)
+	for _, imported := range compiled.ImportedFunctions() {
+		module, name, _ := imported.Import()
+		for _, optional := range guestio.SupportedHostFunctions() {
+			if module+"."+name == optional {
+				t.Errorf("ordinary workflow unexpectedly requires optional host function %s", optional)
+			}
+		}
 	}
 	if bundle.WasmSHA256 != digest(bundle.Wasm) || bundle.WorkflowSHA256 != digest([]byte(bundle.WorkflowJSON)) {
 		t.Fatal("bundle digest mismatch")
