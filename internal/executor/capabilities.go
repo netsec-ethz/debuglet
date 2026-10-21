@@ -39,7 +39,7 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.Exec
 	now := time.Now()
 	e.disclosureDelivery.checkClock(e.teslaSchedule, now)
 	tagging := e.tagging()
-	attribution := attributionForTagging(e.teslaSchedule, now, tagging)
+	attribution := e.attribution(now, tagging)
 	e.capabilityMu.Lock()
 	if !initial && now.Before(e.capabilityNext) && attribution.GetReason() == e.capabilityReason && tagging == e.capabilityTagging {
 		e.capabilityMu.Unlock()
@@ -54,7 +54,7 @@ func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.Exec
 	// read again after the probe refreshed that answer; otherwise one report
 	// could carry a fresh ICMP state beside a tagging mode from the last one.
 	tagging = e.tagging()
-	attribution = attributionForTagging(e.teslaSchedule, now, tagging)
+	attribution = e.attribution(now, tagging)
 	e.capabilityMu.Lock()
 	e.capabilityReason = attribution.GetReason()
 	e.capabilityTagging = tagging

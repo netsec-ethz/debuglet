@@ -78,7 +78,7 @@ Active traffic: an executor of this release advertises bandwidth version 2; it r
 
 An executor needs a stable `identity.executor_id`, a private SQLite database, dispatcher control addresses, and TLS credentials for a networked deployment. Run exactly one executor daemon process per database; the raw daemon does not take a cross-process ownership lock. Use the same release as the dispatcher. Choose `packet_counter = "fallback"` unless the host is deliberately configured for eBPF accounting.
 
-The optional `[clock]` section sets `max_error_ms` (default 100, at most 60,000; zero selects the default), the kernel's estimated clock error above which the executor reports and logs its clock readiness as degraded. The readiness when the TESLA key chain starts decides `clock_unready`: a chain started on a clock that is not `ready` tags nothing, and a node that tags packets then refuses new runs until the executor restarts with a ready clock; later readiness changes are reported only. `dbl doctor --role executor` checks the same bound; see [host probes](executor-discovery.md#host-probes).
+The optional `[clock]` section sets `max_error_ms` (default 100, at most 60,000; zero selects the default), the kernel's estimated clock error above which the executor reports and logs its clock readiness as degraded. The readiness when the TESLA key chain starts decides `clock_unready`: a chain started on a clock that is not `ready` tags nothing, and a node that tags packets then refuses new runs until a fresh chain starts with a ready clock, either by automatic renewal or an earlier manual restart; later readiness changes alone do not repair the current chain. `dbl doctor --role executor` checks the same bound; see [host probes](executor-discovery.md#host-probes).
 
 ### Executor TESLA key schedule
 
@@ -112,8 +112,30 @@ at 1-second epochs d is at least 11. The 15-minute default is in the range the
 TRACER design uses, far beyond that bound. Tags become verifiable once the
 delay has elapsed.
 
-The keys live only in the running executor, and every start builds a new
-chain. When `[tesla] seed` is configured, a start re-derives the previous
+Each process start creates a fresh chain. The running executor also renews
+chains automatically without changing its identity or restarting the service.
+In the final tenth of a chain's lifetime (at most one hour), it renews at the
+first idle opportunity. Busy or queued work continues; new runs must finish
+before the current chain expires. At expiry, new admission closes while
+accepted work finishes. The executor then waits for all signers to stop, used
+keys to receive durable disclosure acknowledgements, and terminal results and
+output to be acknowledged before reconnecting with a fresh chain. Its normal
+registration publishes the new anchor before it accepts new runs.
+
+Discovery reports `chain_renewing` during this interval. Under sustained load,
+the pause can include the disclosure delay (about 15 minutes by default), plus
+cleanup, output delivery and reconnect time. An idle chain with no used keys
+does not wait for unused future keys. Storage, clock, disclosure or delivery
+failures keep admission closed and retry; they never cause early disclosure or
+key reuse. A successor chain's first epoch still has no signing key. This is
+automatic renewal, not continuous attribution across the boundary. Upgrade the
+dispatcher and console to API 1.25 before upgrading executors: the dispatcher
+must recognize `chain_renewing` and support durable disclosure receipts. An old
+dispatcher that sends no receipts cannot complete renewal after keys were used.
+
+Private keys live only in executor memory. Normal automatic renewal waits for
+all used keys to be durably disclosed, including an older recovered tail.
+When `[tesla] seed` is configured, a start re-derives the previous
 chain from the seed and its record, and the heartbeat discloses that chain's
 remaining keys at their due instants, under its own anchor. The re-derived
 chain only discloses: it never signs again, and no tagger holds it. Its epochs
@@ -121,11 +143,10 @@ advance on the monotonic clock from the start, which places the recorded
 origin with its ready wall clock, so a later wall-clock step neither advances
 nor delays a disclosure; if the clock loses readiness later, that is reported
 for the current chain and the old chain's disclosure continues. The heartbeat
-offers the old chain's final key until one heartbeat that carried it
-succeeded; the dispatcher's durable record of it is not confirmed back. A tail
-whose final key no heartbeat delivered within 24 hours of its final
-disclosure is dropped with a warning; this retention interval uses the same
-recovered monotonic clock as disclosure.
+offers the old chain's final key until a matching durable receipt confirms
+that the dispatcher stored it. A tail without that acknowledgement within
+24 hours of its final disclosure is dropped with a warning; this retention
+interval uses the same recovered monotonic clock as disclosure.
 
 Recovery also requires the previous process's signers to be retired. A TCX
 attachment ends with its process and needs no action. A legacy tc filter,
@@ -162,7 +183,8 @@ when:
 Each start logs once which of these applies. Without a seed, stop an executor
 only once its last attributed packets are d epochs old. When the chain runs
 out, the executor logs `final_disclosure_at`, d − 1 epochs after the expiry,
-when its last key is disclosed; restart it after that time.
+when its last key is disclosed. Allow automatic renewal to finish, or wait
+until that time before a manual restart.
 
 A kernel tagger holds a key back further while its refresh fails, so a key is
 never disclosed while an installed copy can still sign. The schedule and every

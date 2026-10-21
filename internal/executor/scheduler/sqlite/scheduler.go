@@ -178,6 +178,10 @@ func (s *SqliteStorage) Insert(ctx context.Context, spec scheduler.Spec) error {
 	return s.local.Insert(ctx, spec)
 }
 
+func (s *SqliteStorage) BeginDrain()     { s.local.BeginDrain() }
+func (s *SqliteStorage) TryDrain() bool  { return s.local.TryDrain() }
+func (s *SqliteStorage) IsDrained() bool { return s.local.IsDrained() }
+
 func (s *SqliteStorage) persist(ctx context.Context, spec scheduler.Spec) (scheduler.Spec, error) {
 	if err := ctx.Err(); err != nil {
 		return scheduler.Spec{}, err

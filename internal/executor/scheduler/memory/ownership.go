@@ -82,6 +82,10 @@ func (m *MemoryStorage) insert(ctx context.Context, spec scheduler.Spec) error {
 		m.mu.Unlock()
 		return scheduler.ErrClosed
 	}
+	if m.draining {
+		m.mu.Unlock()
+		return scheduler.ErrDraining
+	}
 	if _, exists := m.owners[spec.DebugletID]; exists {
 		m.mu.Unlock()
 		return fmt.Errorf("debuglet %s already has an admission owner", spec.DebugletID)

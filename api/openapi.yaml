@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.24"
+  version: "1.25"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Run reads require ownership, operator authority or explicit community sharing to a current member; payment orders and run mutations remain owner-scoped. A hidden resource answers 404. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -10403,12 +10403,13 @@ components:
             - ""
             - epoch_zero
             - chain_exhausted
+            - chain_renewing
             - refresh_failing
             - disclosure_held
             - clock_unready
             - clock_drift
             - untagged
-          description: "Empty when available. untagged: neither IPv4 nor IPv6 traffic is tagged. epoch_zero: the public anchor k_0 never signs, so nothing sent in epoch 0 is attributable. chain_exhausted: the key chain has ended. refresh_failing: a kernel tagger's latest key refresh failed. disclosure_held: an installed key has held disclosure back for longer than one epoch. clock_unready: the host clock was not ready when the key chain started, so its announced origin is not trusted until the executor restarts. clock_drift: the executor's wall clock has moved away from the monotonic clock its epochs advance on by more than min(epoch length / 2, 1 s) since the chain started."
+          description: "Empty when available. untagged: neither IPv4 nor IPv6 traffic is tagged. epoch_zero: the public anchor k_0 never signs, so nothing sent in epoch 0 is attributable. chain_exhausted: the key chain has ended. chain_renewing: new admission is paused while accepted work and its key disclosures finish before automatic renewal. refresh_failing: a kernel tagger's latest key refresh failed. disclosure_held: an installed key has held disclosure back for longer than one epoch. clock_unready: the host clock was not ready when the key chain started, so its announced origin is not trusted until a fresh chain starts with a ready clock. clock_drift: the executor's wall clock has moved away from the monotonic clock its epochs advance on by more than min(epoch length / 2, 1 s) since the chain started."
         epoch:
           type: integer
           format: int64

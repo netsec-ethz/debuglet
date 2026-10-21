@@ -159,3 +159,13 @@ func TestCapabilitySnapshotsExpireAndFollowBinding(t *testing.T) {
 		t.Fatal("retired binding visible")
 	}
 }
+
+func TestRenewalAdmissionReasonSurvivesUntaggedDiscovery(t *testing.T) {
+	for _, mode := range []string{"none", "userspace", "ebpf"} {
+		report := &pb.ExecutorCapabilities{SchemaVersion: 1, Attribution: &pb.AttributionState{State: "unavailable", Reason: "chain_renewing", Epoch: 5}, Tagging: &pb.TaggingMode{Ipv4: mode, Ipv6: mode, Scion: "none"}}
+		caps := capabilitiesFromReport(report, time.Now())
+		if caps == nil || caps.Attribution == nil || caps.Attribution.Reason != "chain_renewing" {
+			t.Fatalf("mode %s lost admission reason: %+v", mode, caps)
+		}
+	}
+}

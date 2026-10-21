@@ -165,17 +165,30 @@ func (e *Executor) OnUpload(ctx context.Context, binding controlsession.Binding,
 	// Nothing a new run sends could be tagged, so it is not admitted. Runs
 	// admitted earlier continue untagged.
 	now := time.Now()
+	if e.renewing.Load() {
+		return nil, status.Error(codes.Unavailable, "TESLA attribution keys are renewing; new runs will resume automatically")
+	}
 	if e.teslaSchedule.Exhausted(now) {
-		return nil, status.Error(codes.FailedPrecondition, "TESLA key chain exhausted: this executor admits no new runs until it is restarted")
+		return nil, status.Error(codes.FailedPrecondition, "TESLA key chain exhausted: waiting for automatic renewal")
+	}
+	start := now
+	if startTime != nil && startTime.After(start) {
+		start = *startTime
+	}
+	if !start.Before(e.teslaSchedule.Expiry()) || spec.Policy.Timeout >= e.teslaSchedule.Expiry().Sub(start) {
+		return nil, status.Error(codes.FailedPrecondition, "run reservation extends beyond the current TESLA chain; shorten it or retry after automatic renewal")
 	}
 	if reason := clockRefusal(e.teslaSchedule.Attribution(now).Reason, e.tagging); reason != "" {
-		return nil, status.Errorf(codes.FailedPrecondition, "TESLA attribution unavailable (%s): this executor admits no new runs until it is restarted with a ready clock", reason)
+		return nil, status.Errorf(codes.FailedPrecondition, "TESLA attribution unavailable (%s): this executor admits no new runs until a fresh chain starts with a ready clock through automatic renewal or restart", reason)
 	}
 	if e.outputFailed != nil && e.outputFailed.Load() {
 		return nil, status.Error(codes.Unavailable, "executor output storage is unhealthy")
 	}
 	stage = "scheduler_admission"
 	if err := e.scheduler.Insert(ctx, spec); err != nil {
+		if errors.Is(err, scheduler.ErrDraining) {
+			return nil, status.Error(codes.Unavailable, "TESLA attribution keys are renewing; new runs will resume automatically")
+		}
 		if errors.Is(err, scheduler.ErrUploadLimit) {
 			return nil, status.Error(codes.ResourceExhausted, "executor upload size limit reached")
 		}

@@ -125,7 +125,7 @@ counter, not evidence that the kernel still enforces every packet.
 | `executor_network_revoked_sockets_max` | Largest count in a current executor session of sockets actually closed by destination revocation. |
 | `executor_counter_drop_verdicts_max{direction="..."}` | Largest cumulative number of local TCX drop verdicts from a current counter instance. |
 | `executor_counter_drop_skb_bytes_max{direction="..."}` | Largest cumulative sum of socket-buffer lengths at those drop verdicts. |
-| `executors_attribution_state{state="..."}` | Counts for `available`, `epoch_zero`, `chain_exhausted`, `refresh_failing`, `disclosure_held`, `clock_unready`, `clock_drift` and `unknown`. |
+| `executors_attribution_state{state="..."}` | Counts for `available`, `epoch_zero`, `chain_exhausted`, `chain_renewing`, `refresh_failing`, `disclosure_held`, `clock_unready`, `clock_drift` and `unknown`. |
 | `executors_clock_readiness{state="..."}` | Counts for `ready`, `degraded` and `unknown`, from the kernel clock report and its configured error threshold. |
 | `executors_schedule_unknown` | Executors without a usable fresh schedule observation. |
 | `executors_schedule_expired` | Announced signing schedules whose expiry has passed on the dispatcher's clock. |

@@ -538,6 +538,8 @@ and groups and the receipt key, not the packets.
    1.18).
 5. #71(b): executor-signed schedule parameters, carried in candidates and
    evidence with independently pinned certificate verification. *Landed*
-   (dispatcher schema 29, API 1.21). Chain exhaustion still stops attributed
-   signing until restart; seamless rollover is not supported. The previous-chain
-   tail recovery and backup limits above remain unchanged.
+   (dispatcher schema 29, API 1.21). The executor now renews automatically at a drained session
+   boundary, after used keys have durable disclosure receipts. Admission pauses
+   during this handover; seamless rollover is not supported. The previous-chain
+   tail recovery and backup limits above remain unchanged. See
+   [key renewal](operations/configuration.md#executor-tesla-key-schedule).

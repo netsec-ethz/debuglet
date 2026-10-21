@@ -10,6 +10,14 @@ changes; the linked API and deployment documentation contains operational detail
 
 ## [Unreleased]
 
+### Changed
+- Executors automatically renew exhausted TESLA chains through a drained
+  reconnect, preserving identity and announcing the replacement anchor before
+  accepting runs. Admission pauses until accepted work, used-key disclosure
+  and output delivery finish; discovery reports `chain_renewing` (API 1.25).
+  Upgrade the dispatcher and console before executors. See
+  `docs/operations/configuration.md` for timing and recovery limits.
+
 ### Security
 - UDP and ICMP datagrams that the pure-Go tagger sends are charged by the
   eBPF packet counter (#67). The pure-Go tagger sends each tagged datagram

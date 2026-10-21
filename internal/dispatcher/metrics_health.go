@@ -24,6 +24,7 @@ type ExecutorHealthMetrics struct {
 	AttributionAvailable  int
 	EpochZero             int
 	ChainExhausted        int
+	ChainRenewing         int
 	RefreshFailing        int
 	DisclosureHeld        int
 	ClockUnready          int
@@ -143,6 +144,8 @@ func (m *ExecutorHealthMetrics) observe(e *executorEntry, now time.Time, connect
 				m.EpochZero++
 			case "chain_exhausted":
 				m.ChainExhausted++
+			case "chain_renewing":
+				m.ChainRenewing++
 			case "refresh_failing":
 				m.RefreshFailing++
 			case "disclosure_held":

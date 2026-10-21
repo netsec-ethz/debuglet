@@ -36,6 +36,9 @@ func (*abortTestScheduler) StartLoop(context.Context) error {
 	return errors.New("unexpected fixture loop")
 }
 func (*abortTestScheduler) Shutdown(context.Context) error { return nil }
+func (*abortTestScheduler) BeginDrain()                    {}
+func (*abortTestScheduler) TryDrain() bool                 { return false }
+func (*abortTestScheduler) IsDrained() bool                { return false }
 
 func TestAbortWaitsForSchedulerCompletion(t *testing.T) {
 	id := uuid.New()
