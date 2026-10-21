@@ -149,8 +149,12 @@ func generate(w Workflow, experimentConfig string) (Program, error) {
 			callNext("true")
 			out.WriteString("}\n")
 			callNext("false")
-		case "repeat":
-			fmt.Fprintf(&out, "count,err:=guest.RepeatCount(in[\"count\"]);if err!=nil{return runtime.Fail(%q,%q,err)}\nfor iteration:=1;iteration<=count;iteration++{\n", n.ID, n.Block)
+		case "repeat", "for_each":
+			if n.Block == "for_each" {
+				fmt.Fprintf(&out, "items,err:=guest.ForEachItems(in[\"values\"]);if err!=nil{return runtime.Fail(%q,%q,err)}\nfor index,item:=range items{\n", n.ID, n.Block)
+			} else {
+				fmt.Fprintf(&out, "count,err:=guest.RepeatCount(in[\"count\"]);if err!=nil{return runtime.Fail(%q,%q,err)}\nfor iteration:=1;iteration<=count;iteration++{\n", n.ID, n.Block)
+			}
 			body := control[Endpoint{n.ID, "body"}]
 			bodyNodes := reachable(body, adj)
 			ids := make([]string, 0, len(bodyNodes))
@@ -163,7 +167,14 @@ func generate(w Workflow, experimentConfig string) (Program, error) {
 				fmt.Fprintf(&out, "%q,", id)
 			}
 			out.WriteString(")\n")
-			fmt.Fprintf(&out, "if err=runtime.Record(%q,%q,map[string]any{\"iteration\":float64(iteration)});err!=nil{return err}\nif err=run%d();err!=nil{return err}\n}\n", n.ID, n.Block, indexes[body])
+			values := "map[string]any{\"iteration\":float64(iteration)}"
+			if n.Block == "for_each" {
+				values = "map[string]any{\"item\":item,\"index\":float64(index)}"
+			}
+			fmt.Fprintf(&out, "if err=runtime.Record(%q,%q,%s);err!=nil{return err}\nif err=run%d();err!=nil{return err}\n}\n", n.ID, n.Block, values, indexes[body])
+			if n.Block == "for_each" {
+				fmt.Fprintf(&out, "runtime.Forget(%q)\n", n.ID)
+			}
 			callNext("done")
 		case "wait":
 			fmt.Fprintf(&out, "if err=guest.Wait(in[\"duration_ms\"]);err!=nil{return runtime.Fail(%q,%q,err)}\nif err=runtime.Record(%q,%q,map[string]any{});err!=nil{return err}\n", n.ID, n.Block, n.ID, n.Block)
