@@ -229,16 +229,24 @@ def archive(stage, destination):
 
 
 def smoke(source, stage):
-    # Compile both API outputs with only the packaged SDK/toolchain/module cache.
-    # Neither generated guest is executed. A fresh build cache detects omissions.
+    # Compile both API outputs and the DNS dependency with only bundled inputs.
+    # No guest is executed. A fresh build cache detects dependency omissions.
     with tempfile.TemporaryDirectory(prefix='debuglet-studio-smoke-') as temporary:
         env = environment(PATH=str(stage / 'go/bin'), HOME=temporary, TMPDIR=temporary,
                           GOCACHE=temporary + '/cache', GOMODCACHE=str(stage / 'modules'))
+        dns = Path(temporary) / 'dns.json'
+        dns.write_bytes(encoded({
+            'version': 1, 'name': 'DNS package check', 'entry': 'query',
+            'nodes': [{'id': 'query', 'block': 'dns_query',
+                       'inputs': {'resolver': '192.0.2.53:53', 'name': 'example.test'}}],
+            'edges': [],
+        }))
         for operation, fixture in (
-                ('build', 'examples/workflows/custom-transform.json'),
-                ('build-experiment', 'examples/workflows/experiments/three-node.json')):
+                ('build', source / 'examples/workflows/custom-transform.json'),
+                ('build', dns),
+                ('build-experiment', source / 'examples/workflows/experiments/three-node.json')):
             command([str(stage / 'bin/dbl-studio'), operation, '--sdk', str(stage / 'sdk'),
-                     '--input', str(source / fixture), '--output', temporary + '/bundle.json'],
+                     '--input', str(fixture), '--output', temporary + '/bundle.json'],
                     source, env, timeout=180)
 
 
