@@ -31,15 +31,17 @@ const (
 )
 
 type Bundle struct {
-	Version        int               `json:"version"`
-	Workflow       workflow.Workflow `json:"workflow"`
-	WorkflowJSON   string            `json:"workflow_json"`
-	Source         string            `json:"source"`
-	WorkflowSHA256 string            `json:"workflow_sha256"`
-	WasmSHA256     string            `json:"wasm_sha256"`
-	Wasm           []byte            `json:"wasm"`
-	Destinations   []string          `json:"destinations"`
-	RequireICMP    bool              `json:"require_icmp"`
+	Version               int               `json:"version"`
+	Workflow              workflow.Workflow `json:"workflow"`
+	WorkflowJSON          string            `json:"workflow_json"`
+	Source                string            `json:"source"`
+	WorkflowSHA256        string            `json:"workflow_sha256"`
+	WasmSHA256            string            `json:"wasm_sha256"`
+	Wasm                  []byte            `json:"wasm"`
+	Destinations          []string          `json:"destinations"`
+	RequireICMP           bool              `json:"require_icmp"`
+	RequireUDPListener    bool              `json:"require_udp_listener,omitempty"`
+	RequiredHostFunctions []string          `json:"required_host_functions,omitempty"`
 }
 
 type ValidationError struct {
@@ -171,7 +173,7 @@ func (b *Builder) buildProgram(ctx context.Context, wf workflow.Workflow, raw []
 	if len(wasm) > maxWasmBytes {
 		return nil, errors.New("compiled workflow exceeds the 16 MiB module limit")
 	}
-	bundle := &Bundle{Version: 1, Workflow: wf, WorkflowJSON: string(raw), Source: program.Source, WorkflowSHA256: program.WorkflowSHA256, WasmSHA256: digest(wasm), Wasm: wasm, Destinations: program.Destinations, RequireICMP: program.RequireICMP}
+	bundle := &Bundle{Version: 1, Workflow: wf, WorkflowJSON: string(raw), Source: program.Source, WorkflowSHA256: program.WorkflowSHA256, WasmSHA256: digest(wasm), Wasm: wasm, Destinations: program.Destinations, RequireICMP: program.RequireICMP, RequireUDPListener: program.RequireUDPListener, RequiredHostFunctions: program.RequiredHostFunctions}
 	encoded, err := json.Marshal(bundle)
 	if err != nil {
 		return nil, err

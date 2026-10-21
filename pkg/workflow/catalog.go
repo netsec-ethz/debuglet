@@ -9,7 +9,7 @@ func output(name, kind string) Port              { return Port{Name: name, Type:
 
 // Catalog returns independent descriptions of the supported primitives.
 func Catalog() []Block {
-	return []Block{
+	return append([]Block{
 		{"http", "HTTP request", "Network", "Send one HTTP request. ok describes transport completion; compare status to choose an HTTP success policy. Body is text; request headers are string values. Response headers use lowercase names and lists of values. Redirects are returned, not followed.", false, []Port{input("url", "string"), optional("method", "string", "GET"), optional("body", "string", ""), optional("headers", "object", map[string]any{}), optional("timeout_ms", "number", float64(2000))}, []Port{output("ok", "boolean"), output("error", "string"), output("status", "number"), output("body", "string"), output("headers", "object"), output("duration_ms", "number")}, []string{"next"}},
 		{"tcp_connect", "TCP connect", "Network", "Measure one TCP connection to host:port.", false, []Port{input("target", "string"), optional("timeout_ms", "number", float64(2000))}, []Port{output("ok", "boolean"), output("error", "string"), output("duration_ms", "number")}, []string{"next"}},
 		{"ping", "Ping", "Network", "Send up to ten ICMPv4 echo requests. rtts_ms contains successful replies; loss is a percentage.", false, []Port{input("target", "string"), optional("count", "number", float64(3)), optional("timeout_ms", "number", float64(2000))}, []Port{output("ok", "boolean"), output("error", "string"), output("rtts_ms", "numbers"), output("sent", "number"), output("received", "number"), output("loss", "number")}, []string{"next"}},
@@ -47,7 +47,7 @@ func Catalog() []Block {
 		{"repeat", "Repeat", "Control", "Run the body sequentially up to 100 times, then continue on done. The body ends at an unconnected control output.", false, []Port{input("count", "number")}, []Port{output("iteration", "number")}, []string{"body", "done"}},
 		{"wait", "Wait", "Control", "Wait between actions, at most 60 seconds per call.", false, []Port{input("duration_ms", "number")}, []Port{}, []string{"next"}},
 		{"emit", "Emit result", "Results", "Publish a named JSON result.", false, []Port{input("name", "string"), input("value", "any")}, []Port{output("name", "string"), output("value", "any")}, []string{"next"}},
-	}
+	}, measurementCatalog()...)
 }
 
 func catalogFor(w Workflow) map[string]Block {

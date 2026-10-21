@@ -47,7 +47,7 @@ func generate(w Workflow, experimentConfig string) (Program, error) {
 	}
 	if experimentConfig == "" {
 		for _, n := range w.Nodes {
-			if n.Block == "send_message" || n.Block == "await_message" {
+			if n.Block == "send_message" || n.Block == "await_message" || n.Block == "phase_barrier" {
 				return Program{}, fmt.Errorf("%s requires building the whole experiment", n.Block)
 			}
 		}
@@ -174,6 +174,36 @@ func generate(w Workflow, experimentConfig string) (Program, error) {
 				out.WriteString("values,err:=experiment.Send(in)\n")
 			case "await_message":
 				out.WriteString("values,err:=experiment.Await(in)\n")
+			case "phase_barrier":
+				out.WriteString("values,err:=experiment.Barrier(in)\n")
+			case "start_timer":
+				out.WriteString("_ = in\nvalues,err:=runtime.StartTimer()\n")
+			case "elapsed":
+				out.WriteString("values,err:=runtime.Elapsed(in)\n")
+			case "create_collection":
+				out.WriteString("_ = in\nvalues,err:=runtime.CreateCollection()\n")
+			case "collect":
+				out.WriteString("values,err:=runtime.Collect(in)\n")
+			case "read_collection":
+				out.WriteString("values,err:=runtime.ReadCollection(in)\n")
+			case "reset_collection":
+				out.WriteString("values,err:=runtime.ResetCollection(in)\n")
+			case "dns_query":
+				out.WriteString("values,err:=guest.DNSQuery(in)\n")
+			case "udp_exchange":
+				out.WriteString("values,err:=guest.UDPExchange(in)\n")
+			case "tcp_exchange":
+				out.WriteString("values,err:=guest.TCPExchange(in)\n")
+			case "tls_inspect":
+				out.WriteString("values,err:=guest.TLSInspect(in)\n")
+			case "hop_probe":
+				out.WriteString("values,err:=guest.HopProbe(in)\n")
+			case "udp_listener":
+				out.WriteString("values,err:=guest.UDPListener(in)\n")
+			case "udp_receive":
+				out.WriteString("values,err:=guest.UDPReceive(in)\n")
+			case "udp_reply":
+				out.WriteString("values,err:=guest.UDPReply(in)\n")
 			case "http":
 				out.WriteString("values,err:=guest.HTTP(in)\n")
 			case "tcp_connect":
@@ -196,13 +226,26 @@ func generate(w Workflow, experimentConfig string) (Program, error) {
 	}
 	program := Program{Source: string(source), WorkflowSHA256: digest, Destinations: []string{}}
 	for _, n := range w.Nodes {
-		if n.Block == "ping" {
+		if n.Block == "ping" || n.Block == "hop_probe" {
 			program.RequireICMP = true
+		}
+		if n.Block == "udp_listener" || n.Block == "udp_receive" || n.Block == "udp_reply" {
+			program.RequireUDPListener = true
+		}
+		if function := map[string]string{"tls_inspect": "tls_inspect", "hop_probe": "hop_probe", "udp_receive": "receive_udp", "udp_reply": "reply_udp"}[n.Block]; function != "" {
+			name := "debuglet_io_v1." + function
+			if !slices.Contains(program.RequiredHostFunctions, name) {
+				program.RequiredHostFunctions = append(program.RequiredHostFunctions, name)
+			}
 		}
 		field := "target"
 		if n.Block == "http" {
 			field = "url"
-		} else if n.Block != "ping" && n.Block != "tcp_connect" {
+		} else if n.Block == "dns_query" {
+			field = "resolver"
+		} else if n.Block == "udp_reply" {
+			field = "destination"
+		} else if !slices.Contains([]string{"ping", "tcp_connect", "udp_exchange", "tcp_exchange", "tls_inspect", "hop_probe"}, n.Block) {
 			continue
 		}
 		value := n.Inputs[field]
@@ -224,7 +267,7 @@ func generate(w Workflow, experimentConfig string) (Program, error) {
 				continue
 			}
 			target = u.Hostname()
-		} else if n.Block == "tcp_connect" {
+		} else if n.Block != "ping" && n.Block != "hop_probe" {
 			host, _, e := net.SplitHostPort(target)
 			if e != nil {
 				continue
@@ -236,6 +279,7 @@ func generate(w Workflow, experimentConfig string) (Program, error) {
 		}
 	}
 	slices.Sort(program.Destinations)
+	slices.Sort(program.RequiredHostFunctions)
 	return program, nil
 }
 func typeMap(ports []Port) string {

@@ -1010,5 +1010,696 @@
     "control_outputs": [
       "next"
     ]
+  },
+  {
+    "id": "dns_query",
+    "label": "DNS query",
+    "category": "Network",
+    "description": "Query a chosen resolver at IP:port over UDP or TCP. Returns DNS response flags, records and TTLs. ok means a valid response arrived; inspect rcode for DNS success. No automatic retry or TCP fallback.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "resolver",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "record_type",
+        "type": "string",
+        "default": "A"
+      },
+      {
+        "name": "transport",
+        "type": "string",
+        "default": "udp"
+      },
+      {
+        "name": "recursion_desired",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "name": "checking_disabled",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "name": "dnssec_ok",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "name": "request_nsid",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "name": "timeout_ms",
+        "type": "number",
+        "default": 2000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      },
+      {
+        "name": "rcode",
+        "type": "string"
+      },
+      {
+        "name": "answers",
+        "type": "any"
+      },
+      {
+        "name": "authorities",
+        "type": "any"
+      },
+      {
+        "name": "additionals",
+        "type": "any"
+      },
+      {
+        "name": "flags",
+        "type": "object"
+      },
+      {
+        "name": "response_base64",
+        "type": "string"
+      },
+      {
+        "name": "duration_ms",
+        "type": "number"
+      },
+      {
+        "name": "truncated",
+        "type": "boolean"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "udp_exchange",
+    "label": "UDP exchange",
+    "category": "Network",
+    "description": "Send one datagram to host:port and wait for one response. Payload encoding is text or base64; response_base64 preserves exact bytes. Maximum response is 8191 bytes; larger replies are marked truncated.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "target",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "payload",
+        "type": "string",
+        "default": ""
+      },
+      {
+        "name": "encoding",
+        "type": "string",
+        "default": "text"
+      },
+      {
+        "name": "max_bytes",
+        "type": "number",
+        "default": 4096
+      },
+      {
+        "name": "timeout_ms",
+        "type": "number",
+        "default": 2000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      },
+      {
+        "name": "response",
+        "type": "string"
+      },
+      {
+        "name": "response_base64",
+        "type": "string"
+      },
+      {
+        "name": "received_bytes",
+        "type": "number"
+      },
+      {
+        "name": "sent_bytes",
+        "type": "number"
+      },
+      {
+        "name": "duration_ms",
+        "type": "number"
+      },
+      {
+        "name": "complete",
+        "type": "boolean"
+      },
+      {
+        "name": "truncated",
+        "type": "boolean"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "tcp_exchange",
+    "label": "TCP exchange",
+    "category": "Network",
+    "description": "Connect, send a payload, then read until a delimiter, byte count, or EOF. One timeout covers the exchange. response_base64 preserves exact bytes; complete distinguishes the requested ending from a size limit.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "target",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "payload",
+        "type": "string",
+        "default": ""
+      },
+      {
+        "name": "encoding",
+        "type": "string",
+        "default": "text"
+      },
+      {
+        "name": "read_until",
+        "type": "string",
+        "default": "delimiter"
+      },
+      {
+        "name": "delimiter",
+        "type": "string",
+        "default": "\n"
+      },
+      {
+        "name": "max_bytes",
+        "type": "number",
+        "default": 4096
+      },
+      {
+        "name": "timeout_ms",
+        "type": "number",
+        "default": 2000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      },
+      {
+        "name": "response",
+        "type": "string"
+      },
+      {
+        "name": "response_base64",
+        "type": "string"
+      },
+      {
+        "name": "received_bytes",
+        "type": "number"
+      },
+      {
+        "name": "sent_bytes",
+        "type": "number"
+      },
+      {
+        "name": "duration_ms",
+        "type": "number"
+      },
+      {
+        "name": "complete",
+        "type": "boolean"
+      },
+      {
+        "name": "truncated",
+        "type": "boolean"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "tls_inspect",
+    "label": "TLS handshake",
+    "category": "Network",
+    "description": "Connect with normal certificate verification and inspect the negotiated TLS session and peer certificates. Duration includes resolution, connection and handshake; it is not handshake-only timing. Requires an updated executor.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "target",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "timeout_ms",
+        "type": "number",
+        "default": 2000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      },
+      {
+        "name": "duration_ms",
+        "type": "number"
+      },
+      {
+        "name": "tls_version",
+        "type": "string"
+      },
+      {
+        "name": "cipher",
+        "type": "string"
+      },
+      {
+        "name": "alpn",
+        "type": "string"
+      },
+      {
+        "name": "server_name",
+        "type": "string"
+      },
+      {
+        "name": "peer_address",
+        "type": "string"
+      },
+      {
+        "name": "certificates",
+        "type": "any"
+      },
+      {
+        "name": "verified",
+        "type": "boolean"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "hop_probe",
+    "label": "Hop probe",
+    "category": "Network",
+    "description": "Send one IPv4 ICMP echo probe with a chosen TTL (1–255). Reports a correlated router or destination response. Requires ICMP and an updated executor. Repeat with increasing TTLs to inspect a route.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "target",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "ttl",
+        "type": "number",
+        "default": 1
+      },
+      {
+        "name": "timeout_ms",
+        "type": "number",
+        "default": 2000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      },
+      {
+        "name": "duration_ms",
+        "type": "number"
+      },
+      {
+        "name": "reply_address",
+        "type": "string"
+      },
+      {
+        "name": "icmp_type",
+        "type": "number"
+      },
+      {
+        "name": "icmp_code",
+        "type": "number"
+      },
+      {
+        "name": "reached",
+        "type": "boolean"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "udp_listener",
+    "label": "UDP listener address",
+    "category": "Network",
+    "description": "Read this run's admitted public UDP endpoint before receiving a packet. Enable a UDP listener when submitting the program.",
+    "pure": false,
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "address",
+        "type": "string"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "udp_receive",
+    "label": "Receive UDP",
+    "category": "Network",
+    "description": "Wait for one datagram on this run's admitted UDP listener. source can feed Reply UDP. payload uses text or base64; payload_base64 always preserves the received bytes. Requires an updated executor.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "timeout_ms",
+        "type": "number",
+        "default": 2000
+      },
+      {
+        "name": "max_bytes",
+        "type": "number",
+        "default": 8192
+      },
+      {
+        "name": "encoding",
+        "type": "string",
+        "default": "text"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      },
+      {
+        "name": "source",
+        "type": "string"
+      },
+      {
+        "name": "payload",
+        "type": "string"
+      },
+      {
+        "name": "payload_base64",
+        "type": "string"
+      },
+      {
+        "name": "bytes",
+        "type": "number"
+      },
+      {
+        "name": "truncated",
+        "type": "boolean"
+      },
+      {
+        "name": "duration_ms",
+        "type": "number"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "udp_reply",
+    "label": "Reply UDP",
+    "category": "Network",
+    "description": "Reply to the last successfully received datagram from this run's UDP listener, subject to current outbound policy. Connect Receive UDP's source to destination. Payload encoding is text or base64. Requires an updated executor.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "destination",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "payload",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "encoding",
+        "type": "string",
+        "default": "text"
+      },
+      {
+        "name": "timeout_ms",
+        "type": "number",
+        "default": 2000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      },
+      {
+        "name": "bytes",
+        "type": "number"
+      },
+      {
+        "name": "duration_ms",
+        "type": "number"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "start_timer",
+    "label": "Start timer",
+    "category": "Timing",
+    "description": "Create a timer for this run (up to 128). Connect its timer output to Elapsed time. Uses a monotonic local clock; it does not synchronize executors.",
+    "pure": false,
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "timer",
+        "type": "string"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "elapsed",
+    "label": "Elapsed time",
+    "category": "Timing",
+    "description": "Measure milliseconds since a Start timer action in this run. Reading a timer does not reset it.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "timer",
+        "type": "string",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "duration_ms",
+        "type": "number"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "create_collection",
+    "label": "Create sample collection",
+    "category": "Data",
+    "description": "Create an empty run-local sample collection (up to 32). Place before Repeat; connect collection to Collect sample and Read samples.",
+    "pure": false,
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "collection",
+        "type": "string"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "collect",
+    "label": "Collect sample",
+    "category": "Data",
+    "description": "Append a snapshot to a collection. Survives Repeat iterations. Bounded to 1024 samples and 48 KiB per collection, with 256 KiB across the run.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "collection",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "value",
+        "type": "any",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "count",
+        "type": "number"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "read_collection",
+    "label": "Read samples",
+    "category": "Data",
+    "description": "Read an independent list of collected samples, for statistics or result output.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "collection",
+        "type": "string",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "values",
+        "type": "any"
+      },
+      {
+        "name": "count",
+        "type": "number"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "reset_collection",
+    "label": "Clear samples",
+    "category": "Data",
+    "description": "Empty a collection and release its sample storage. The collection handle remains usable.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "collection",
+        "type": "string",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "count",
+        "type": "number"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "phase_barrier",
+    "label": "Wait for phase",
+    "category": "Experiment",
+    "description": "Wait until all experiment participants reach this named phase and repetition. Every participant must call it in the same order. A timeout reports missing peers; release does not synchronize clocks or guarantee simultaneous execution.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "phase",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "timeout_ms",
+        "type": "number",
+        "default": 5000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      },
+      {
+        "name": "phase",
+        "type": "string"
+      },
+      {
+        "name": "generation",
+        "type": "number"
+      },
+      {
+        "name": "missing",
+        "type": "strings"
+      },
+      {
+        "name": "duration_ms",
+        "type": "number"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
   }
 ]
