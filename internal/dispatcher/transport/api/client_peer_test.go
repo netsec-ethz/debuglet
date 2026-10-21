@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -23,34 +22,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
-
-// The dispatcher package's private test helper cannot be imported here, so
-// these API fixtures construct the scripted executor from exported components.
-// They introduce no production hook.
-
-// cpAdapter is the test-only DispatcherState handed to the replacement Bidi.
-// It forwards everything to the real Dispatcher except OnExecutorConnected,
-// which delegates real registration and reports the stage result. Capacity
-// is acknowledged over the bound direct channel. The outer fixture waits for transport-marked availability.
-type cpAdapter struct {
-	rpc.DispatcherState
-	d     *dispatcher.Dispatcher
-	ready chan cpRegistration
-	once  sync.Once
-}
-
-type cpRegistration struct {
-	owner *rpc.SessionOwner
-	err   error
-}
-
-func (a *cpAdapter) OnExecutorConnected(ctx context.Context, owner *rpc.SessionOwner, h *pb.HelloResponse, sourceIP string) error {
-	err := a.d.OnExecutorConnected(ctx, owner, h, sourceIP)
-	// Transport marks Registered only after this callback returns. Report the
-	// stage to the fixture; never wait for Registered here.
-	a.once.Do(func() { a.ready <- cpRegistration{owner: owner, err: err} })
-	return err
-}
 
 // cpPeer is the scripted ExecutorService. Upload records every payload and
 // runs the current upload hook before replying, so a case can drive the real
@@ -183,104 +154,24 @@ func (p *cpPeer) abortCount() int {
 // context, which remains the lifetime of a successfully started peer.
 var cpRegistrationBound = 10 * time.Second
 
-// startClientPeer replaces d's constructor Bidi with one serving yamux on a
-// loopback listener, connects peer over yamux and gRPC, and returns once
-// Hello, real registration and a positive-capacity acknowledgement have
-// completed within cpRegistrationBound. On failure, including that deadline,
-// it cancels and joins everything it started through the same teardown path.
-// The returned stop is idempotent and bounded by its cleanup context; it
-// cancels, closes the listener and session, stops the peer gRPC server
-// waiting for active handlers, joins both serve goroutines and closes the
-// complete Dispatcher before reporting completion. Constructors also register
-// idempotent Dispatcher.Close immediately to cover setup failures.
+// startClientPeer retains the direct client for scripted callbacks after
+// real registration and a positive-capacity acknowledgement have completed.
 func startClientPeer(ctx context.Context, d *dispatcher.Dispatcher, capacity bitrate.Bitrate,
-	peer pb.ExecutorServiceServer) (stop func(context.Context) error, err error) {
-	if capacity <= 0 {
-		return nil, errors.New("client peer: capacity must be positive")
-	}
-	if peer == nil {
-		return nil, errors.New("client peer: nil executor service")
-	}
-	registrationCtx, cancelRegistration := context.WithTimeout(ctx, cpRegistrationBound)
-	defer cancelRegistration()
-	d.Bidi.Close()
-	adapter := &cpAdapter{DispatcherState: d, d: d, ready: make(chan cpRegistration, 1)}
-	replacement, err := rpc.NewBidiServer(zap.NewNop(), adapter, d.ControlIncarnation(), d.ControlLeaseDuration())
-	if err != nil {
+	peer pb.ExecutorServiceServer) (func(context.Context) error, error) {
+	p, err := testpeer.StartRegistered(ctx, d, &d.Bidi, capacity, peer, cpRegistrationBound)
+	if p == nil {
 		return nil, err
 	}
-	d.Bidi = replacement
-	transport, err := testpeer.Start(ctx, d.Bidi, peer)
-	if err != nil {
-		d.Close()
-		return nil, err
-	}
-	var once sync.Once
-	joined := make(chan struct{})
-	teardown := func(cleanup context.Context) error {
-		once.Do(func() {
-			go func() {
-				defer close(joined)
-				// The actual handler join remains owned after any caller timeout.
-				_ = transport.Stop(context.Background())
-				d.Close()
-			}()
-		})
-		select {
-		case <-joined:
-			return nil
-		case <-cleanup.Done():
-			return cleanup.Err()
+	if err == nil {
+		if _, ok := d.GetExecutor(p.Owner.ExecutorID()); !ok {
+			cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			err = errors.Join(errors.New("client peer: registered executor is not discoverable"), p.Stop(cleanup))
+		} else if scripted, ok := peer.(*cpPeer); ok {
+			scripted.direct, scripted.owner = p.Client, p.Owner
 		}
 	}
-	fail := func(cause error) (func(context.Context) error, error) {
-		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := teardown(cleanup); err != nil {
-			return teardown, errors.Join(cause, err)
-		}
-		return nil, cause
-	}
-	if err := transport.Client.WaitReadyContext(registrationCtx); err != nil {
-		if registrationCtx.Err() != nil {
-			err = registrationCtx.Err()
-		}
-		return fail(fmt.Errorf("client peer: registration: %w", err))
-	}
-	var registered cpRegistration
-	select {
-	case registered = <-adapter.ready:
-	case <-registrationCtx.Done():
-		return fail(registrationCtx.Err())
-	}
-	if registered.err != nil {
-		return fail(registered.err)
-	}
-	if registered.owner == nil || !registered.owner.Available() {
-		return fail(errors.New("client peer: registration has no available owner"))
-	}
-	binding, ok := transport.Client.Binding()
-	if !ok || binding != registered.owner.Binding() {
-		return fail(errors.New("client peer: negotiated identity mismatch"))
-	}
-	client, err := transport.Client.ClientFor(binding)
-	if err != nil {
-		return fail(err)
-	}
-	if _, err := client.Resources(registrationCtx, &pb.ResourcesRequest{ExecutorId: registered.owner.ExecutorID(), BandwidthCapacity: int64(capacity)}); err != nil {
-		return fail(err)
-	}
-	if _, ok := d.GetExecutor(registered.owner.ExecutorID()); !ok {
-		return fail(errors.New("client peer: registered executor is not discoverable"))
-	}
-	if _, ok := d.Bidi.GetClientFor(registered.owner); !ok {
-		return fail(errors.New("client peer: exact reverse client is unavailable"))
-	}
-	if p, ok := peer.(*cpPeer); ok {
-		p.direct = client
-		p.owner = registered.owner
-	}
-	return teardown, nil
+	return p.Stop, err
 }
 
 // cpBlockingHelloPeer never answers Hello, so registration cannot complete.

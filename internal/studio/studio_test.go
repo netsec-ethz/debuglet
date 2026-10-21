@@ -197,6 +197,9 @@ func TestMCPPreservesEditableWorkflowAndLimitsFilesystem(t *testing.T) {
 }
 
 func TestMCPBuildProducesOfflineWASIBundle(t *testing.T) {
+	if testing.Short() {
+		t.Skip("WASI compilation")
+	}
 	sdk, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)

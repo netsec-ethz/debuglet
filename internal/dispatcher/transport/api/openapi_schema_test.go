@@ -5,278 +5,103 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+
 	"regexp"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"go.yaml.in/yaml/v3"
 )
 
-// This file holds the reader and validator used to check real handler
-// responses and SDK requests against api/openapi.yaml. Both are deliberately
-// small and strict: the contract document is written in the flat subset of
-// YAML they accept (block mappings and sequences, two-space indentation,
-// double-quoted strings, whole-line comments), and the validator implements
-// only the schema keywords the document uses. Anything outside the subset is
-// an error rather than a silently ignored construct, so the document cannot
-// drift into shapes that are not actually checked. Loading the document
-// enforces that for the schemas as well: newContract walks the schemas of the
-// components section and of every operation's parameters, request body,
-// responses and response headers, and rejects the schema constructs the
-// validator does not implement, before any payload is looked at. That keeps
-// the declarations honest; it does not mean every declared value is checked:
-// the exchange suite validates request and response bodies and the names of
-// query parameters, not parameter or header values.
+// The YAML decoder handles syntax; this adapter rejects ambiguous object keys
+// and YAML-specific indirection. The schema checker below deliberately accepts
+// only the OpenAPI keywords it actually validates. Request and response bodies
+// and query parameter names are checked; parameter/header values are not.
 
-// ---------------------------------------------------------------- YAML subset
-
-type yamlLine struct {
-	number int
-	indent int
-	text   string
-}
-
-// parseYAML reads the supported YAML subset into map[string]any, []any,
-// string, int64, float64, bool and nil values.
 func parseYAML(data []byte) (any, error) {
-	var lines []yamlLine
-	for i, raw := range strings.Split(string(data), "\n") {
-		if strings.ContainsRune(raw, '\t') {
-			return nil, fmt.Errorf("line %d: tabs are not allowed in the contract document", i+1)
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	var document yaml.Node
+	if err := decoder.Decode(&document); err != nil {
+		if err == io.EOF {
+			return nil, nil
 		}
-		trimmed := strings.TrimLeft(raw, " ")
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		lines = append(lines, yamlLine{number: i + 1, indent: len(raw) - len(trimmed), text: strings.TrimRight(trimmed, " ")})
-	}
-	if len(lines) == 0 {
-		return nil, nil
-	}
-	value, next, err := parseYAMLBlock(lines, 0, lines[0].indent)
-	if err != nil {
 		return nil, err
 	}
-	if next != len(lines) {
-		return nil, fmt.Errorf("line %d: unexpected indentation", lines[next].number)
-	}
-	return value, nil
-}
-
-func parseYAMLBlock(lines []yamlLine, at, indent int) (any, int, error) {
-	if isSequenceItem(lines[at].text) {
-		return parseYAMLSequence(lines, at, indent)
-	}
-	return parseYAMLMapping(lines, at, indent)
-}
-
-func isSequenceItem(text string) bool {
-	return text == "-" || strings.HasPrefix(text, "- ")
-}
-
-func parseYAMLMapping(lines []yamlLine, at, indent int) (any, int, error) {
-	mapping := map[string]any{}
-	for at < len(lines) && lines[at].indent == indent {
-		line := lines[at]
-		if isSequenceItem(line.text) {
-			return nil, 0, fmt.Errorf("line %d: sequence item inside a mapping", line.number)
-		}
-		key, rest, err := splitYAMLKey(line.text)
+	var extra yaml.Node
+	if err := decoder.Decode(&extra); err != io.EOF {
 		if err != nil {
-			return nil, 0, fmt.Errorf("line %d: %w", line.number, err)
+			return nil, err
 		}
-		if _, duplicate := mapping[key]; duplicate {
-			return nil, 0, fmt.Errorf("line %d: duplicate key %q", line.number, key)
-		}
-		if rest != "" {
-			value, err := parseYAMLScalar(rest)
-			if err != nil {
-				return nil, 0, fmt.Errorf("line %d: %w", line.number, err)
-			}
-			mapping[key] = value
-			at++
-			continue
-		}
-		// A block value follows when the next line is nested deeper, or is a
-		// sequence at the same indentation as its key.
-		block := false
-		if at+1 < len(lines) {
-			next := lines[at+1]
-			block = next.indent > indent || (next.indent == indent && isSequenceItem(next.text))
-		}
-		if !block {
-			mapping[key] = nil
-			at++
-			continue
-		}
-		value, next, err := parseYAMLBlock(lines, at+1, lines[at+1].indent)
-		if err != nil {
-			return nil, 0, err
-		}
-		mapping[key] = value
-		at = next
+		return nil, fmt.Errorf("contract must contain one YAML document")
 	}
-	if at < len(lines) && lines[at].indent > indent {
-		return nil, 0, fmt.Errorf("line %d: unexpected indentation", lines[at].number)
-	}
-	return mapping, at, nil
+	return contractYAMLValue(&document)
 }
 
-func parseYAMLSequence(lines []yamlLine, at, indent int) (any, int, error) {
-	items := []any{}
-	for at < len(lines) && lines[at].indent == indent && isSequenceItem(lines[at].text) {
-		line := lines[at]
-		content := strings.TrimPrefix(line.text, "-")
-		spaces := len(content) - len(strings.TrimLeft(content, " "))
-		content = strings.TrimLeft(content, " ")
-		if content == "" {
-			if at+1 >= len(lines) || lines[at+1].indent <= indent {
-				items = append(items, nil)
-				at++
-				continue
+func contractYAMLValue(node *yaml.Node) (any, error) {
+	if node.Anchor != "" || node.Kind == yaml.AliasNode || node.Style&yaml.TaggedStyle != 0 {
+		return nil, fmt.Errorf("line %d: anchors, aliases and explicit tags are not supported", node.Line)
+	}
+	switch node.Kind {
+	case yaml.DocumentNode:
+		if len(node.Content) != 1 {
+			return nil, fmt.Errorf("expected one YAML value")
+		}
+		return contractYAMLValue(node.Content[0])
+	case yaml.MappingNode:
+		mapping := make(map[string]any, len(node.Content)/2)
+		for i := 0; i < len(node.Content); i += 2 {
+			key := node.Content[i]
+			if key.Kind != yaml.ScalarNode || key.Anchor != "" || key.Style&yaml.TaggedStyle != 0 || key.Tag == "!!merge" {
+				return nil, fmt.Errorf("line %d: mapping keys must be plain or quoted scalar names", key.Line)
 			}
-			value, next, err := parseYAMLBlock(lines, at+1, lines[at+1].indent)
+			if _, exists := mapping[key.Value]; exists {
+				return nil, fmt.Errorf("line %d: duplicate key %q", key.Line, key.Value)
+			}
+			value, err := contractYAMLValue(node.Content[i+1])
 			if err != nil {
-				return nil, 0, err
+				return nil, err
+			}
+			mapping[key.Value] = value
+		}
+		return mapping, nil
+	case yaml.SequenceNode:
+		items := make([]any, 0, len(node.Content))
+		for _, item := range node.Content {
+			value, err := contractYAMLValue(item)
+			if err != nil {
+				return nil, err
 			}
 			items = append(items, value)
-			at = next
-			continue
 		}
-		column := line.indent + 1 + spaces
-		if _, _, err := splitYAMLKey(content); err != nil {
-			value, err := parseYAMLScalar(content)
-			if err != nil {
-				return nil, 0, fmt.Errorf("line %d: %w", line.number, err)
-			}
-			items = append(items, value)
-			at++
-			continue
+		return items, nil
+	case yaml.ScalarNode:
+		if node.Style != 0 {
+			return node.Value, nil
 		}
-		// The item is a mapping whose first entry shares this line. Reading it
-		// as a line of its own at the content column joins it with the entries
-		// indented below.
-		lines[at] = yamlLine{number: line.number, indent: column, text: content}
-		value, next, err := parseYAMLMapping(lines, at, column)
-		if err != nil {
-			return nil, 0, err
+		// Preserve the contract's JSON-like scalar types. YAML's implicit
+		// timestamps, octal integers and case-insensitive booleans do not apply.
+		switch node.Value {
+		case "true":
+			return true, nil
+		case "false":
+			return false, nil
+		case "", "null", "~":
+			return nil, nil
 		}
-		items = append(items, value)
-		at = next
+		if n, err := strconv.ParseInt(node.Value, 10, 64); err == nil {
+			return n, nil
+		}
+		if n, err := strconv.ParseFloat(node.Value, 64); err == nil {
+			return n, nil
+		}
+		return node.Value, nil
+	default:
+		return nil, fmt.Errorf("line %d: unsupported YAML value", node.Line)
 	}
-	if at < len(lines) && lines[at].indent > indent {
-		return nil, 0, fmt.Errorf("line %d: unexpected indentation", lines[at].number)
-	}
-	return items, at, nil
-}
-
-// splitYAMLKey separates "key: value" or "key:" and reports an error when the
-// text is not a mapping entry.
-func splitYAMLKey(text string) (key, rest string, err error) {
-	if strings.HasPrefix(text, `"`) {
-		quoted, remainder, ok := cutQuoted(text)
-		if !ok {
-			return "", "", fmt.Errorf("unterminated quoted key")
-		}
-		if !strings.HasPrefix(remainder, ":") {
-			return "", "", fmt.Errorf("quoted key is not followed by a colon")
-		}
-		unquoted, err := unquoteYAML(quoted)
-		if err != nil {
-			return "", "", err
-		}
-		return unquoted, strings.TrimSpace(remainder[1:]), nil
-	}
-	for i := 0; i < len(text); i++ {
-		if text[i] != ':' {
-			continue
-		}
-		if i+1 == len(text) {
-			return strings.TrimSpace(text[:i]), "", nil
-		}
-		if text[i+1] == ' ' {
-			return strings.TrimSpace(text[:i]), strings.TrimSpace(text[i+1:]), nil
-		}
-	}
-	return "", "", fmt.Errorf("not a mapping entry: %q", text)
-}
-
-// cutQuoted returns the double-quoted prefix of text including its quotes and
-// the remainder after it.
-func cutQuoted(text string) (quoted, rest string, ok bool) {
-	for i := 1; i < len(text); i++ {
-		switch text[i] {
-		case '\\':
-			i++
-		case '"':
-			return text[:i+1], strings.TrimSpace(text[i+1:]), true
-		}
-	}
-	return "", "", false
-}
-
-func parseYAMLScalar(text string) (any, error) {
-	if strings.HasPrefix(text, `"`) {
-		quoted, rest, ok := cutQuoted(text)
-		if !ok {
-			return nil, fmt.Errorf("unterminated quoted scalar")
-		}
-		if rest != "" {
-			return nil, fmt.Errorf("trailing text after a quoted scalar: %q", rest)
-		}
-		return unquoteYAML(quoted)
-	}
-	switch text {
-	case "true":
-		return true, nil
-	case "false":
-		return false, nil
-	case "null", "~":
-		return nil, nil
-	case "[]":
-		// The one flow construct the document uses. Block style cannot write
-		// an empty sequence, and OpenAPI needs one to say that an operation
-		// requires no security scheme.
-		return []any{}, nil
-	}
-	if strings.ContainsAny(text, `'#[]{}&*!|>%@`+"`") {
-		return nil, fmt.Errorf("unsupported plain scalar: %q", text)
-	}
-	if number, err := strconv.ParseInt(text, 10, 64); err == nil {
-		return number, nil
-	}
-	if number, err := strconv.ParseFloat(text, 64); err == nil {
-		return number, nil
-	}
-	return text, nil
-}
-
-// unquoteYAML decodes the escape sequences the contract document may use.
-func unquoteYAML(quoted string) (string, error) {
-	body := quoted[1 : len(quoted)-1]
-	var b strings.Builder
-	for i := 0; i < len(body); i++ {
-		if body[i] != '\\' {
-			b.WriteByte(body[i])
-			continue
-		}
-		i++
-		if i >= len(body) {
-			return "", fmt.Errorf("trailing escape in quoted scalar")
-		}
-		switch body[i] {
-		case '"', '\\', '/':
-			b.WriteByte(body[i])
-		case 'n':
-			b.WriteByte('\n')
-		case 't':
-			b.WriteByte('\t')
-		default:
-			return "", fmt.Errorf("unsupported escape \\%c", body[i])
-		}
-	}
-	return b.String(), nil
 }
 
 // --------------------------------------------------------------- OpenAPI view
