@@ -1,6 +1,7 @@
 """Coverage ownership and package timing reports from ordinary test evidence."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -58,7 +59,7 @@ exit 0
 ''')
         compiler.chmod(0o755)
         result = subprocess.run(['bash', 'scripts/ci-test.sh', './...'], cwd=self.root,
-                                env={'PATH': '/usr/bin:/bin', 'GO': str(compiler)},
+                                env={**os.environ, 'GO': str(compiler)},
                                 capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 7, result.stderr)
         self.assertTrue((self.output / 'source.out').is_file())

@@ -143,13 +143,22 @@ func equalSchedule(a, b client.AttributionSchedule) bool {
 func TestAttributionKeysArePaged(t *testing.T) {
 	f := atFixture(t)
 	chain := tag.ChainID(atAnchor)
+	tx, err := f.db.BeginTx(f.ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	queries := database.New(tx)
 	for epoch := int64(1); epoch <= 1500; epoch++ {
 		if epoch == 700 {
 			continue // an epoch never disclosed is absent
 		}
-		if err := f.queries.InsertAttributionKey(f.ctx, database.InsertAttributionKeyParams{ExecutorID: ccExecutorID, ChainID: chain, Epoch: epoch, Key: []byte{byte(epoch)}, DisclosedAtNs: 1}); err != nil {
+		if err := queries.InsertAttributionKey(f.ctx, database.InsertAttributionKeyParams{ExecutorID: ccExecutorID, ChainID: chain, Epoch: epoch, Key: []byte{byte(epoch)}, DisclosedAtNs: 1}); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
 	}
 	anonymous := f.client(f.root.URL, false)
 	ctx, cancel := f.requestCtx()

@@ -173,12 +173,12 @@ setcaps: build
 	sudo setcap cap_net_admin,cap_net_raw,cap_perfmon,cap_bpf=ep ./$(EXECUTOR_BINARY)
 
 test:
-	$(GO) test -mod=readonly $(CI_PACKAGES)
+	$(GO) test -mod=readonly $$($(GO) list ./... | grep -v /examples/debuglets/)
 
 # Short mode omits explicitly marked compiler and runtime integration checks.
 # CI retains the full suite through ci-test and the separate race/kernel lanes.
 test-fast:
-	$(GO) test -mod=readonly -short $(CI_PACKAGES)
+	$(GO) test -mod=readonly -short $$($(GO) list ./... | grep -v /examples/debuglets/)
 
 coverage:
 	GO="$(GO)" CI_TEST_TIMEOUT="$(CI_TEST_TIMEOUT)" bash scripts/ci-test.sh $(CI_PACKAGES)
