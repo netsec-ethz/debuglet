@@ -31,8 +31,8 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	// Schema 34 adds saved result references and immutable measurement sources.
-	MinimumDispatcherVersion int64 = 34
+	// Schema 35 adds account-owned editable templates.
+	MinimumDispatcherVersion int64 = 35
 	MinimumExecutorVersion   int64 = 9
 )
 
@@ -71,6 +71,7 @@ func PolicyFor(role Role) (Policy, error) {
 			"transaction_states": nil,
 			"transactions":       nil,
 		}, Tables: map[string][]string{
+			"personal_templates":         {"id", "user_id", "document", "revision"},
 			"egress_clock":               {"id", "observed_at"},
 			"egress_grants":              {"run_uuid", "policy_hash", "window_start", "window_end", "grant_json"},
 			"egress_reservations":        {"run_uuid", "bucket", "bits_per_second", "burst_bytes", "bytes", "attempts_per_second", "attempt_burst", "attempts", "targets"},

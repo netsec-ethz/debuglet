@@ -461,3 +461,21 @@ Owned nodes expose optional `owner_display` (editable plain strings) and `displa
 (effective labelled values); older servers omit them. Operator configuration wins
 per field, otherwise a stored owner value carries source `owner`. Labels persist
 across restarts and appear in new discovery and result snapshots.
+
+## Personal templates (API 1.28)
+
+`GET /templates` lists the signed-in account's template metadata;
+`POST /templates` saves a new editable workflow or experiment.
+`GET`, `PUT` and `DELETE /templates/{id}` read, replace and delete an owned
+template. Reads need `measurements:read`; writes need `measurements:write`.
+Other accounts and anonymous callers cannot access personal templates.
+Cookie-session writes require CSRF protection.
+
+Save `name`, `kind` (`workflow` or `experiment`) and `document`, with optional
+`description` and `collection`. Updates must include the current `revision`;
+concurrent edits return 409 instead of overwriting a newer copy. Requests are
+bounded to 4 MiB; an account can save up to 256 templates and 64 MiB of source.
+Templates do not contain compiled bundles or run bindings. User-entered request
+values remain part of the source. Sharing copies that source into an existing
+community project experiment, subject to its normal membership permissions.
+Later personal edits or deletion do not change the shared copy or past runs.

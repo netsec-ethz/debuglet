@@ -234,7 +234,7 @@ OAuth, external TLS and SCION state need the deployment's complete backup plan;
 a database snapshot alone does not include every required credential or config.
 Never start original and restored copies with the same identity simultaneously.
 
-Dispatcher schema 34 and executor schema 9 are the current schema boundaries.
+Dispatcher schema 35 and executor schema 9 are the current schema boundaries.
 Dispatcher schema 29 preserves authenticated schedule history; schema 30 and
 executor schema 9 add durable aggregate egress grants. Dispatcher schema 31 adds
 owner-managed executor presentation labels.
@@ -315,3 +315,6 @@ Both modes act on the `database.path` of the configuration file given with `-con
 Each upgrade leaves its backup in place. Removing old `backup-*` directories is the operator's decision, after the upgraded service has been verified; a backup of a database with paid state is kept until its reconciliation is complete.
 
 The [configuration examples](../../configs) and [Ansible templates](../../deploy/ansible) are the canonical key-level references. Use the [Wiki](https://github.com/netsec-ethz/debuglet/wiki) for deployment, TLS, and operator procedures.
+
+Dispatcher schema 35 adds personal template storage. Run the operator database
+upgrade before starting a dispatcher built for this schema.

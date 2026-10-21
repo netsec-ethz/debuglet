@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.27"
+  version: "1.28"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Run reads require ownership, operator authority or explicit community sharing to a current member; payment orders and run mutations remain owner-scoped. A hidden resource answers 404. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -12,6 +12,495 @@ security:
   - bearerAuth: []
   - cookieAuth: []
 paths:
+  "/templates":
+    "get":
+      "operationId": "listTemplates"
+      "summary": "List personal template metadata."
+      "description": "Added in API 1.28. Owner-scoped editable source; reads require measurements:read and writes measurements:write. Cookie writes require X-Debuglet-CSRF. No compiled bundle or run is stored. Each account has at most 256 templates and 64 MiB of source. Writes are limited to 4 MiB; updates require the current revision. Sharing copies source to an existing community project experiment."
+      "parameters":
+        -
+          "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+      "responses":
+        "200":
+          "description": "Operation completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "type": "array"
+                "items":
+                  "$ref": "#/components/schemas/PersonalTemplateSummary"
+        "400":
+          "description": "Invalid source document or revision."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "Credential scope or CSRF proof does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "Template is absent or owned by another account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "Storage operation failed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+    "post":
+      "operationId": "createTemplate"
+      "summary": "Save a personal template."
+      "description": "Added in API 1.28. Owner-scoped editable source; reads require measurements:read and writes measurements:write. Cookie writes require X-Debuglet-CSRF. No compiled bundle or run is stored. Each account has at most 256 templates and 64 MiB of source. Writes are limited to 4 MiB; updates require the current revision. Sharing copies source to an existing community project experiment."
+      "parameters":
+        -
+          "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+      "responses":
+        "201":
+          "description": "Operation completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/PersonalTemplate"
+        "400":
+          "description": "Invalid source document or revision."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "Credential scope or CSRF proof does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "Template is absent or owned by another account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "409":
+          "description": "Revision changed or library limit reached."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request exceeds 4 MiB."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "415":
+          "description": "Request body must be application/json."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "Storage operation failed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/PersonalTemplateInput"
+  "/templates/{id}":
+    "get":
+      "operationId": "getTemplate"
+      "summary": "Read an owned editable template."
+      "description": "Added in API 1.28. Owner-scoped editable source; reads require measurements:read and writes measurements:write. Cookie writes require X-Debuglet-CSRF. No compiled bundle or run is stored. Each account has at most 256 templates and 64 MiB of source. Writes are limited to 4 MiB; updates require the current revision. Sharing copies source to an existing community project experiment."
+      "parameters":
+        -
+          "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        -
+          "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "responses":
+        "200":
+          "description": "Operation completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/PersonalTemplate"
+        "400":
+          "description": "Invalid source document or revision."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "Credential scope or CSRF proof does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "Template is absent or owned by another account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "Storage operation failed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+    "put":
+      "operationId": "updateTemplate"
+      "summary": "Replace an owned template at its current revision."
+      "description": "Added in API 1.28. Owner-scoped editable source; reads require measurements:read and writes measurements:write. Cookie writes require X-Debuglet-CSRF. No compiled bundle or run is stored. Each account has at most 256 templates and 64 MiB of source. Writes are limited to 4 MiB; updates require the current revision. Sharing copies source to an existing community project experiment."
+      "parameters":
+        -
+          "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        -
+          "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "responses":
+        "200":
+          "description": "Operation completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/PersonalTemplate"
+        "400":
+          "description": "Invalid source document or revision."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "Credential scope or CSRF proof does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "Template is absent or owned by another account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "409":
+          "description": "Revision changed or library limit reached."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The request exceeds 4 MiB."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "415":
+          "description": "Request body must be application/json."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "Storage operation failed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/PersonalTemplateInput"
+    "delete":
+      "operationId": "deleteTemplate"
+      "summary": "Delete an owned template; shared copies and runs remain."
+      "description": "Added in API 1.28. Owner-scoped editable source; reads require measurements:read and writes measurements:write. Cookie writes require X-Debuglet-CSRF. No compiled bundle or run is stored. Each account has at most 256 templates and 64 MiB of source. Writes are limited to 4 MiB; updates require the current revision. Sharing copies source to an existing community project experiment."
+      "parameters":
+        -
+          "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        -
+          "name": "id"
+          "in": "path"
+          "required": true
+          "schema":
+            "type": "string"
+            "format": "uuid"
+      "responses":
+        "204":
+          "description": "Operation completed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+        "400":
+          "description": "Invalid source document or revision."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "Credential scope or CSRF proof does not authorize this operation."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "404":
+          "description": "Template is absent or owned by another account."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "Storage operation failed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
   "/result-highlights":
     "get":
       "operationId": "listResultHighlights"
@@ -10138,6 +10627,101 @@ components:
       name: "session_token"
       description: "The same session token in a cookie, for a browser client. A state-changing request authenticated this way must repeat the session's CSRF token, returned as csrf_token and set in the session_csrf cookie, in the X-Debuglet-CSRF header."
   schemas:
+    "PersonalTemplateSummary":
+      "type": "object"
+      "required":
+        - "id"
+        - "name"
+        - "description"
+        - "collection"
+        - "kind"
+        - "revision"
+        - "updated_at"
+      "properties":
+        "id":
+          "type": "string"
+          "format": "uuid"
+        "name":
+          "type": "string"
+        "description":
+          "type": "string"
+        "collection":
+          "type": "string"
+        "kind":
+          "type": "string"
+          "enum":
+            - "workflow"
+            - "experiment"
+        "revision":
+          "type": "integer"
+          "minimum": 1
+        "updated_at":
+          "type": "string"
+          "format": "date-time"
+      "additionalProperties": false
+    "PersonalTemplate":
+      "type": "object"
+      "required":
+        - "id"
+        - "name"
+        - "description"
+        - "collection"
+        - "kind"
+        - "revision"
+        - "updated_at"
+        - "document"
+      "properties":
+        "id":
+          "type": "string"
+          "format": "uuid"
+        "name":
+          "type": "string"
+        "description":
+          "type": "string"
+        "collection":
+          "type": "string"
+        "kind":
+          "type": "string"
+          "enum":
+            - "workflow"
+            - "experiment"
+        "revision":
+          "type": "integer"
+          "minimum": 1
+        "updated_at":
+          "type": "string"
+          "format": "date-time"
+        "document":
+          "type": "object"
+          "additionalProperties": true
+          "description": "Editable workflow or experiment source; the existing Studio document validator applies."
+      "additionalProperties": false
+    "PersonalTemplateInput":
+      "type": "object"
+      "required":
+        - "name"
+        - "kind"
+        - "document"
+      "properties":
+        "name":
+          "type": "string"
+        "description":
+          "type": "string"
+        "collection":
+          "type": "string"
+        "kind":
+          "type": "string"
+          "enum":
+            - "workflow"
+            - "experiment"
+        "revision":
+          "type": "integer"
+          "minimum": 1
+        "document":
+          "type": "object"
+          "additionalProperties": true
+          "description": "Editable workflow or experiment source; the existing Studio document validator applies."
+      "additionalProperties": false
     "ResultHighlightMetadata":
       "type": "object"
       "additionalProperties": false
