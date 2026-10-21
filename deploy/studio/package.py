@@ -22,7 +22,7 @@ import subprocess
 import tarfile
 import tempfile
 
-GO_VERSION = 'go1.26.9'
+GO_VERSION = 'go1.26.10'
 MODULE = 'github.com/netsec-ethz/debuglet'
 GUEST_PACKAGES = ['./pkg/workflow/guest', './pkg/debuglet']
 RUNTIME_DIRECTORIES = {'tmp', 'run', 'run/studio', 'proc', 'sys', 'dev', 'modules'}
@@ -252,7 +252,7 @@ def build(source, output, go):
     info = json.loads(command([go, 'env', '-json', 'GOVERSION', 'GOHOSTOS', 'GOHOSTARCH',
                                'GOROOT', 'GOMODCACHE'], source, env))
     require(info['GOVERSION'] == GO_VERSION and info['GOHOSTOS'] == 'linux' and
-            info['GOHOSTARCH'] == 'amd64', 'requires pinned Go 1.26.9 for Linux amd64')
+            info['GOHOSTARCH'] == 'amd64', 'requires pinned Go 1.26.10 for Linux amd64')
     package_data = command([go, 'list', '-mod=readonly', '-deps', '-json'] + GUEST_PACKAGES,
                            source, environment(GOOS='wasip1', GOARCH='wasm'))
     packages = list(json_stream(package_data))

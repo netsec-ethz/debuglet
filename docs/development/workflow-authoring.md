@@ -21,7 +21,7 @@ machine. The local service can combine editing and compilation in one browser ta
 
 ## Start the editor
 
-On Linux, install Go 1.26.9, clone this version of Debuglet, and build the
+On Linux, install Go 1.26.10, clone this version of Debuglet, and build the
 authoring tool from the repository root:
 
 ```sh
@@ -84,7 +84,7 @@ A digest detects changes; it does not certify that a third-party WASM implements
 its claimed source. Review the bundle's origin and rebuild unfamiliar source.
 
 Compilation uses a disposable module, the explicitly configured SDK checkout,
-Go 1.26.9 and an offline build with a two-minute deadline. No graph can choose
+Go 1.26.10 and an offline build with a two-minute deadline. No graph can choose
 build flags, fetch a dependency or run a generation command. One build runs at a
 time. Workflows are limited to 1 MiB and bundles to 24 MiB. Install the toolchain
 and prepare the trusted SDK before starting an offline authoring session.

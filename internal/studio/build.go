@@ -27,7 +27,7 @@ const (
 	MaxWorkflowBytes = 1 << 20
 	MaxBundleBytes   = 24 << 20
 	maxWasmBytes     = 16 << 20
-	toolchain        = "go1.26.9"
+	toolchain        = "go1.26.10"
 )
 
 type Bundle struct {
@@ -124,7 +124,7 @@ func (b *Builder) buildProgram(ctx context.Context, wf workflow.Workflow, raw []
 	if err != nil || strings.TrimSpace(string(actual)) != toolchain {
 		return nil, fmt.Errorf("workflow builds require %s installed locally (automatic toolchain downloads are disabled)", toolchain)
 	}
-	module := "module debuglet.workflow.build\n\ngo 1.26.9\n\nrequire github.com/netsec-ethz/debuglet v0.0.0\nreplace github.com/netsec-ethz/debuglet => " + strconv.Quote(filepath.ToSlash(b.sdk)) + "\n"
+	module := "module debuglet.workflow.build\n\ngo 1.26.10\n\nrequire github.com/netsec-ethz/debuglet v0.0.0\nreplace github.com/netsec-ethz/debuglet => " + strconv.Quote(filepath.ToSlash(b.sdk)) + "\n"
 	for name, data := range map[string][]byte{"go.mod": []byte(module), "main.go": []byte(program.Source)} {
 		if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
 			return nil, err

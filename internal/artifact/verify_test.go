@@ -125,7 +125,7 @@ func TestVerifyInstallation(t *testing.T) {
 
 func TestVerifyPriorToolchainInstallation(t *testing.T) {
 	root, manifest := installedFixture(t)
-	for _, compiler := range []string{"go1.26.8", "go1.25.11"} {
+	for _, compiler := range []string{"go1.26.9", "go1.26.8", "go1.25.11"} {
 		manifest.GoVersion = compiler
 		writeManifest(t, root, manifest)
 		if _, err := Verify(root); err != nil {

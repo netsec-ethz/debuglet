@@ -8,14 +8,14 @@
 #
 # Build and update: docs/development/ci-images.md.
 
-ARG BASE_IMAGE=golang:1.26.9-bookworm
-ARG BASE_DIGEST=sha256:d9c68c2c51161e12fd77e4c6320687c9cd86e1af1e3ad6e6cd63ff970641453c
+ARG BASE_IMAGE=golang:1.26.10-bookworm
+ARG BASE_DIGEST=sha256:fe3da92a5cb2881e4aa75e625cb0b7c50571632fb4cf340cbe53e6ccdcffdd51
 FROM ${BASE_IMAGE}@${BASE_DIGEST}
 
 ARG BASE_IMAGE
 ARG BASE_DIGEST
-ARG DEBIAN_SNAPSHOT=20260918T000000Z
-ARG TOOLS_IMAGE=debuglet-ci-tools:20261012-1
+ARG DEBIAN_SNAPSHOT=20261020T213255Z
+ARG TOOLS_IMAGE=debuglet-ci-tools:20261021-1
 
 COPY packages.txt /etc/debuglet-ci/packages.txt
 

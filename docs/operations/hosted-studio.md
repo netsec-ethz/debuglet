@@ -17,7 +17,7 @@ Local `dbl-studio serve` is still the local development mode.
 ## Build and verify a compiler bundle
 
 Build on Linux amd64 from the exact clean committed source being deployed.
-Use Go 1.26.9 and the existing pinned CI tools image from
+Use Go 1.26.10 and the existing pinned CI tools image from
 `deploy/ci/images.env`; prepare the ordinary module cache before entering the
 offline build boundary. The bundle builder refuses a dirty source tree,
 another toolchain, missing cached dependencies or dynamically linked tools.
@@ -130,7 +130,12 @@ host. A Docker rehearsal with matching resource limits checks compilation and
 the bundle's minimal filesystem; it does not establish that the target's
 systemd sandbox is active. Inspect the actual service properties, socket
 ownership, compiler filesystem, network restriction and successful authenticated
-build after installation. Use `systemd-analyze verify` before starting the unit.
+build after installation. Before starting the unit, run
+`systemd-analyze --root <tree> --recursive-errors=no --man=no verify debuglet-studio.service`
+against a temporary tree containing the exact unit under `etc/systemd/system`
+and the packaged `bin/dbl-studio`.
+The analyzer's executable lookup does not automatically follow the unit's
+`RootDirectory`; this offline check does not replace checking the actual service.
 
 ## Recovery
 

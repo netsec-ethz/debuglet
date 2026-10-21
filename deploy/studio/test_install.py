@@ -39,7 +39,7 @@ class InstallTest(unittest.TestCase):
         self.archive = self.root / f'debuglet-studio-{SOURCE}-linux-amd64.tar.gz'
         package.archive(stage, self.archive)
         self.snapshot = self.archive.read_bytes()
-        self.release = dict(schema_version=1, source_sha=SOURCE, go_version='go1.26.9',
+        self.release = dict(schema_version=1, source_sha=SOURCE, go_version='go1.26.10',
                             archive=self.archive.name, archive_sha256=package.digest(self.archive)['sha256'],
                             archive_bytes=self.archive.stat().st_size)
         (self.root / 'studio-release.json').write_text(json.dumps(self.release))

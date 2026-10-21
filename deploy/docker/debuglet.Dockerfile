@@ -7,7 +7,7 @@
 # resolves the same bytes. The builder digest is the same one the pipeline
 # images use; move deploy/ci/images.env and this line together. The runtime
 # keeps the CA bundle and shell already installed in its pinned base.
-ARG GO_IMAGE=golang:1.26.9-bookworm@sha256:d9c68c2c51161e12fd77e4c6320687c9cd86e1af1e3ad6e6cd63ff970641453c
+ARG GO_IMAGE=golang:1.26.10-bookworm@sha256:fe3da92a5cb2881e4aa75e625cb0b7c50571632fb4cf340cbe53e6ccdcffdd51
 ARG RUNTIME_IMAGE=alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
 FROM ${GO_IMAGE} AS payload

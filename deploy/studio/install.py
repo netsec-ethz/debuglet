@@ -69,7 +69,7 @@ def verify_release(directory, source, trust=None, signer=None, expected_digest=N
     require(set(release) == {'schema_version', 'source_sha', 'go_version', 'archive',
                              'archive_sha256', 'archive_bytes'}, 'unsupported Studio release record')
     require(release['schema_version'] == 1 and release['source_sha'] == source and
-            release['go_version'] == 'go1.26.9', 'Studio release identity differs')
+            release['go_version'] == 'go1.26.10', 'Studio release identity differs')
     require(release['archive'] == f'debuglet-studio-{source}-linux-amd64.tar.gz',
             'unexpected Studio archive name')
     archive = directory / release['archive']
@@ -107,7 +107,7 @@ def inspect_archive(archive, source):
                 members[MANIFEST].size <= 16 * 1024 * 1024, 'missing or oversized Studio manifest')
         manifest = json.loads(bundle.extractfile(members[MANIFEST]).read(), object_pairs_hook=unique)
         require(manifest.get('schema_version') == 1 and manifest.get('source_sha') == source and
-                manifest.get('go_version') == 'go1.26.9', 'Studio manifest identity differs')
+                manifest.get('go_version') == 'go1.26.10', 'Studio manifest identity differs')
         files, directories = manifest['files'], manifest['directories']
         require(isinstance(files, dict) and isinstance(directories, list) and
                 len(set(directories)) == len(directories), 'invalid Studio inventory')
