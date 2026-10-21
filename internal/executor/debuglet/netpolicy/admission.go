@@ -21,12 +21,11 @@ import (
 	"net"
 	"net/netip"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket/netutil"
+	"github.com/netsec-ethz/debuglet/internal/netaddr"
 )
 
 // resolveTTL bounds how long one name's addresses are reused. Inbound traffic
@@ -594,24 +593,8 @@ func normalizeAll(addrs []netip.Addr) []netip.Addr {
 	return normalized
 }
 
-// declaredHost reads the host out of one declared destination. A declared
-// destination is normally a name or an address; a SCION address carries its
-// host after the last comma, and a port is not part of a declaration.
 func declaredHost(declared string) string {
-	declared = strings.TrimSpace(declared)
-	if index := strings.LastIndex(declared, ","); index >= 0 {
-		declared = declared[index+1:]
-	}
-	if declared == "" {
-		return ""
-	}
-	if _, err := netip.ParseAddr(declared); err == nil {
-		return declared
-	}
-	if host, _, err := splitHostPort(declared); err == nil && host != "" {
-		return host
-	}
-	return declared
+	return netaddr.DeclaredHost(declared)
 }
 
 // splitTarget reads the host and port a guest wrote. ICMP has no port: its
@@ -637,21 +620,8 @@ func splitTarget(t Transport, target string) (string, int, error) {
 	return host, port, nil
 }
 
-// splitHostPort accepts both "host:port" and a bare host. A bracketed IPv6
-// literal keeps its brackets off the returned host.
 func splitHostPort(address string) (string, int, error) {
-	host, port, hasPort, err := netutil.SplitOptionalPort(address)
-	if err != nil {
-		return "", 0, fmt.Errorf("invalid address %q", address)
-	}
-	if !hasPort {
-		return strings.Trim(host, "[]"), 0, nil
-	}
-	number, err := strconv.Atoi(port)
-	if err != nil || number < 0 || number > 65535 {
-		return "", 0, fmt.Errorf("invalid port %q in address %q", port, address)
-	}
-	return host, number, nil
+	return netaddr.SplitHostPort(address)
 }
 
 func isAddrLiteral(host string) bool {

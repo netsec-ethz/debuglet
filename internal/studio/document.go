@@ -5,9 +5,7 @@ package studio
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -137,7 +135,5 @@ func validateExperimentBundle(bundle ExperimentBundle, experiment workflow.Exper
 	return nil
 }
 
-func DocumentDigest(data []byte) string {
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
-}
+// DocumentDigest uses the same SHA256 encoding as Studio's compiled bundles.
+func DocumentDigest(data []byte) string { return digest(data) }

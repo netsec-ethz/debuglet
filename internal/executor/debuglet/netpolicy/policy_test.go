@@ -484,21 +484,6 @@ func TestCheckSocketIsTheLastGate(t *testing.T) {
 	}
 }
 
-func TestDeclaredHostReadsSCIONAndPortedEntries(t *testing.T) {
-	for declared, want := range map[string]string{
-		"127.0.0.1":                       "127.0.0.1",
-		"target.example":                  "target.example",
-		"target.example:443":              "target.example",
-		"1-ff00:0:110,127.0.0.1":          "127.0.0.1",
-		"1-ff00:0:110,[::1]:443":          "::1",
-		" 1-ff00:0:110,target.example:80": "target.example",
-	} {
-		if got := declaredHost(declared); got != want {
-			t.Errorf("declaredHost(%q) = %q, want %q", declared, got, want)
-		}
-	}
-}
-
 func TestRefusalsNameTheDestination(t *testing.T) {
 	policy := New(mustParse(t, localProfile()), Run{Addresses: []string{"127.0.0.1"}}, WithResolver(newResolver(nil)))
 	_, err := policy.AdmitDestination(context.Background(), TCP, "10.1.2.3:80")

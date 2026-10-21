@@ -4,10 +4,10 @@
 package netutil
 
 import (
-	"errors"
 	"fmt"
-	"net"
 	"net/netip"
+
+	"github.com/netsec-ethz/debuglet/internal/netaddr"
 )
 
 type IPv6 struct {
@@ -28,20 +28,9 @@ func ToIPv6(addr netip.Addr) IPv6 {
 	return IPv6{IP: addr}
 }
 
-// SplitOptionalPort splits "host:port" like net.SplitHostPort, and also
-// accepts an address without a port, for which it returns the address itself
-// as host and hasPort false. A bare bracketed IPv6 literal keeps its brackets.
-// Any other malformed address returns net.SplitHostPort's error.
+// SplitOptionalPort splits a host and optional port without changing their spelling.
 func SplitOptionalPort(address string) (host, port string, hasPort bool, err error) {
-	host, port, err = net.SplitHostPort(address)
-	if err != nil {
-		var addrErr *net.AddrError
-		if errors.As(err, &addrErr) && addrErr.Err == "missing port in address" {
-			return address, "", false, nil
-		}
-		return "", "", false, err
-	}
-	return host, port, true, nil
+	return netaddr.SplitOptionalPort(address)
 }
 
 // HostFromAddr returns the host of "host:port", or the address itself when it

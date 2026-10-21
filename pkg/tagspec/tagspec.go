@@ -3,7 +3,8 @@
 
 // Package tagspec implements the pure functions of the packet tag
 // specification debuglet-tag-v1 (docs/tag-spec.md): the canonical tag input
-// of an IPv4 packet, SipHash-2-4, the per-measurement key and the 16-bit tag.
+// of an IPv4 packet, SipHash-2-4, hash-chain derivation, the per-measurement key
+// and the 16-bit tag.
 // It holds no key schedule and no state, so taggers (internal/executor/tagger)
 // and verifiers (pkg/client) share one implementation. The known-answer
 // vectors in testdata/tag-vectors-v1.json pin it.

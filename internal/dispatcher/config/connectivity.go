@@ -8,7 +8,7 @@ import (
 	"net/netip"
 	"slices"
 
-	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/socket"
+	"github.com/netsec-ethz/debuglet/internal/netaddr"
 )
 
 func validateConnectivityTarget(id string, c ExecutorDisplay) error {
@@ -19,7 +19,7 @@ func validateConnectivityTarget(id string, c ExecutorDisplay) error {
 	if err != nil || ip.IsUnspecified() || ip.IsMulticast() || ip.Is4In6() || ip.Zone() != "" {
 		return fmt.Errorf("executors.%q.connectivity_host must be a literal unicast address", id)
 	}
-	ports, err := socket.ParsePortRanges(c.ConnectivityPorts)
+	ports, err := netaddr.ParsePortRanges(c.ConnectivityPorts)
 	if err != nil || len(ports) == 0 || len(ports) > 256 {
 		return fmt.Errorf("executors.%q.connectivity_ports must contain 1 to 256 controlled listener ports", id)
 	}
@@ -36,7 +36,7 @@ func (c ExecutorDisplay) ConnectivityTarget(port uint32) (netip.AddrPort, bool) 
 	if err != nil {
 		return netip.AddrPort{}, false
 	}
-	ports, err := socket.ParsePortRanges(c.ConnectivityPorts)
+	ports, err := netaddr.ParsePortRanges(c.ConnectivityPorts)
 	if err != nil || !slices.Contains(ports, int(port)) {
 		return netip.AddrPort{}, false
 	}
