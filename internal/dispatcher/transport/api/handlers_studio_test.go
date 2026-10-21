@@ -429,11 +429,20 @@ func TestStudioCapacityCancellationAndTimeout(t *testing.T) {
 			t.Fatal("browser cancellation did not finish")
 		}
 	}
-	// Every canceled account must be able to use the released slot again.
+	// The browser transport and worker context can both observe cancellation
+	// before the dispatcher unwinds its handler and releases the slot. Require
+	// bounded cleanup through HTTP, without assuming an order across goroutines.
+	releasedBy := time.Now().Add(3 * time.Second)
 	for _, account := range accounts {
-		status, _ := authStatus(t, f, "GET", "/studio/catalog", nil, account)
-		if status != 200 {
-			t.Fatalf("cancellation did not release capacity: %d", status)
+		for {
+			status, _ := authStatus(t, f, "GET", "/studio/catalog", nil, account)
+			if status == 200 {
+				break
+			}
+			if status != 429 || time.Now().After(releasedBy) {
+				t.Fatalf("cancellation did not release capacity: %d", status)
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
 	}
 	// A short test deadline proves server-side timeouts cancel the worker too.
