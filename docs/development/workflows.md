@@ -119,6 +119,16 @@ from 0 to 100 and linearly interpolates sorted samples at `p/100 × (n−1)`; th
 not the nearest-rank convention. Add, Subtract, Multiply and Divide use finite
 numbers; division by zero and nonfinite results fail explicitly.
 
+**Standard deviation** accepts `mode: "sample"` (default, divisor `n−1`, at
+least two values) or `"population"` (divisor `n`, at least one). This describes
+sample spread, not confidence or statistical significance. **Histogram** accepts
+2–257 strictly increasing finite `edges`, making 1–256 bins. Bins include their
+lower edge and exclude their upper edge; the final bin includes its upper edge.
+Output `rows` contain `lower`, `upper`, `midpoint` and `count`. Separate
+`underflow` and `overflow` counts retain samples outside the edges; all bin and
+tail counts sum to the total output `count`. Empty samples produce zero counts.
+Both blocks share the existing limit of 1,024 finite samples.
+
 ### Processing rows and reporting results
 
 **Filter rows** keeps matching objects from a list in their original order.
@@ -131,12 +141,24 @@ or Percentile. Missing fields and non-object rows fail explicitly. Empty lists
 are valid for these row operations and Count; check the count before using
 statistics that require at least one sample.
 
+**Sort rows** orders a copy of the list by one named `field`, in `ascending`
+(default) or `descending` order. Equal keys retain input order. All keys must
+be finite numbers, or all must be strings; strings use lexical order without
+locale rules. It rejects missing fields and mixed key types.
+
 **Report metric** publishes `title`, a finite numeric `value` and an optional
 `unit`. **Report table** publishes `title`, object `rows` and 1–32 distinct
 `columns`, each naming a field present in every row. Columns control display
 order; the output still contains every original row field. **Report text**
 publishes a `title` and plain `text`, displayed literally without interpreting
-HTML or Markdown. All three are actions with a `next` connection and return
+HTML or Markdown. **Report chart** publishes 1–256 object `rows`, naming finite
+numeric `x` and `y` fields, with `kind: "line"` (default) or `"bar"` and optional
+`x_label`/`y_label`. Lines connect points in input order on a numeric x axis;
+sort first when x order matters. Bars keep row order, label each bar with x and
+include a zero baseline. The console also provides the exact x/y data table;
+all original row fields remain in the output. Connect Histogram's `rows` to a
+bar chart using `midpoint` and `count`, and report its tail counts separately.
+All report blocks are actions with a `next` connection and return
 their report fields as outputs, so they can feed later actions.
 
 Reports use the ordinary `debuglet.workflow.v1` events and run output. They
