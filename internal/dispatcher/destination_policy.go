@@ -17,6 +17,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
+	"github.com/netsec-ethz/debuglet/internal/netaddr"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"go.uber.org/zap"
 )
@@ -138,7 +139,7 @@ func (d *Dispatcher) SetDestinationPolicy(ctx context.Context, actor, destinatio
 	if strings.ContainsAny(destination, "\x00\r\n\t") {
 		return ErrInvalidDestinationPolicy
 	}
-	destination = netpolicy.DestinationKey(destination)
+	destination = netaddr.DestinationKey(destination)
 	if destination == "" || strings.Contains(destination, "/") || len(destination) > MaxDestinationLength || actor == "" ||
 		len(change.Reason) > MaxDestinationPolicyReason || !bitrate.InPolicyRange(int64(change.Limit)) {
 		return ErrInvalidDestinationPolicy

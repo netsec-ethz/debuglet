@@ -330,9 +330,21 @@ func TestBackupWriteFailurePreservesPrevious(t *testing.T) {
 	// EFBIG without changing the test runner's limits or filling a shared disk.
 	if os.Getenv("DEBUGLET_BACKUP_WRITE_LIMIT") == "1" {
 		signal.Ignore(syscall.SIGXFSZ)
-		if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &syscall.Rlimit{Cur: 4096, Max: 4096}); err != nil {
+		var original syscall.Rlimit
+		if err := syscall.Getrlimit(syscall.RLIMIT_FSIZE, &original); err != nil {
 			t.Fatal(err)
 		}
+		limited := original
+		limited.Cur = 4096
+		if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &limited); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			// The test runner writes coverage metadata after the test returns.
+			if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &original); err != nil {
+				t.Errorf("restore file-size limit: %v", err)
+			}
+		})
 		var m Manifest
 		if err := json.Unmarshal([]byte(os.Getenv("DEBUGLET_BACKUP_PACKAGE")), &m); err != nil {
 			t.Fatal(err)

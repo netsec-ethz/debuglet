@@ -3,7 +3,6 @@ package dispatcher
 import (
 	"context"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -13,7 +12,6 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
 	dispatcherdb "github.com/netsec-ethz/debuglet/internal/dispatcher/database"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 	"github.com/netsec-ethz/debuglet/internal/testpeer"
 	pb "github.com/netsec-ethz/debuglet/protocol"
@@ -23,123 +21,21 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// terminalPeerAdapter is the test-only DispatcherState handed to the
-// replacement Bidi. It forwards everything to the real Dispatcher except
-// OnExecutorConnected, which delegates real registration and reports its
-// stage result. Capacity is acknowledged over the bound direct channel. The
-// fixture observes transport-marked availability only after the callback returns.
-type terminalPeerAdapter struct {
-	rpc.DispatcherState
-	d     *Dispatcher
-	ready chan terminalPeerRegistration
-	once  sync.Once
-}
-
-type terminalPeerRegistration struct {
-	owner *rpc.SessionOwner
-	err   error
-}
-
-func (a *terminalPeerAdapter) OnExecutorConnected(ctx context.Context, owner *rpc.SessionOwner, h *pb.HelloResponse, sourceIP string) error {
-	err := a.d.OnExecutorConnected(ctx, owner, h, sourceIP)
-	// Transport marks Registered only after this callback returns. Report the
-	// stage to the fixture; never wait for Registered here.
-	a.once.Do(func() { a.ready <- terminalPeerRegistration{owner: owner, err: err} })
-	return err
-}
-
-// startTerminalPeer replaces d's empty Bidi with one serving yamux on a
-// loopback listener, connects the scripted executor peer over yamux and gRPC,
-// and returns once Hello, real registration and a positive-capacity
-// acknowledgement have completed. On failure it cancels and joins everything
-// it started. The returned stop is idempotent, bounded by its cleanup
-// context, and joins the complete Dispatcher before declaring teardown done.
-// Constructors also register idempotent Dispatcher.Close for setup failures.
+// startTerminalPeer waits for real registration and acknowledged capacity.
 func startTerminalPeer(ctx context.Context, d *Dispatcher, capacity bitrate.Bitrate,
-	peer pb.ExecutorServiceServer) (stop func(context.Context) error, err error) {
-	if capacity <= 0 {
-		return nil, errors.New("terminal peer: capacity must be positive")
-	}
-	if peer == nil {
-		return nil, errors.New("terminal peer: nil executor service")
-	}
-	registrationCtx, cancelRegistration := context.WithTimeout(ctx, 10*time.Second)
-	defer cancelRegistration()
-	d.Bidi.Close()
-	adapter := &terminalPeerAdapter{DispatcherState: d, d: d, ready: make(chan terminalPeerRegistration, 1)}
-	replacement, err := rpc.NewBidiServer(zap.NewNop(), adapter, d.ControlIncarnation(), d.ControlLeaseDuration())
-	if err != nil {
+	peer pb.ExecutorServiceServer) (func(context.Context) error, error) {
+	p, err := testpeer.StartRegistered(ctx, d, &d.Bidi, capacity, peer, 10*time.Second)
+	if p == nil {
 		return nil, err
 	}
-	d.Bidi = replacement
-	transport, err := testpeer.Start(ctx, d.Bidi, peer)
-	if err != nil {
-		d.Close()
-		return nil, err
-	}
-	var once sync.Once
-	joined := make(chan struct{})
-	teardown := func(cleanup context.Context) error {
-		once.Do(func() {
-			go func() {
-				defer close(joined)
-				// The actual handler join remains owned after any caller timeout.
-				_ = transport.Stop(context.Background())
-				d.Close()
-			}()
-		})
-		select {
-		case <-joined:
-			return nil
-		case <-cleanup.Done():
-			return cleanup.Err()
+	if err == nil {
+		if _, ok := d.GetExecutor(p.Owner.ExecutorID()); !ok {
+			cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			err = errors.Join(errors.New("terminal peer: registered executor is not discoverable"), p.Stop(cleanup))
 		}
 	}
-	fail := func(cause error) (func(context.Context) error, error) {
-		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := teardown(cleanup); err != nil {
-			return teardown, errors.Join(cause, err)
-		}
-		return nil, cause
-	}
-	if err := transport.Client.WaitReadyContext(registrationCtx); err != nil {
-		if registrationCtx.Err() != nil {
-			err = registrationCtx.Err()
-		}
-		return fail(fmt.Errorf("terminal peer: registration: %w", err))
-	}
-	var registered terminalPeerRegistration
-	select {
-	case registered = <-adapter.ready:
-	case <-registrationCtx.Done():
-		return fail(registrationCtx.Err())
-	}
-	if registered.err != nil {
-		return fail(registered.err)
-	}
-	if registered.owner == nil || !registered.owner.Available() {
-		return fail(errors.New("terminal peer: registration has no available owner"))
-	}
-	binding, ok := transport.Client.Binding()
-	if !ok || binding != registered.owner.Binding() {
-		return fail(errors.New("terminal peer: negotiated identity mismatch"))
-	}
-	client, err := transport.Client.ClientFor(binding)
-	if err != nil {
-		return fail(err)
-	}
-	if _, err := client.Resources(registrationCtx, &pb.ResourcesRequest{ExecutorId: registered.owner.ExecutorID(), BandwidthCapacity: int64(capacity)}); err != nil {
-		return fail(err)
-	}
-	if _, ok := d.GetExecutor(registered.owner.ExecutorID()); !ok {
-		return fail(errors.New("terminal peer: registered executor is not discoverable"))
-	}
-	if _, ok := d.Bidi.GetClientFor(registered.owner); !ok {
-		return fail(errors.New("terminal peer: exact reverse client is unavailable"))
-	}
-
-	return teardown, nil
+	return p.Stop, err
 }
 
 // terminalLifecyclePeer is the minimal scripted executor used to check the

@@ -21,6 +21,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/resource/schedule"
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
+	"github.com/netsec-ethz/debuglet/internal/netaddr"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -85,19 +86,19 @@ func prepareEgress(ctx context.Context, cfg config.EgressConfig, spec models.Deb
 	}
 	answers := make(map[string][]netip.Addr)
 	resolve := func(text string) ([]netip.Addr, error) {
-		text = netpolicy.DestinationKey(text)
+		text = netaddr.DestinationKey(text)
 		if addresses, ok := answers[text]; ok {
 			return addresses, nil
 		}
 		if address, err := netip.ParseAddr(text); err == nil {
-			return []netip.Addr{netpolicy.Normalize(address)}, nil
+			return []netip.Addr{netaddr.Normalize(address)}, nil
 		}
 		addresses, err := net.DefaultResolver.LookupNetIP(ctx, "ip", text)
 		if err != nil {
 			return nil, fmt.Errorf("%w: resolve a budget destination: %v", ErrEgressBudget, err)
 		}
 		for i := range addresses {
-			addresses[i] = netpolicy.Normalize(addresses[i])
+			addresses[i] = netaddr.Normalize(addresses[i])
 		}
 		answers[text] = addresses
 		return addresses, nil

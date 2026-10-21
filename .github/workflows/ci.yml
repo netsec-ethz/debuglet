@@ -46,6 +46,7 @@ jobs:
             .cache/ci/gofmt.txt
             .cache/ci/gofmt.diff
             .cache/ci/tests.json
+            .cache/ci/coverage/
             .cache/ci/race-tests.json
             .cache/ci/kernel-tests.json
             .cache/ci/ebpf-*.sha256

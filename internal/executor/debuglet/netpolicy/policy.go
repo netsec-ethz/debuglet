@@ -32,6 +32,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/netsec-ethz/debuglet/internal/netaddr"
 )
 
 // Transport identifies one guest transport. Every enforcement point names the
@@ -362,11 +364,9 @@ func contains(prefixes []netip.Prefix, addr netip.Addr) bool {
 	return false
 }
 
-// Normalize is the one spelling of an address the policy works with: no IPv4
-// mapping, no zone. Two guests writing the same destination differently reach
-// the same decision, and the same accounting key.
+// Normalize returns the canonical address used by policy and accounting.
 func Normalize(addr netip.Addr) netip.Addr {
-	return addr.Unmap().WithZone("")
+	return netaddr.Normalize(addr)
 }
 
 // aliases returns every address a packet to addr can also be described as: the
@@ -537,13 +537,7 @@ func (r *Revocations) hosts() []string {
 	return hosts
 }
 
-// DestinationKey is the one spelling of a destination the set compares: the
-// normalized address, or the lower-case name without a trailing dot. A SCION
-// address or a port is reduced to its host, as for a declared destination.
+// DestinationKey returns the canonical destination used by policy and accounting.
 func DestinationKey(destination string) string {
-	host := declaredHost(destination)
-	if addr, err := netip.ParseAddr(host); err == nil {
-		return Normalize(addr).String()
-	}
-	return strings.ToLower(strings.TrimSuffix(host, "."))
+	return netaddr.DestinationKey(destination)
 }

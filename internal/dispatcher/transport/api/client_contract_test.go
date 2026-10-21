@@ -71,6 +71,9 @@ type ccFixture struct {
 
 func ccBuildCLI(t *testing.T) string {
 	t.Helper()
+	if testing.Short() {
+		t.Skip("CLI compilation and subprocess integration")
+	}
 	goBin, err := exec.LookPath("go")
 	if err != nil {
 		t.Fatalf("go toolchain is required to build dbl: %v", err)

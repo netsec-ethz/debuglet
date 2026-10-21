@@ -40,7 +40,7 @@ CI_RACE_PACKAGE_PARALLEL ?= 2
 .PHONY: ci-test ci-vet ci-fmt ci-race ci-build ci-kernel ci-package ci-debian ci-demo ci-compatibility ci-local
 
 ci-test:
-	python3 -m unittest -v tools/test_make_targets.py tools/test_ci_github.py tools/test_verify_pcap.py tools/test_release.py tools/test_release_inventory.py tools/test_release_retention.py
+	python3 -m unittest -v tools/test_make_targets.py tools/test_ci_github.py tools/test_verify_pcap.py tools/test_release.py tools/test_release_inventory.py tools/test_release_retention.py tools/test_reports.py
 	GO="$(GO)" CI_TEST_TIMEOUT="$(CI_TEST_TIMEOUT)" bash scripts/ci-test.sh $(CI_PACKAGES)
 
 ci-vet:
@@ -93,7 +93,7 @@ CLANG       ?= $(if $(WASI_SDK),$(WASI_SDK)/bin/clang,clang)
 CARGO       ?= cargo
 RUST_TARGET ?= wasm32-wasip1
 
-.PHONY: all deps build clean docker-build docker-up-executor docker-up-dispatcher docker-up-all docker-down generate-certs dispatcher d executor e wasm proto setcaps test coverage benchmark memory memory-view deploy-build deploy-certs deploy deploy-dispatcher deploy-executors deploy-update-addr deploy-update-config deploy-upgrade-db bootstrap-sudo generate-sql
+.PHONY: all deps build clean docker-build docker-up-executor docker-up-dispatcher docker-up-all docker-down generate-certs dispatcher d executor e wasm proto setcaps test test-fast coverage benchmark memory memory-view deploy-build deploy-certs deploy deploy-dispatcher deploy-executors deploy-update-addr deploy-update-config deploy-upgrade-db bootstrap-sudo generate-sql
 
 all: deps build
 
@@ -173,10 +173,15 @@ setcaps: build
 	sudo setcap cap_net_admin,cap_net_raw,cap_perfmon,cap_bpf=ep ./$(EXECUTOR_BINARY)
 
 test:
-	$(GO) test $$($(GO) list ./... | grep -v /examples/debuglets/) -v
+	$(GO) test -mod=readonly $$($(GO) list ./... | grep -v /examples/debuglets/)
+
+# Short mode omits explicitly marked compiler and runtime integration checks.
+# CI retains the full suite through ci-test and the separate race/kernel lanes.
+test-fast:
+	$(GO) test -mod=readonly -short $$($(GO) list ./... | grep -v /examples/debuglets/)
 
 coverage:
-	$(GO) test -coverprofile .testCoverage.txt $$($(GO) list ./... | grep -v /examples/debuglets/)
+	GO="$(GO)" CI_TEST_TIMEOUT="$(CI_TEST_TIMEOUT)" bash scripts/ci-test.sh $(CI_PACKAGES)
 
 benchmark:
 	mkdir -p benchmarks

@@ -44,6 +44,24 @@ class MakeTargetsTest(unittest.TestCase):
         (directory / 'debuglet.wasm').write_text('old')
         return directory
 
+    def test_native_test_targets_retain_examples_and_tools(self):
+        compiler = self.script('compiler', """
+if [ "$1" = list ]; then
+    printf '%s\\n' example/internal/studio example/examples/experiments/delivery example/examples/debuglets/ping example/tools/helper
+else
+    printf '%s\\n' "$@" > test-args
+fi
+""")
+        for target in ('test', 'test-fast'):
+            with self.subTest(target=target):
+                result = self.make(target, GO=compiler)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                args = (self.root / 'test-args').read_text().splitlines()
+                self.assertIn('example/examples/experiments/delivery', args)
+                self.assertIn('example/tools/helper', args)
+                self.assertNotIn('example/examples/debuglets/ping', args)
+                self.assertEqual('-short' in args, target == 'test-fast')
+
     def test_wasm_compiler_failures(self):
         compiler = self.script('compiler', 'echo compiler-failed >&2; exit 7')
         for language, (_, variable) in LANGUAGES.items():

@@ -5,22 +5,14 @@ package api
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"testing"
 
-	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/rpc"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 )
-
-// cpAdapter keeps optional reflection support alongside the production
-// DispatcherState interface used by older scripted-peer tests.
-func (a *cpAdapter) OnReflectAddress(ctx context.Context, mutation *rpc.Mutation, req *pb.ReflectAddressRequest, address string) (*pb.ReflectAddressResponse, error) {
-	return a.d.OnReflectAddress(ctx, mutation, req, address)
-}
 
 func TestConnectivityFieldRefusalPrecedesUpload(t *testing.T) {
 	f := ccNewFixture(t)

@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/netsec-ethz/debuglet/internal/executor/tagger/tesla"
+	"github.com/netsec-ethz/debuglet/pkg/tagspec"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 )
 
@@ -275,7 +275,7 @@ func (ks *KeyStore) Store(executorID string, chain Chain, now time.Time, epoch i
 	case epoch-base > maxVerifyWalk:
 		reason = fmt.Sprintf("%d epochs past the last verified key exceeds the bound of %d", epoch-base, maxVerifyWalk)
 	default:
-		derived, err := tesla.DeriveFromDisclosed(key, epoch, base)
+		derived, err := tagspec.DeriveFromDisclosed(key, epoch, base)
 		if err != nil || subtle.ConstantTimeCompare(derived, baseKey) != 1 {
 			reason = "does not hash to the last verified key or the chain anchor"
 		}
