@@ -110,7 +110,7 @@ class Assembly(unittest.TestCase):
                      "share/debuglet/demo.wasm": 0o644, "share/debuglet/hello.wasm": 0o644}
             contents = {name: ("fixture " + name).encode() for name in modes}
             manifest = {"schema_version": 1, "version": upstream, "source_sha": "a" * 40,
-                        "dirty": False, "go_version": "go1.26.9", "goos": "linux", "goarch": "amd64",
+                        "dirty": False, "go_version": "go1.26.10", "goos": "linux", "goarch": "amd64",
                         "guest_abi": "debuglet-go-wasi-imports-v1", "build_pipeline_url": "",
                         "files": {name: {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
                                   for name, data in contents.items()}}

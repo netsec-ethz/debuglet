@@ -27,7 +27,7 @@ const (
 	MaxWorkflowBytes = 1 << 20
 	MaxBundleBytes   = 24 << 20
 	maxWasmBytes     = 16 << 20
-	toolchain        = "go1.26.9"
+	toolchain        = "go1.26.10"
 )
 
 type Bundle struct {
@@ -52,6 +52,7 @@ type Builder struct {
 	sdk       string
 	goCommand string
 	slot      chan struct{}
+	hosted    bool
 }
 
 // NewBuilder accepts the trusted SDK location chosen by the operator, never by a graph.
@@ -110,6 +111,9 @@ func (b *Builder) buildProgram(ctx context.Context, wf workflow.Workflow, raw []
 	}
 	defer os.RemoveAll(dir)
 	env := buildEnv()
+	if b.hosted {
+		env = append(env, "GOMAXPROCS=2")
+	}
 	version := exec.CommandContext(ctx, b.goCommand, "env", "GOVERSION")
 	version.Env = env
 	version.Dir = dir
@@ -120,13 +124,17 @@ func (b *Builder) buildProgram(ctx context.Context, wf workflow.Workflow, raw []
 	if err != nil || strings.TrimSpace(string(actual)) != toolchain {
 		return nil, fmt.Errorf("workflow builds require %s installed locally (automatic toolchain downloads are disabled)", toolchain)
 	}
-	module := "module debuglet.workflow.build\n\ngo 1.26.9\n\nrequire github.com/netsec-ethz/debuglet v0.0.0\nreplace github.com/netsec-ethz/debuglet => " + strconv.Quote(filepath.ToSlash(b.sdk)) + "\n"
+	module := "module debuglet.workflow.build\n\ngo 1.26.10\n\nrequire github.com/netsec-ethz/debuglet v0.0.0\nreplace github.com/netsec-ethz/debuglet => " + strconv.Quote(filepath.ToSlash(b.sdk)) + "\n"
 	for name, data := range map[string][]byte{"go.mod": []byte(module), "main.go": []byte(program.Source)} {
 		if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
 			return nil, err
 		}
 	}
-	command := exec.CommandContext(ctx, b.goCommand, "build", "-mod=readonly", "-buildvcs=false", "-trimpath", "-ldflags=-s -w", "-o", "program.wasm", ".")
+	args := []string{"build", "-mod=readonly", "-buildvcs=false", "-trimpath", "-ldflags=-s -w", "-o", "program.wasm"}
+	if b.hosted {
+		args = append(args, "-p=2")
+	}
+	command := exec.CommandContext(ctx, b.goCommand, append(args, ".")...)
 	command.Dir, command.Env = dir, env
 	configureBuildProcess(command)
 	output := &boundedOutput{limit: 64 << 10}

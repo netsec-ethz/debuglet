@@ -82,7 +82,7 @@ func (d *Dispatcher) accountLimits(ctx context.Context, q *database.Queries, own
 }
 
 // AllowAdmissionRequest uses the authenticated account, never a request body or
-// address. Only intent/submission routes call it; cancellation, reads, logout and
+// address. Intent, submission and hosted compilation call it; cancellation, reads, logout and
 // executor control remain available at exhaustion. Restart replenishes this
 // short-lived token bucket, but never the durable accepted-work reservations.
 func (d *Dispatcher) AllowAdmissionRequest(ctx context.Context, owner *uuid.UUID) error {

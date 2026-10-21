@@ -128,7 +128,7 @@ not establish support for Docker Desktop or emulation there.
 
 ## Build from source
 
-On Linux amd64 with Go 1.26.9, Git, Make, Bash, GNU tar, coreutils, Python 3.11
+On Linux amd64 with Go 1.26.10, Git, Make, Bash, GNU tar, coreutils, Python 3.11
 or later, and `dpkg-deb` (the `dpkg` package):
 
 ```sh

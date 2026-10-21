@@ -26,6 +26,37 @@ curl -s https://dispatcher.example/version
 
 Clients may send `Debuglet-API-Version: major.minor`. Within one API major version, clients must ignore unknown response fields and unknown values in open string fields. Breaking wire changes require a new API major version.
 
+## Hosted compilation (API 1.24)
+
+Signed-in accounts can use `GET /studio/catalog`, `POST /studio/validate`,
+`POST /studio/build`, `POST /studio/experiments/validate` and
+`POST /studio/experiments/build`. Browser sessions require the normal CSRF
+header on POSTs. Federated accounts need no account key. Scoped API credentials
+require `measurements:read` for the catalog and `measurements:write` for POSTs.
+The local development authentication bypass does not authorize hosted compilation.
+
+POST bodies contain the existing workflow or experiment JSON, with
+`Content-Type: application/json` and no content encoding. Workflow requests are
+limited to 1 MiB, experiment requests to 4 MiB, and responses to 32 MiB. Paths
+accept no query parameters. Validation returns diagnostics; builds return the
+portable bundle used by local Studio. Building does not submit or execute a run.
+
+The dispatcher forwards these operations to its configured local Unix socket
+worker. Disabled or unreachable workers return 503. Each account may have one
+Studio request in progress, with four requests globally and one compiler build
+at the worker. Excess requests return 429 with `Retry-After: 1`; POSTs also use
+the existing account request quota. Cancellation reaches the worker. The worker
+limits operations to six minutes, with a six-minute-ten-second dispatcher
+transport deadline; a deadline returns 504. Request uploads and completed
+response downloads each have a 30-second transfer deadline. Proxies in front of the dispatcher
+must allow this response time.
+
+Authentication and transport failures use the usual `{code, message}` envelope.
+Worker validation and compilation failures preserve Studio's
+`{error, diagnostics?}` envelope; clients should display its diagnostics and
+handle either envelope. No caller credentials or browser headers reach the
+compiler. Operator setup is described in [hosted Studio](operations/hosted-studio.md).
+
 ## Pricing and TEST bookkeeping
 
 An order is priced from its executor's `price_per_bw`, the price per bit per second and second of run time in the executor's currency: `price_per_bw × floor_bw × timeout_ms / 1000`, computed exactly and rounded up to the next whole unit, so a run of any positive length at a positive rate and floor costs at least one unit. A batch costs the sum of its orders. `floor_bw` lies between 0 and 1000000000000000 bits per second and `timeout_ms` between 1 and 9223372036854; an order or a batch whose price exceeds 9223372036854775807 is refused as `invalid_policy` before anything is written.
@@ -269,7 +300,7 @@ reported separately in exact base-unit strings.
 
 ## Errors and health
 
-API failures use `{"code": "…", "message": "…"}`. Programmatic clients should branch on `code`, not the human-readable message. API 1.12 optionally adds `field_errors`, identifying a dotted request field, stable refusal reason and order ID where available. Intent and submission bodies must be one JSON document containing supported fields; `listen_icmp` is refused with guidance to use `require_icmp`.
+Dispatcher failures use `{"code": "…", "message": "…"}`. Hosted compiler failures use the additional Studio envelope described above. Programmatic clients should branch on `code`, not the human-readable message. API 1.12 optionally adds `field_errors`, identifying a dotted request field, stable refusal reason and order ID where available. Intent and submission bodies must be one JSON document containing supported fields; `listen_icmp` is refused with guidance to use `require_icmp`.
 
 A `message` contains only fixed text written for that failure or a value from your own request repeated back and cut to at most 64 bytes (with `...` marking the cut and control characters replaced by spaces). It never contains database, runtime or transport diagnostics, and never a credential: no session token, CSRF token, account key, recovery code or payment `auth_key`, whether valid or rejected. The `error` field of a run's state and logs contains the recorded workload error; for results recorded by this version, it is cut to 512 bytes and marked with `...`, with control characters replaced by spaces. Earlier results are returned as stored. Failures inside the dispatcher answer `internal_error` with a fixed message; their cause is written to the dispatcher's log as a Warn entry `request failed` with the route, the status, the code and the underlying error. There is no API route that returns these details: an operator reads them in the daemon log.
 

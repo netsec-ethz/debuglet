@@ -61,6 +61,7 @@ type Handler struct {
 	// receipts signs the receipts of POST /attribution/verify. See
 	// handlers_attribution_verify.go.
 	receipts receiptState
+	studio   *studioProxy
 }
 
 type GitHubOAuthConfig struct {
@@ -203,6 +204,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	h.registerMeasurementRoutes(e)
 	h.registerCommunityRoutes(e)
 	h.registerCommunityFundingRoutes(e)
+	h.registerStudioRoutes(e)
 }
 
 // bodyLimitMiddleware refuses a request body above maxRequestBodyBytes before

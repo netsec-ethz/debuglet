@@ -13,7 +13,8 @@ import (
 )
 
 // ErrorResponse is the documented error envelope of the HTTP API. Every
-// failure answers with this object: Code is a stable identifier a client
+// dispatcher-generated failure answers with this object. Studio worker errors
+// retain their documented diagnostics envelope. Code is a stable identifier a client
 // branches on, Message is a bounded human-readable diagnostic it must not
 // parse. Internal diagnostics are never part of it; they stay in the
 // dispatcher's log. api/openapi.yaml lists the codes.

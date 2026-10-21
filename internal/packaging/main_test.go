@@ -394,7 +394,7 @@ func TestInstalledCandidateRequiresCurrentCompiler(t *testing.T) {
 		}
 		m.Files[name] = file
 	}
-	for _, compiler := range []string{artifact.Toolchain, "go1.26.8", "go1.25.11"} {
+	for _, compiler := range []string{artifact.Toolchain, "go1.26.9", "go1.26.8", "go1.25.11"} {
 		m.GoVersion = compiler
 		if err := writeJSON(filepath.Join(root, artifact.ManifestPath), m); err != nil {
 			t.Fatal(err)

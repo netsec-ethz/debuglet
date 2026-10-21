@@ -1,0 +1,20 @@
+---
+# A separate optional compiler. Nothing is installed until deploy-studio.yml runs.
+studio_prefix: /opt/debuglet-studio
+studio_service_name: debuglet-studio
+studio_user: debuglet-studio
+studio_socket_group: debuglet-studio
+studio_runtime_directory: debuglet-studio
+studio_staging_directory: /var/tmp/debuglet-studio-package
+studio_release_directory: "{{ playbook_dir }}/../dist/studio"
+# Set source_sha plus either an independently verified archive digest or
+# the existing administrator-approved release signer/trust file.
+studio_source_sha: ""
+studio_archive_sha256: ""
+studio_trust_file: ""
+studio_signer: ""
+studio_cpu_quota: "100%"
+studio_memory_high: 768M
+studio_memory_max: 1G
+studio_tasks_max: 64
+studio_temporary_bytes: 536870912

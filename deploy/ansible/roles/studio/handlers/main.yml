@@ -1,0 +1,8 @@
+---
+- name: Restart Studio worker
+  ansible.builtin.systemd:
+    name: "{{ studio_service_name }}"
+    state: restarted
+    enabled: true
+    daemon_reload: true
+  when: debuglet_manage_services | bool

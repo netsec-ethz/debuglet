@@ -10,6 +10,10 @@ CI performs no remote deployment. It builds,
 packages and checks the release payload; the paths below consume that payload.
 Nothing here deploys from CI, and no variable reaches a playbook from it.
 
+The optional hosted compiler has a separate verified bundle and restricted
+systemd service. See [hosted Studio](../docs/operations/hosted-studio.md) for its
+offline build, installation, resource limits and dispatcher activation.
+
 ## Two profiles
 
 The examples in this repository belong to one of two profiles. They are not
@@ -69,7 +73,7 @@ together.
 The build context is the repository root and must be a clean committed
 checkout including `.git`. The payload stage runs the same two steps as the
 build and package jobs — `internal/packaging build` with the pinned Go
-1.26.9 toolchain, then `scripts/ci-package.sh` — and installs the resulting
+1.26.10 toolchain, then `scripts/ci-package.sh` — and installs the resulting
 candidate with the package's own installer. Both steps refuse a modified or
 unidentified checkout, so there is no separate image build, no separate
 version stamping, and nothing to keep in step with the package contract by

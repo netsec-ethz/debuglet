@@ -52,7 +52,7 @@ The versioned guides in [`docs/`](docs/README.md) are published at the [document
 
 ## Development
 
-Debuglet development and package checks run on Linux amd64 with Go 1.26.9. From a checkout:
+Debuglet development and package checks run on Linux amd64 with Go 1.26.10. From a checkout:
 
 ```sh
 make ci-test
