@@ -188,7 +188,7 @@ func digest(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeT
 
 func buildEnv() []string {
 	env := []string{"GOOS=wasip1", "GOARCH=wasm", "CGO_ENABLED=0", "GOTOOLCHAIN=local", "GOPROXY=off", "GOSUMDB=off", "GOWORK=off", "GOENV=off", "GOFLAGS="}
-	for _, key := range []string{"PATH", "HOME", "TMPDIR", "GOCACHE", "GOMODCACHE"} {
+	for _, key := range []string{"PATH", "HOME", "TMPDIR", "GOPATH", "GOCACHE", "GOMODCACHE"} {
 		if value, ok := os.LookupEnv(key); ok {
 			env = append(env, key+"="+value)
 		}
