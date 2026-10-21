@@ -185,6 +185,7 @@ func TestReportsRejectInvalidInputs(t *testing.T) {
 		"nonobject row":      func(in map[string]any) { in["rows"] = []any{nil} },
 		"missing column":     func(in map[string]any) { in["columns"] = []any{"absent"} },
 		"no columns":         func(in map[string]any) { in["columns"] = []any{} },
+		"empty field name":   func(in map[string]any) { in["columns"] = []any{""}; in["rows"] = []any{map[string]any{"": float64(1)}} },
 		"duplicate column":   func(in map[string]any) { in["columns"] = []any{"sample", "sample"} },
 		"nonstrings columns": func(in map[string]any) { in["columns"] = []any{float64(1)} },
 		"long field name":    func(in map[string]any) { in["columns"] = []any{strings.Repeat("x", 257)} },

@@ -129,8 +129,8 @@ func Report(block string, in map[string]any) (map[string]any, error) {
 		seen := make(map[string]bool, len(columns))
 		for _, column := range columns {
 			field := column.(string)
-			if len(field) > 256 || seen[field] {
-				return nil, fmt.Errorf("report table columns must be distinct field names of at most 256 bytes")
+			if field == "" || len(field) > 256 || seen[field] {
+				return nil, fmt.Errorf("report table columns must be distinct nonempty field names of at most 256 bytes")
 			}
 			seen[field] = true
 		}
