@@ -327,3 +327,39 @@ network targets require the submitter to supply the intended destination policy
 and enable ICMP when their custom code uses it;
 the hints never grant network access. The normal dispatcher and executor checks
 apply to every compiled workflow just as they do to hand-written debuglets.
+
+## Adding a built-in block
+
+For a pure analysis block, keep the change within the workflow package:
+
+1. Describe its stable ID, typed ports, defaults and semantics in
+   `pkg/workflow/catalog_analysis.go`. Ordinary ports and edges use the existing
+   validator and generator without a block-specific compiler branch.
+2. Implement the operation in `pkg/workflow/guest/analysis.go` and select it in
+   `guest.Pure` in `guest/runtime.go`. Validate inputs with the existing helpers
+   and preserve bounded values and explicit errors. Stateful actions instead
+   use their runtime operation; network operations also need the appropriate SDK and
+   capability metadata.
+3. Test the numerical or processing behavior in the guest package, including
+   meaningful invalid inputs. Add a generated-program case when it establishes
+   a new wiring/default/output contract; `analysis_test.go` shows a real WASI
+   analysis-to-chart example.
+4. Regenerate the checked catalog and run the focused checks on Linux:
+
+   ```sh
+   go run ./cmd/dbl-studio catalog > examples/workflows/catalog.json
+   go test -short ./pkg/workflow/...
+   go test ./pkg/workflow/...
+   ```
+
+`TestCatalogFixtureMatches` checks the fixture against `Catalog()`. HTTP Studio
+and MCP both expose that catalog, so they need no separate block registration.
+The console renders ordinary blocks generically. After publishing the core
+commit, run `npm run catalog:update -- <full-core-commit-sha>` in the console
+repository to update its offline catalog and source pin together. Console CI
+checks that snapshot against the chosen core revision.
+
+A pure block should not need changes to dispatcher admission, payment, executor
+registration or HTTP routes. A new network capability has a wider contract:
+document its permissions, bounds and required host functions, and test those
+boundaries explicitly.

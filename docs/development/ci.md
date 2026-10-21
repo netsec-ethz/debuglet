@@ -24,6 +24,20 @@ make ci-package
 
 Use `make ci-race` for concurrency changes. `make ci-local` exercises an installed package with local dispatcher and executor roles. `make ci-kernel` needs an isolated Linux host with the required kernel capabilities.
 
+For the local editing loop, `make test-fast` runs the native package roots in
+short mode. `make test` retains their compiler and integration cases. The
+ordinary CI test lane and `make coverage` write reports under
+`.cache/ci/coverage/`: `source.html` and `source.txt` describe handwritten code,
+`generated.html` and `generated.txt` describe generated bindings, and
+`package-times.csv` lists package durations from the same test run. A test or
+reporting failure still fails the lane.
+
+These are Go statement-coverage reports for the instrumented packages, not
+branch coverage or proof of correctness. Separately compiled daemons and WASI
+programs do not contribute their execution to the parent package's profile.
+Use the reports to find untested behavior and expensive fixtures; preserve the
+real transport, compiler and race checks when consolidating test setup.
+
 The race lane includes the local workflow authoring service and the guest
 experiment transport, alongside the dispatcher and executor lifecycle packages.
 

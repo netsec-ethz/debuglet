@@ -16,6 +16,12 @@ make ci-package
 
 Run the focused package tests while developing. Run the relevant full checks before requesting review. See [CI setup](docs/development/ci.md) for the complete validation matrix.
 
+`make test-fast` runs the native packages in short mode for the editing loop.
+`make test` includes their compiler and integration cases. `make coverage`
+collects statement coverage, source/generated reports and package timings under
+`.cache/ci/coverage/`; the ordinary CI test lane publishes the same reports.
+Short mode is not a substitute for the full or race checks before review.
+
 ## Generated code
 
 Keep generated output in the same pull request as its source:
@@ -33,3 +39,8 @@ Keep generated output in the same pull request as its source:
 - Use a focused `feature/`, `fix/`, `docs/`, or `chore/` branch and target `main`.
 
 Read [Architecture](docs/architecture.md) to find the relevant subsystem. Follow [SECURITY.md](SECURITY.md) for private vulnerability reporting.
+
+For a concrete extension path, see [adding a built-in workflow
+block](docs/development/workflows.md#adding-a-built-in-block). The editor and MCP
+share the catalog and compiler, so ordinary blocks do not need separate
+implementations for each interface.
