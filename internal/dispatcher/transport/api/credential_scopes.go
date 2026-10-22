@@ -21,6 +21,11 @@ var credentialScopes = []string{"account:read", "executors:read", "executors:wri
 // API credentials narrow existing account access; they grant no dispatcher
 // administration or identity-management authority.
 var credentialRouteScopes = map[string]string{
+	"GET /templates":                                              "measurements:read",
+	"POST /templates":                                             "measurements:write",
+	"GET /templates/:id":                                          "measurements:read",
+	"PUT /templates/:id":                                          "measurements:write",
+	"DELETE /templates/:id":                                       "measurements:write",
 	"GET /result-highlights":                                      "measurements:read",
 	"GET /result-highlights/:id":                                  "measurements:read",
 	"POST /result-highlights":                                     "measurements:write",

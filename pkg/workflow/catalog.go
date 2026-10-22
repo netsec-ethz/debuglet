@@ -48,7 +48,9 @@ func Catalog() []Block {
 		{"wait", "Wait", "Control", "Wait between actions, at most 60 seconds per call.", false, []Port{input("duration_ms", "number")}, []Port{}, []string{"next"}},
 		{"emit", "Emit result", "Results", "Publish a named JSON result.", false, []Port{input("name", "string"), input("value", "any")}, []Port{output("name", "string"), output("value", "any")}, []string{"next"}},
 	}, measurementCatalog()...), reportCatalog()...)
-	return append(blocks, analysisCatalog()...)
+	blocks = append(blocks, analysisCatalog()...)
+	blocks = append(blocks, collectionCatalog()...)
+	return append(blocks, iterationCatalog()...)
 }
 
 func catalogFor(w Workflow) map[string]Block {

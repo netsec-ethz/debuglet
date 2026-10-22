@@ -77,6 +77,15 @@ func oaCommunityExchanges(t *testing.T, f *ccFixture, ctx context.Context, sdk *
 	request(ownerToken, http.MethodPatch, "/result-highlights/"+highlight.ID, map[string]string{"name": "Renamed result"}, 200, nil)
 	request(ownerToken, http.MethodDelete, "/result-highlights/"+highlight.ID, nil, 204, nil)
 
+	var personal wire.Template
+	template := templateInput{Name: "Contract template", Kind: "workflow", Document: communityTestJSON(t, communityTestWorkflow())}
+	request(ownerToken, http.MethodPost, "/templates", template, 201, &personal)
+	request(ownerToken, http.MethodGet, "/templates", nil, 200, nil)
+	request(ownerToken, http.MethodGet, "/templates/"+personal.ID, nil, 200, nil)
+	template.Revision = personal.Revision
+	request(ownerToken, http.MethodPut, "/templates/"+personal.ID, template, 200, nil)
+	request(ownerToken, http.MethodDelete, "/templates/"+personal.ID, nil, 204, nil)
+
 	var community wire.Community
 	request(ownerToken, http.MethodPost, "/communities",
 		map[string]string{"name": "Contract community", "description": "Shared measurements"}, 201, &community)

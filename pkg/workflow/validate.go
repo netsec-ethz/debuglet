@@ -232,15 +232,22 @@ func Validate(w Workflow) []Diagnostic {
 			}
 		}
 		validateMeasurementInputs(n, add)
+		if n.Block == "for_each" {
+			if value, literal := n.Inputs["values"]; literal {
+				if items, ok := value.([]any); !ok || len(items) > 100 {
+					add(n.ID, "values", "for each requires a list of at most 100 items")
+				}
+			}
+		}
 	}
 	if hasCycle(dataAdj) {
 		add("", "", "data connections contain a cycle")
 	}
 	if hasCycle(controlAdj) {
-		add("", "", "control connections contain a cycle; use Repeat for bounded repetition")
+		add("", "", "control connections contain a cycle; use Repeat or For each item for bounded repetition")
 	} else {
 		for _, n := range w.Nodes {
-			if n.Block != "repeat" {
+			if n.Block != "repeat" && n.Block != "for_each" {
 				continue
 			}
 			var body, done string
@@ -255,24 +262,48 @@ func Validate(w Workflow) []Diagnostic {
 				}
 			}
 			if body == "" {
-				add(n.ID, "body", "repeat needs a body connection")
+				add(n.ID, "body", "loop needs a body connection")
 				continue
 			}
 			inside := reachable(body, controlAdj)
 			after := reachable(done, controlAdj)
 			if inside[w.Entry] {
-				add(n.ID, "body", "workflow entry cannot be inside a repeat body")
+				add(n.ID, "body", "workflow entry cannot be inside a loop body")
 			}
 			for id := range inside {
 				if after[id] {
-					add(n.ID, "body", "repeat body must end before the done continuation")
+					add(n.ID, "body", "loop body must end before the done continuation")
 					break
 				}
 			}
 			for _, e := range w.Edges {
 				if e.Kind == "control" && inside[e.To.Node] && !inside[e.From.Node] && !(e.From.Node == n.ID && e.From.Port == "body") {
-					add(n.ID, "body", "repeat body cannot have control entry from outside its body")
+					add(n.ID, "body", "loop body cannot have control entry from outside its body")
 					break
+				}
+			}
+			if n.Block == "for_each" {
+				// The body may execute zero times. Its outputs, and any pure
+				// expressions using them, cannot feed an action outside it.
+				pending := []string{n.ID}
+				for id := range inside {
+					pending = append(pending, id)
+				}
+				seen := map[string]bool{}
+				for len(pending) > 0 {
+					id := pending[len(pending)-1]
+					pending = pending[:len(pending)-1]
+					if seen[id] {
+						continue
+					}
+					seen[id] = true
+					for _, next := range dataAdj[id] {
+						if catalog[nodes[next].Block].Pure {
+							pending = append(pending, next)
+						} else if !inside[next] {
+							add(next, "", "for each body outputs are only available inside its body; collect results to use them after done")
+						}
+					}
 				}
 			}
 		}

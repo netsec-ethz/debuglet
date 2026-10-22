@@ -1015,7 +1015,7 @@
     "id": "dns_query",
     "label": "DNS query",
     "category": "Network",
-    "description": "Query a chosen resolver at IP:port over UDP or TCP. Returns DNS response flags, records and TTLs. ok means a valid response arrived; inspect rcode for DNS success. No automatic retry or TCP fallback.",
+    "description": "Query a chosen resolver at IP:port over UDP or TCP. ok means a valid response arrived; inspect rcode for DNS success. addresses contains distinct A/AAAA answer values; names contains distinct NS/CNAME/PTR answer values, in response order. nsid_base64 preserves the first EDNS NSID as opaque bytes; nsid_present distinguishes absence from an empty identifier. NSID does not prove physical server identity. Full records and TTLs remain available. No automatic retry or TCP fallback.",
     "pure": false,
     "inputs": [
       {
@@ -1082,12 +1082,28 @@
         "type": "any"
       },
       {
+        "name": "addresses",
+        "type": "strings"
+      },
+      {
+        "name": "names",
+        "type": "strings"
+      },
+      {
         "name": "authorities",
         "type": "any"
       },
       {
         "name": "additionals",
         "type": "any"
+      },
+      {
+        "name": "nsid_base64",
+        "type": "string"
+      },
+      {
+        "name": "nsid_present",
+        "type": "boolean"
       },
       {
         "name": "flags",
@@ -2048,6 +2064,221 @@
     ],
     "control_outputs": [
       "next"
+    ]
+  },
+  {
+    "id": "distinct",
+    "label": "Distinct values",
+    "category": "Data",
+    "description": "Remove duplicate JSON values, preserving their first occurrence. No string or number coercion.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "values",
+        "type": "any",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "values",
+        "type": "any"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "group_by",
+    "label": "Group rows",
+    "category": "Data",
+    "description": "Group object rows by a named field. Returns groups with key, rows and count, in first-seen key order. Missing fields are errors.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "rows",
+        "type": "any",
+        "required": true
+      },
+      {
+        "name": "field",
+        "type": "string",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "groups",
+        "type": "any"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "set_union",
+    "label": "Set union",
+    "category": "Data",
+    "description": "Distinct JSON values present in either list, in first-seen order across a then b.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "a",
+        "type": "any",
+        "required": true
+      },
+      {
+        "name": "b",
+        "type": "any",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "values",
+        "type": "any"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "set_intersection",
+    "label": "Set intersection",
+    "category": "Data",
+    "description": "Distinct JSON values present in both lists, in the order first encountered in a.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "a",
+        "type": "any",
+        "required": true
+      },
+      {
+        "name": "b",
+        "type": "any",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "values",
+        "type": "any"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "set_difference",
+    "label": "Set difference",
+    "category": "Data",
+    "description": "Distinct JSON values present in a but absent from b, preserving their first occurrence in a.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "a",
+        "type": "any",
+        "required": true
+      },
+      {
+        "name": "b",
+        "type": "any",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "values",
+        "type": "any"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "join_rows",
+    "label": "Join tables",
+    "category": "Data",
+    "description": "Inner join on named fields using JSON equality. Each matching pair becomes {left, right}; duplicate keys produce every pair in left then right order. Missing fields and more than 1024 result rows are errors.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "left",
+        "type": "any",
+        "required": true
+      },
+      {
+        "name": "right",
+        "type": "any",
+        "required": true
+      },
+      {
+        "name": "left_key",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "right_key",
+        "type": "string",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "rows",
+        "type": "any"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "endpoint",
+    "label": "Address and port",
+    "category": "Network",
+    "description": "Combine a hostname or IP address with a port from 1 to 65535. IPv6 addresses are bracketed automatically. This does not resolve the address or send traffic.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "address",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "port",
+        "type": "number",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "target",
+        "type": "string"
+      }
+    ],
+    "control_outputs": []
+  },
+  {
+    "id": "for_each",
+    "label": "For each item",
+    "category": "Control",
+    "description": "Visit a list of up to 100 items sequentially. item and zero-based index are available inside body; an empty list goes straight to done. Use a collection to retain results after the loop.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "values",
+        "type": "any",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "item",
+        "type": "any"
+      },
+      {
+        "name": "index",
+        "type": "number"
+      }
+    ],
+    "control_outputs": [
+      "body",
+      "done"
     ]
   }
 ]
