@@ -176,13 +176,18 @@ api_key_file = "/etc/debuglet/assistant.key"
 
 If `api_key_file` is omitted, the dispatcher reads `DEBUGLET_ASSISTANT_API_KEY`
 from its environment. The key file takes precedence. The enabled dispatcher
-refuses missing or malformed credentials at startup. HTTPS is required, except
-for literal loopback HTTP addresses used by local providers. Redirects,
-credentials in URLs, query strings and fragments are refused.
+refuses missing or malformed credentials at startup. HTTPS is required by default,
+except for literal loopback HTTP addresses used by local providers. For a trusted
+HTTP-only model gateway, an operator can explicitly set `allow_insecure_http = true`
+in `[studio.assistant]`. This sends the API key, prompts and experiment source
+unencrypted on the dispatcher-to-provider connection; use it only on a network
+you trust. It does not disable HTTPS certificate verification or permit redirects.
+Credentials in URLs, query strings and fragments remain refused.
 
 The Ansible equivalents are `dispatcher_assistant_enabled`,
 `dispatcher_assistant_endpoint`, `dispatcher_assistant_model` and
-`dispatcher_assistant_api_key_file`. Provision the private key file separately,
+`dispatcher_assistant_api_key_file`; the optional HTTP exception is
+`dispatcher_assistant_allow_insecure_http` (default `false`). Provision the private key file separately,
 then apply the normal configuration update and restart the dispatcher. The
 ordinary disabled deployment requires no key or additional service. Configure
 the reverse proxy for at least 120 seconds on `/api/studio/assistant` to allow

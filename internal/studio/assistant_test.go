@@ -29,6 +29,19 @@ func assistantFixture(t *testing.T, handler http.HandlerFunc) *Assistant {
 	return client
 }
 
+func TestAssistantHTTPRequiresOperatorOptIn(t *testing.T) {
+	for _, endpoint := range []string{"http://models.example/v1/chat/completions", "http://192.0.2.1:8001/v1/chat/completions"} {
+		cfg := AssistantConfig{Endpoint: endpoint, Model: "fixture-model", APIKey: "fixture-secret"}
+		if _, err := NewAssistant(cfg); err == nil {
+			t.Fatal("accepted non-loopback HTTP without operator opt-in")
+		}
+		cfg.AllowInsecureHTTP = true
+		if _, err := NewAssistant(cfg); err != nil {
+			t.Fatalf("explicit HTTP provider configuration: %v", err)
+		}
+	}
+}
+
 func assistantInput(t *testing.T, kind string, document any) AssistantRequest {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{"kind": kind, "document": document, "message": "Give this experiment a clearer name."})

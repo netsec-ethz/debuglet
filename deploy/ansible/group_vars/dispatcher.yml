@@ -45,6 +45,7 @@ dispatcher_assistant_enabled: false
 dispatcher_assistant_endpoint: ""
 dispatcher_assistant_model: ""
 dispatcher_assistant_api_key_file: ""
+dispatcher_assistant_allow_insecure_http: false
 
 # GitHub OAuth credentials stay in the ignored, owner-only file selected by
 # the environment. The OAuth applications must use the callback URL rendered

@@ -37,5 +37,5 @@ func configuredAssistant(cfg config.AssistantConfig) (*studio.Assistant, error) 
 		}
 		key = strings.TrimSpace(string(data))
 	}
-	return studio.NewAssistant(studio.AssistantConfig{Endpoint: cfg.Endpoint, Model: cfg.Model, APIKey: key})
+	return studio.NewAssistant(studio.AssistantConfig{Endpoint: cfg.Endpoint, Model: cfg.Model, APIKey: key, AllowInsecureHTTP: cfg.AllowInsecureHTTP})
 }

@@ -15,10 +15,11 @@ import (
 // APIKeyFile contains the provider credential; an empty path selects the
 // DEBUGLET_ASSISTANT_API_KEY environment variable instead.
 type AssistantConfig struct {
-	Enabled    bool   `toml:"enabled"`
-	Endpoint   string `toml:"endpoint"`
-	Model      string `toml:"model"`
-	APIKeyFile string `toml:"api_key_file"`
+	Enabled           bool   `toml:"enabled"`
+	Endpoint          string `toml:"endpoint"`
+	Model             string `toml:"model"`
+	APIKeyFile        string `toml:"api_key_file"`
+	AllowInsecureHTTP bool   `toml:"allow_insecure_http"`
 }
 
 func (cfg AssistantConfig) Validate() error {
@@ -27,8 +28,8 @@ func (cfg AssistantConfig) Validate() error {
 	}
 	u, err := url.Parse(cfg.Endpoint)
 	if err != nil || u.Host == "" || u.User != nil || u.Fragment != "" || u.RawQuery != "" ||
-		(u.Scheme != "https" && !(u.Scheme == "http" && net.ParseIP(u.Hostname()).IsLoopback())) {
-		return errors.New("studio.assistant.endpoint must be an HTTPS URL without credentials, query or fragment; literal-loopback HTTP is allowed for local providers")
+		(u.Scheme != "https" && !(u.Scheme == "http" && (cfg.AllowInsecureHTTP || net.ParseIP(u.Hostname()).IsLoopback()))) {
+		return errors.New("studio.assistant.endpoint requires HTTPS, literal loopback HTTP or allow_insecure_http; URL credentials, query and fragment are forbidden")
 	}
 	if strings.TrimSpace(cfg.Model) == "" || len(cfg.Model) > 128 || strings.TrimSpace(cfg.Model) != cfg.Model || strings.ContainsAny(cfg.Model, "\r\n\x00") {
 		return errors.New("studio.assistant.model must be a non-empty model identifier of at most 128 bytes")

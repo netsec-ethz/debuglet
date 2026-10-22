@@ -49,3 +49,11 @@ func TestConfiguredAssistantCredentials(t *testing.T) {
 		t.Fatal("oversized key accepted")
 	}
 }
+
+func TestConfiguredAssistantForwardsHTTPOptIn(t *testing.T) {
+	t.Setenv("DEBUGLET_ASSISTANT_API_KEY", "environment-test-key")
+	cfg := config.AssistantConfig{Enabled: true, Endpoint: "http://models.example/v1/chat/completions", Model: "glm", AllowInsecureHTTP: true}
+	if _, err := configuredAssistant(cfg); err != nil {
+		t.Fatalf("explicit HTTP provider configuration: %v", err)
+	}
+}

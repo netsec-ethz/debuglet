@@ -35,9 +35,10 @@ var (
 )
 
 type AssistantConfig struct {
-	Endpoint string
-	Model    string
-	APIKey   string
+	Endpoint          string
+	Model             string
+	APIKey            string
+	AllowInsecureHTTP bool
 }
 
 type AssistantMessage struct {
@@ -69,8 +70,8 @@ type Assistant struct {
 func NewAssistant(cfg AssistantConfig) (*Assistant, error) {
 	u, err := url.Parse(cfg.Endpoint)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
-		(u.Scheme != "https" && !(u.Scheme == "http" && net.ParseIP(u.Hostname()).IsLoopback())) {
-		return nil, errors.New("assistant endpoint must be HTTPS (or literal loopback HTTP), without credentials, query or fragment")
+		(u.Scheme != "https" && !(u.Scheme == "http" && (cfg.AllowInsecureHTTP || net.ParseIP(u.Hostname()).IsLoopback()))) {
+		return nil, errors.New("assistant endpoint requires HTTPS, literal loopback HTTP or allow_insecure_http; URL credentials, query and fragment are forbidden")
 	}
 	if cfg.Model == "" || len(cfg.Model) > 128 || strings.TrimSpace(cfg.Model) != cfg.Model || strings.ContainsFunc(cfg.Model, unicode.IsControl) {
 		return nil, errors.New("assistant model must contain 1–128 characters without surrounding whitespace or control characters")
