@@ -552,6 +552,10 @@ func startHTTPServer(ctx context.Context, lis net.Listener, manager *dispatcher.
 	if cfg.CILogonOIDC.Enabled && (os.Getenv("CILOGON_CLIENT_ID") == "" || os.Getenv("CILOGON_CLIENT_SECRET") == "") {
 		return errors.New("cilogon_oidc.enabled requires CILOGON_CLIENT_ID and CILOGON_CLIENT_SECRET")
 	}
+	assistant, err := configuredAssistant(cfg.Studio.Assistant)
+	if err != nil {
+		return err
+	}
 	// The local development profile of the HTTP API needs both the operator's
 	// explicit opt-in and an environment this command recognises as local:
 	// blockchain payments disabled, the TLS listener disabled and both listeners
@@ -565,6 +569,7 @@ func startHTTPServer(ctx context.Context, lis net.Listener, manager *dispatcher.
 	}
 	handler := api.NewHandler(manager, db, logger,
 		api.Studio(cfg.Studio),
+		api.Assistant(assistant),
 		api.ExecutorOnboarding(cfg.ExecutorOnboarding, issuer),
 		api.AttributionTrustedProxies(trustedProxies),
 		api.MetricsStateDirectory(filepath.Dir(cfg.Database.Path)),
@@ -616,7 +621,7 @@ func startHTTPServer(ctx context.Context, lis net.Listener, manager *dispatcher.
 		}
 	}()
 	defer func() { server.Close(); close(done); <-joined }()
-	err := server.Serve(lis)
+	err = server.Serve(lis)
 	if ctx.Err() != nil {
 		return nil
 	}

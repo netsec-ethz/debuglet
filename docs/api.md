@@ -26,6 +26,43 @@ curl -s https://dispatcher.example/version
 
 Clients may send `Debuglet-API-Version: major.minor`. Within one API major version, clients must ignore unknown response fields and unknown values in open string fields. Breaking wire changes require a new API major version.
 
+## Experiment assistance (API 1.29)
+
+`GET /studio/assistant` returns `{"enabled": false}` until a model provider is
+configured, or `{"enabled": true, "model": "…"}`. It requires an account and
+`measurements:read` for scoped credentials. This status is independent of the
+hosted compiler.
+
+`POST /studio/assistant` accepts `kind` (`workflow` or `experiment`), `document`
+(the current editable JSON graph), `message`, and optional `history` containing
+`role` (`user` or `assistant`) and `content`. It requires `measurements:write`;
+browser sessions use the usual CSRF proof. The response has `message` and,
+when an edit is proposed, `document` in the same graph format and kind. A reply
+without `document` asks for clarification. Proposed documents pass the existing
+graph validator before being returned. Incomplete input drafts are allowed.
+The caller decides whether to apply the proposal; nothing is compiled, run or
+charged as a measurement by this operation.
+
+The configured model receives the supplied prompt, history and document,
+including custom block source. The dispatcher does not include account
+credentials or unrelated saved documents. Only send source appropriate for that
+provider. Responses use `Cache-Control: no-store`; request contents and provider
+error bodies are not logged by the assistant.
+
+The prompt limit is 8,192 UTF-8 bytes; the document limit is 256 KiB. History is
+limited to 12 messages, 8,192 bytes each and 16,384 bytes combined. The complete
+encoded request is at most 4 MiB + 64 KiB. There is at most one active request per
+account and four globally, separately from compiler capacity. Existing account
+admission and a global six requests/minute limit with burst four apply. Excess
+work returns `429` with `Retry-After`. Each request has a 90-second deadline,
+including at most one repair attempt; each provider call allows 16,384 output
+tokens and a 512 KiB response. Replies contain at most 8,192 message bytes and a
+256 KiB document. Disabled service returns `503`, upstream or invalid replies
+`502`, and timeout/cancellation `504`, using the normal API error envelope.
+
+See [operator configuration](operations/hosted-studio.md#optional-experiment-assistant)
+for provider setup and spending controls.
+
 ## Hosted compilation (API 1.24)
 
 Signed-in accounts can use `GET /studio/catalog`, `POST /studio/validate`,

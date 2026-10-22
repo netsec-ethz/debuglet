@@ -29,12 +29,15 @@ func oaStudioUnavailableExchanges(t *testing.T, ctx context.Context, recorder *o
 	for _, operation := range []struct {
 		method, path string
 		body         any
+		status       int
 	}{
-		{http.MethodGet, "/studio/catalog", nil},
-		{http.MethodPost, "/studio/validate", wf},
-		{http.MethodPost, "/studio/build", wf},
-		{http.MethodPost, "/studio/experiments/validate", experiment},
-		{http.MethodPost, "/studio/experiments/build", experiment},
+		{http.MethodGet, "/studio/catalog", nil, 503},
+		{http.MethodGet, "/studio/assistant", nil, 200},
+		{http.MethodPost, "/studio/assistant", map[string]any{"kind": "workflow", "document": wf, "message": "Explain this graph"}, 503},
+		{http.MethodPost, "/studio/validate", wf, 503},
+		{http.MethodPost, "/studio/build", wf, 503},
+		{http.MethodPost, "/studio/experiments/validate", experiment, 503},
+		{http.MethodPost, "/studio/experiments/build", experiment, 503},
 	} {
 		var data []byte
 		if operation.body != nil {
@@ -61,8 +64,8 @@ func oaStudioUnavailableExchanges(t *testing.T, ctx context.Context, recorder *o
 		if err != nil {
 			t.Fatal(err)
 		}
-		if resp.StatusCode != http.StatusServiceUnavailable {
-			t.Fatalf("%s: status %d, want 503: %s", operation.path, resp.StatusCode, body)
+		if resp.StatusCode != operation.status {
+			t.Fatalf("%s: status %d, want %d: %s", operation.path, resp.StatusCode, operation.status, body)
 		}
 	}
 }

@@ -152,3 +152,57 @@ delete a socket owned by a running service; stop the service so systemd removes
 its runtime directory before restarting it. An archive alone does not prove
 production acceptance: verify sign-in, catalog, validation, cancellation,
 workflow/experiment build and ordinary run/share/re-run through the browser.
+
+## Optional experiment assistant
+
+The assistant runs in the dispatcher and uses an operator-selected,
+OpenAI-compatible chat-completions endpoint with function calling, such as GLM.
+The compiler sandbox remains offline. The assistant only proposes editable
+source; the normal build and submission actions remain separate. No provider is
+selected or enabled by default. Verify the endpoint and model supplied for your
+provider account before enabling it.
+
+Provision a provider key in a regular file readable only by its owner and,
+optionally, the dispatcher's group (mode `0600` or `0640`). Do not place the key
+in the repository, console configuration or inventory. For example:
+
+```toml
+[studio.assistant]
+enabled = true
+endpoint = "https://provider.example/v1/chat/completions"
+model = "provider-model-id"
+api_key_file = "/etc/debuglet/assistant.key"
+```
+
+If `api_key_file` is omitted, the dispatcher reads `DEBUGLET_ASSISTANT_API_KEY`
+from its environment. The key file takes precedence. The enabled dispatcher
+refuses missing or malformed credentials at startup. HTTPS is required, except
+for literal loopback HTTP addresses used by local providers. Redirects,
+credentials in URLs, query strings and fragments are refused.
+
+The Ansible equivalents are `dispatcher_assistant_enabled`,
+`dispatcher_assistant_endpoint`, `dispatcher_assistant_model` and
+`dispatcher_assistant_api_key_file`. Provision the private key file separately,
+then apply the normal configuration update and restart the dispatcher. The
+ordinary disabled deployment requires no key or additional service. Configure
+the reverse proxy for at least 120 seconds on `/api/studio/assistant` to allow
+the backend's 90-second deadline and response delivery.
+
+The model receives the graph, including any custom source, the prompt and the
+conversation history explicitly included by the client. It receives no session
+cookies, account credentials or unrelated stored experiments. Review the
+provider's data-handling policy before enabling this for users. Prompt contents
+and upstream error bodies are not logged by the assistant.
+
+The API bounds input, output, time and concurrency and limits the shared provider
+to six user requests per minute with a burst of four. Each may make two provider
+calls, capped at 16,384 output tokens per call. These are resource limits, not a
+monetary budget: configure a hard spending limit and alerts on the provider
+account before enabling a shared key. Existing dispatcher account request limits
+also apply. The assistant never initiates measurement spending.
+
+Verify authenticated availability, one clarification and one proposed graph with
+the actual provider, then validate/build that graph through the existing compiler.
+A fake-provider test establishes the local contract only; it does not establish
+compatibility with an unconfigured provider account. Set `enabled = false` and
+restart to disable assistance without changing ordinary editing or compilation.
