@@ -39,6 +39,7 @@ type AssistantConfig struct {
 	Model             string
 	APIKey            string
 	AllowInsecureHTTP bool
+	ReasoningEffort   string
 }
 
 type AssistantMessage struct {
@@ -61,10 +62,11 @@ type AssistantResponse struct {
 // Assistant only proposes editable source. It has no compiler, database,
 // submission capability or access to another account's saved documents.
 type Assistant struct {
-	endpoint string
-	model    string
-	key      string
-	client   *http.Client
+	endpoint        string
+	model           string
+	key             string
+	reasoningEffort string
+	client          *http.Client
 }
 
 func NewAssistant(cfg AssistantConfig) (*Assistant, error) {
@@ -76,6 +78,11 @@ func NewAssistant(cfg AssistantConfig) (*Assistant, error) {
 	if cfg.Model == "" || len(cfg.Model) > 128 || strings.TrimSpace(cfg.Model) != cfg.Model || strings.ContainsFunc(cfg.Model, unicode.IsControl) {
 		return nil, errors.New("assistant model must contain 1–128 characters without surrounding whitespace or control characters")
 	}
+	switch cfg.ReasoningEffort {
+	case "", "low", "high", "max":
+	default:
+		return nil, errors.New("assistant reasoning_effort must be empty, low, high or max")
+	}
 	key := strings.TrimSpace(cfg.APIKey)
 	if key == "" || len(key) > 8192 || strings.ContainsFunc(key, unicode.IsSpace) || strings.ContainsFunc(key, unicode.IsControl) {
 		return nil, errors.New("assistant API key is missing or malformed")
@@ -83,7 +90,7 @@ func NewAssistant(cfg AssistantConfig) (*Assistant, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxResponseHeaderBytes = 16 << 10
 	transport.ResponseHeaderTimeout = AssistantTimeout
-	return &Assistant{endpoint: u.String(), model: cfg.Model, key: key, client: &http.Client{
+	return &Assistant{endpoint: u.String(), model: cfg.Model, key: key, reasoningEffort: cfg.ReasoningEffort, client: &http.Client{
 		Transport: transport, Timeout: AssistantTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}, nil
@@ -147,10 +154,11 @@ type assistantCall struct {
 }
 
 type assistantModelMessage struct {
-	Role       string          `json:"role"`
-	Content    string          `json:"content,omitempty"`
-	ToolCalls  []assistantCall `json:"tool_calls,omitempty"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
+	Role             string          `json:"role"`
+	Content          string          `json:"content,omitempty"`
+	ReasoningContent string          `json:"reasoning_content,omitempty"`
+	ToolCalls        []assistantCall `json:"tool_calls,omitempty"`
+	ToolCallID       string          `json:"tool_call_id,omitempty"`
 }
 
 // Reply makes at most two provider requests: one proposal and one correction
@@ -219,7 +227,11 @@ func (a *Assistant) complete(ctx context.Context, messages []assistantModelMessa
 			"message": map[string]any{"type": "string"}, "document": map[string]any{"type": "object"},
 		}, "required": []string{"message"}, "additionalProperties": false},
 	}}
-	data, err := json.Marshal(map[string]any{"model": a.model, "messages": messages, "tools": []any{tool}, "tool_choice": "auto", "stream": false, "max_tokens": 16384})
+	payload := map[string]any{"model": a.model, "messages": messages, "tools": []any{tool}, "tool_choice": "auto", "stream": false, "max_tokens": 16384}
+	if a.reasoningEffort != "" {
+		payload["reasoning_effort"] = a.reasoningEffort
+	}
+	data, err := json.Marshal(payload)
 	if err != nil {
 		return empty, ErrAssistantInvalidReply
 	}

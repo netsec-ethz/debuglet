@@ -59,10 +59,42 @@ func assistantProposal(w http.ResponseWriter, document any) {
 	arguments, _ := json.Marshal(map[string]any{"message": "Renamed the experiment; its measurement behavior is unchanged.", "document": document})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{
-		"finish_reason": "tool_calls", "message": map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{
+		"finish_reason": "tool_calls", "message": map[string]any{"role": "assistant", "reasoning_content": "private provider context", "tool_calls": []any{map[string]any{
 			"id": "proposal", "type": "function", "function": map[string]any{"name": "propose_document", "arguments": string(arguments)},
 		}}},
 	}}})
+}
+
+func TestAssistantReasoningEffortIsOptional(t *testing.T) {
+	for _, effort := range []string{"", "low"} {
+		t.Run("effort="+effort, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]json.RawMessage
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+					return
+				}
+				value, present := body["reasoning_effort"]
+				if present != (effort != "") || (present && string(value) != `"low"`) {
+					t.Error("incorrect reasoning effort")
+				}
+				assistantProposal(w, sampleWorkflow())
+			}))
+			defer server.Close()
+			client, err := NewAssistant(AssistantConfig{Endpoint: server.URL, Model: "fixture-model", APIKey: "fixture-key", ReasoningEffort: effort})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := client.Reply(t.Context(), assistantInput(t, "workflow", sampleWorkflow()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, _ := json.Marshal(result)
+			if bytes.Contains(encoded, []byte("private provider context")) {
+				t.Fatal("provider reasoning leaked into result")
+			}
+		})
+	}
 }
 
 func TestAssistantPreservesGraphAndUsesCurrentCatalog(t *testing.T) {
@@ -125,6 +157,9 @@ func TestAssistantRepairsInvalidProposalOnlyOnce(t *testing.T) {
 				if count == 2 && !bytes.Contains(data, []byte("The edit was not applied")) {
 					t.Error("missing bounded validator feedback")
 				}
+				if bytes.Contains(data, []byte(`"reasoning_content":"private provider context"`)) != (count == 2) {
+					t.Error("provider reasoning must be preserved only in the correction request")
+				}
 				wf := sampleWorkflow()
 				if count == 1 || !repair {
 					wf.Entry = "nonexistent"
@@ -134,6 +169,10 @@ func TestAssistantRepairsInvalidProposalOnlyOnce(t *testing.T) {
 			result, err := client.Reply(t.Context(), assistantInput(t, "workflow", sampleWorkflow()))
 			if calls.Load() != 2 || (repair && (err != nil || len(result.Document) == 0)) || (!repair && (!errors.Is(err, ErrAssistantInvalidReply) || len(result.Document) != 0)) {
 				t.Fatalf("calls=%d document=%d err=%v", calls.Load(), len(result.Document), err)
+			}
+			encoded, _ := json.Marshal(result)
+			if bytes.Contains(encoded, []byte("private provider context")) {
+				t.Fatal("provider reasoning leaked into result")
 			}
 		})
 	}

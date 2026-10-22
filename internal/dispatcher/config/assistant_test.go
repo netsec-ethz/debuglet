@@ -25,6 +25,8 @@ func TestAssistantConfiguration(t *testing.T) {
 		{"credentials", func(c *AssistantConfig) { c.Endpoint = "https://secret@models.example" }, false},
 		{"query", func(c *AssistantConfig) { c.Endpoint = "https://models.example?key=secret" }, false},
 		{"missing model", func(c *AssistantConfig) { c.Model = "" }, false},
+		{"reasoning effort", func(c *AssistantConfig) { c.ReasoningEffort = "low" }, true},
+		{"unknown reasoning effort", func(c *AssistantConfig) { c.ReasoningEffort = "disabled" }, false},
 		{"relative key", func(c *AssistantConfig) { c.APIKeyFile = "model.key" }, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {

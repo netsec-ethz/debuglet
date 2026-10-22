@@ -25,6 +25,7 @@ endpoint = {{ dispatcher_assistant_endpoint | to_json }}
 model = {{ dispatcher_assistant_model | to_json }}
 api_key_file = {{ dispatcher_assistant_api_key_file | to_json }}
 allow_insecure_http = {{ dispatcher_assistant_allow_insecure_http | default(false) | bool | lower }}
+reasoning_effort = {{ dispatcher_assistant_reasoning_effort | default('') | to_json }}
 {% endif %}
 
 [scheduler]

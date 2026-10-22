@@ -184,10 +184,18 @@ unencrypted on the dispatcher-to-provider connection; use it only on a network
 you trust. It does not disable HTTPS certificate verification or permit redirects.
 Credentials in URLs, query strings and fragments remain refused.
 
+For models that support it, `reasoning_effort` accepts `low`, `high` or `max`.
+An omitted or empty value leaves the provider default unchanged. For interactive
+GLM-5.3-Flash authoring, use `reasoning_effort = "low"` to keep reasoning within
+the request deadline. This controls reasoning depth rather than disabling it.
+Provider `reasoning_content`, when present, is retained only for the single
+validation-repair call; it is not returned to the browser or logged.
+
 The Ansible equivalents are `dispatcher_assistant_enabled`,
 `dispatcher_assistant_endpoint`, `dispatcher_assistant_model` and
 `dispatcher_assistant_api_key_file`; the optional HTTP exception is
-`dispatcher_assistant_allow_insecure_http` (default `false`). Provision the private key file separately,
+`dispatcher_assistant_allow_insecure_http` (default `false`), and reasoning depth
+is `dispatcher_assistant_reasoning_effort` (default empty). Provision the private key file separately,
 then apply the normal configuration update and restart the dispatcher. The
 ordinary disabled deployment requires no key or additional service. Configure
 the reverse proxy for at least 120 seconds on `/api/studio/assistant` to allow
