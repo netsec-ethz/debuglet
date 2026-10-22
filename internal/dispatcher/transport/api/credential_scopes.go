@@ -33,6 +33,8 @@ var credentialRouteScopes = map[string]string{
 	"DELETE /result-highlights/:id":                               "measurements:write",
 	"GET /runs/:id/source":                                        "measurements:read",
 	"POST /measurements/:id/source":                               "measurements:write",
+	"GET /studio/assistant":                                       "measurements:read",
+	"POST /studio/assistant":                                      "measurements:write",
 	"GET /studio/catalog":                                         "measurements:read",
 	"POST /studio/validate":                                       "measurements:write",
 	"POST /studio/build":                                          "measurements:write",

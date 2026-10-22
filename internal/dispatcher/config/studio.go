@@ -13,10 +13,14 @@ import (
 // StudioConfig enables hosted compilation through a separate local worker.
 // An omitted or empty socket_path leaves the routes authenticated but unavailable.
 type StudioConfig struct {
-	SocketPath string `toml:"socket_path"`
+	SocketPath string          `toml:"socket_path"`
+	Assistant  AssistantConfig `toml:"assistant"`
 }
 
 func (cfg StudioConfig) Validate() error {
+	if err := cfg.Assistant.Validate(); err != nil {
+		return err
+	}
 	if cfg.SocketPath == "" {
 		return nil
 	}

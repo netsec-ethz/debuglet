@@ -40,6 +40,14 @@ dispatcher_scheduler_granularity_ms: 30000
 dispatcher_studio_socket_path: ""
 dispatcher_studio_socket_group: debuglet-studio
 
+# Optional graph authoring model. Provision the private key file separately.
+dispatcher_assistant_enabled: false
+dispatcher_assistant_endpoint: ""
+dispatcher_assistant_model: ""
+dispatcher_assistant_api_key_file: ""
+dispatcher_assistant_allow_insecure_http: false
+dispatcher_assistant_reasoning_effort: ""
+
 # GitHub OAuth credentials stay in the ignored, owner-only file selected by
 # the environment. The OAuth applications must use the callback URL rendered
 # below. A fixed success URL prevents a caller-controlled open redirect.
