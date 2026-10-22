@@ -1,24 +1,32 @@
-# Build workflows and experiments
+# Create and run experiments
 
-Choose **Workflow builder** to write one executor's program. Choose
-**Experiment builder** to connect two or three participants, each with its own
-workflow. The same graph can be edited visually, authored by an MCP client or
-compiled from the command line with `dbl-studio`.
+Choose **New experiment** (`/console/experiments/new`) to design a program, then
+move to **Run** to choose executors and review its permissions. Use **Add a
+program** when two or three programs need to coordinate, each on a distinct
+executor. The same graph can be edited visually, authored by an MCP client or
+compiled from the command line with `dbl-studio`. Existing builder links remain
+valid.
 
 Use [communities](../communities.md) to save editable source and compiled bundles
 in a shared project, retain revisions and collect the resulting measurements.
 
-The console's **Template library** provides categorized, configurable starting
+The console's **Templates** library provides categorized, configurable starting
 points alongside personal and community templates. **Save as template** stores
 source under your account or shares a copy in a community project. Opening a
 template creates a separate draft. Literal inputs and custom code remain part of
 the source; compiled programs and executor bindings are not saved in personal
 templates. Existing community experiments retain their revision/bundle support.
 
-For independent observations from many vantage points, compile one workflow and
-select several executors during submission. This uses ordinary grouped admission
+For independent observations from many vantage points, design one program and
+select 1–128 executors during submission, within the dispatcher's limits. This uses ordinary grouped admission
 and results, without requiring participants to listen for peer connections. Use
-the experiment builder when programs actually need to exchange messages.
+multiple programs when they actually need to exchange messages.
+
+When the operator enables the optional assistant, describe the experiment in
+the editor's chat panel. It proposes editable blocks or asks for clarification.
+The prompt, visible source and included conversation are sent to the configured
+model provider. Review the proposal on the canvas; building and submitting a run
+remain explicit actions. Ordinary editing works when assistance is unavailable.
 
 Conditions, calculations and repeats execute inside the compiled WASI program.
 The dispatcher coordinates experiment readiness and stores results; it does not
@@ -104,10 +112,10 @@ and cache the trusted SDK's dependencies before starting an offline authoring
 session. Generated builds use the SDK's pinned versions and checksums, including
 the DNS codec. Hosted compiler bundles carry their required offline modules.
 
-The starter menu includes DNS sampling, UDP and TCP exchanges, verified TLS
+The **Templates** library includes DNS sampling, UDP and TCP exchanges, verified TLS
 inspection, consecutive hop probes and timers. Replace documentation addresses
-with permitted targets before running. Experiment starters include repeated
-phases and a UDP server/client/collector flow. Both editors expose the same
+with permitted targets before running. Coordinated templates include repeated
+phases and a UDP server/client/collector flow. Every program uses the same
 primitive blocks, so an MCP-authored graph remains editable visually.
 
 **For each item** runs a body for each value in a list of at most 100 items.
@@ -133,7 +141,7 @@ needed. The console checks these against fresh executor reports; editing or
 importing a graph does not upgrade the executor. An incompatible node remains
 visible in its operator's inventory with update guidance.
 
-For a multi-executor experiment, use the experiment editor or these commands:
+For a coordinated experiment, add programs in the editor or use these commands:
 
 ```sh
 ./dbl-studio validate-experiment \
@@ -144,15 +152,21 @@ For a multi-executor experiment, use the experiment editor or these commands:
 ```
 
 The bundle includes the editable experiment, generated source and ordinary
-WASM bundle for each participant. Import it into the experiment editor, bind
-participants to distinct reachable executors, then choose **Review and run**.
-Review the grouped measurement's policies, timing and TEST quote before
-submitting. Compilation and import do not submit a measurement.
+WASM bundle for each participant. Import it into the editor, then choose **Run**
+to compile the latest design if needed and select distinct reachable executors.
+Choose **Review permissions** and review the group's policies, timing and quote
+before submitting. Compilation and import do not submit a measurement.
 See [experiment communication](workflows.md#experiments-with-several-executors)
 for listener requirements, message limits and request/reply semantics.
 
-The resulting **Measurement group** page shows a participant map. Select a node
-to see its reported values; connection details and raw traces remain expandable.
+The resulting run opens on **Results**, showing reported metrics, charts and
+tables. Select a participant to see its results, or open the optional connections
+map. **Activity** contains traces and raw output; **Details** contains source,
+configuration and cost. Failure and incomplete-output warnings remain visible.
+**Edit and run again** opens an independent editable copy when source was retained;
+older runs without source can still reuse their retained settings. Save useful
+reports to the **Results library** to return to them and their originating run.
+
 New experiment programs include a connection manifest in their output, so the
 map can load after a page reload. It describes declared communication, not
 observed message delivery. For older runs, **More → Load experiment map** accepts
