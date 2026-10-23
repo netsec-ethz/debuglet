@@ -26,6 +26,7 @@ const (
 	assistantDocumentLimit = 256 << 10
 	assistantResponseLimit = 512 << 10
 	assistantTextLimit     = 8192
+	assistantFeedbackLimit = 4096
 )
 
 var (
@@ -283,6 +284,13 @@ func assistantValidateDocument(kind string, data json.RawMessage) (json.RawMessa
 		if err != nil {
 			return nil, err
 		}
+		if ds := workflow.Validate(document); len(ds) != 0 {
+			diagnostics := make([]workflow.ExperimentDiagnostic, len(ds))
+			for i, d := range ds {
+				diagnostics[i].Diagnostic = d
+			}
+			return nil, assistantValidationError(diagnostics)
+		}
 		if _, err := workflow.Generate(document); err != nil {
 			return nil, err
 		}
@@ -293,7 +301,7 @@ func assistantValidateDocument(kind string, data json.RawMessage) (json.RawMessa
 			return nil, err
 		}
 		if ds := workflow.ValidateExperiment(document); len(ds) != 0 {
-			return nil, fmt.Errorf("participant %s node %s: %s", ds[0].Participant, ds[0].Node, ds[0].Message)
+			return nil, assistantValidationError(ds)
 		}
 		return json.Marshal(document)
 	}
@@ -313,14 +321,42 @@ func assistantDecode(data []byte, value any) error {
 }
 
 func assistantFeedback(err error) string {
-	text := err.Error()
-	if len(text) > 2048 {
-		text = text[:2048]
+	return assistantBoundText(err.Error(), assistantFeedbackLimit)
+}
+
+func assistantValidationError(diagnostics []workflow.ExperimentDiagnostic) error {
+	report := struct {
+		Diagnostics []workflow.ExperimentDiagnostic `json:"diagnostics"`
+		Omitted     int                             `json:"omitted,omitempty"`
+	}{Diagnostics: []workflow.ExperimentDiagnostic{}, Omitted: len(diagnostics)}
+	for _, d := range diagnostics[:min(len(diagnostics), 16)] {
+		d.Participant = assistantBoundText(d.Participant, 128)
+		d.Node = assistantBoundText(d.Node, 128)
+		d.Port = assistantBoundText(d.Port, 128)
+		d.Message = assistantBoundText(d.Message, 256)
+		report.Diagnostics = append(report.Diagnostics, d)
+		report.Omitted--
+		encoded, _ := json.Marshal(report)
+		if len(encoded) > assistantFeedbackLimit {
+			report.Diagnostics = report.Diagnostics[:len(report.Diagnostics)-1]
+			report.Omitted++
+			break
+		}
 	}
-	return text
+	encoded, _ := json.Marshal(report)
+	return errors.New(string(encoded))
+}
+
+func assistantBoundText(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	return strings.ToValidUTF8(text[:limit-3], "") + "..."
 }
 
 const assistantInstructions = `You help a researcher author Debuglet experiments. Propose source for the visible editor, never claim to have run, saved or deployed it. Use the current document and request supplied in the last message. Preserve existing unrelated blocks, positions, identifiers and settings. Ask a concise clarification when essential targets or requirements are missing; do not invent results or public targets. Use the propose_document function to return a complete document and a short explanation. Prefer built-in blocks; custom Go actions remain visible and must follow the existing graph format. Never return code fences, patches, compiled bundles or credentials as the document.
 The kind must remain unchanged. Workflow JSON is {version:1,name,entry,nodes:[{id,block,inputs,position:{x,y}}],edges:[{kind:"control"|"data",from:{node,port},to:{node,port}}],custom_blocks?:[],groups?:[]}. Nodes use catalog block IDs and exact port names. Each action's control input is "in"; its control outputs are listed in the catalog. Data edges carry typed values, and do not execute actions. Pure blocks evaluate on demand. The entry must be an action. Connect required data or supply literal inputs. Control flow is bounded: use repeat/for_each rather than cycles. Outcomes such as HTTP transport success, HTTP status, and run completion are distinct. Include clear report metrics/tables/charts where useful.
 Node inputs contain literal JSON values only. To use another node's output, omit that destination port from inputs and add a top-level data edge. Do not put {"node":...,"port":...}, reference strings or expressions in inputs as references: objects there are literal objects, including for ports of type any. For HTTP node http1 feeding report_metric node metric1, use metric1.inputs={"title":"Duration","unit":"ms"} and the data edge {"kind":"data","from":{"node":"http1","port":"duration_ms"},"to":{"node":"metric1","port":"value"}}. Execute those actions with the separate control edge {"kind":"control","from":{"node":"http1","port":"next"},"to":{"node":"metric1","port":"in"}}. The same data-edge rule applies to emit and every other block. When repairing a connection, preserve the requested data dependency instead of substituting a placeholder literal.
+For repeat and for_each, in is the only control input; body and done are control outputs. End the body at an unconnected control output, never with an edge back to the loop. Connect the loop's done output to the action after all iterations. To retain samples, create a collection before the loop, collect inside its body, and read the collection after done. Pure blocks have data connections only.
+set_field adds one field through its name and value inputs; to construct multiple dynamic fields, chain set_field blocks through their object input and value output. A JSON object literal does not evaluate nested output references.
 Experiment JSON is {version:1,kind:"experiment",name,participants:[{id,label,workflow}],channels:[{id,from,to,type,response_type?}]}. It has 2–3 participants, each with ordinary Workflow JSON and no injected experiment context. Declared channels connect distinct participant IDs. send_message/await_message/phase_barrier require this whole-experiment context. Every participant must contain each named phase barrier. Direct TCP reachability and listener permissions are deployment choices; executor selection and runtime permissions are not part of the editable source. A workflow can independently run on many executors without adding messaging blocks. Treat the catalog as the authority for available blocks and types.`
