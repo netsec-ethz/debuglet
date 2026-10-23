@@ -69,7 +69,7 @@ func assistantProposal(w http.ResponseWriter, document any) {
 }
 
 func TestAssistantReasoningEffortIsOptional(t *testing.T) {
-	for _, effort := range []string{"", "low"} {
+	for _, effort := range []string{"", "none", "low"} {
 		t.Run("effort="+effort, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var body map[string]json.RawMessage
@@ -78,7 +78,8 @@ func TestAssistantReasoningEffortIsOptional(t *testing.T) {
 					return
 				}
 				value, present := body["reasoning_effort"]
-				if present != (effort != "") || (present && string(value) != `"low"`) {
+				expected, _ := json.Marshal(effort)
+				if present != (effort != "") || (present && !bytes.Equal(value, expected)) {
 					t.Error("incorrect reasoning effort")
 				}
 				assistantProposal(w, sampleWorkflow())
@@ -95,6 +96,46 @@ func TestAssistantReasoningEffortIsOptional(t *testing.T) {
 			encoded, _ := json.Marshal(result)
 			if bytes.Contains(encoded, []byte("private provider context")) {
 				t.Fatal("provider reasoning leaked into result")
+			}
+		})
+	}
+}
+
+func TestAssistantTokenLimitMatchesEndpoint(t *testing.T) {
+	for _, test := range []struct {
+		endpoint string
+		field    string
+	}{
+		{"https://api.openai.com/v1/chat/completions", "max_completion_tokens"},
+		{"https://API.OPENAI.COM:443/v1/chat/completions", "max_completion_tokens"},
+		{"https://models.example/v1/chat/completions", "max_tokens"},
+		{"https://api.openai.com.example/v1/chat/completions", "max_tokens"},
+	} {
+		t.Run(test.endpoint, func(t *testing.T) {
+			client, err := NewAssistant(AssistantConfig{Endpoint: test.endpoint, Model: "gpt-6-sol", APIKey: "fixture-secret", ReasoningEffort: "none"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			fixture := assistantFixture(t, func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]json.RawMessage
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+					return
+				}
+				other := "max_tokens"
+				if test.field == other {
+					other = "max_completion_tokens"
+				}
+				if string(body[test.field]) != "16384" || body[other] != nil || string(body["reasoning_effort"]) != `"none"` {
+					t.Error("incorrect provider token limit or reasoning effort")
+				}
+				assistantProposal(w, sampleWorkflow())
+			})
+			// Keep the configuration selected by the real endpoint while sending
+			// the request only to the local provider fixture.
+			client.endpoint = fixture.endpoint
+			if _, err := client.Reply(t.Context(), assistantInput(t, "workflow", sampleWorkflow())); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}
