@@ -16,6 +16,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
+
+	"github.com/netsec-ethz/debuglet/pkg/workflow"
 )
 
 func assistantFixture(t *testing.T, handler http.HandlerFunc) *Assistant {
@@ -66,7 +69,7 @@ func assistantProposal(w http.ResponseWriter, document any) {
 }
 
 func TestAssistantReasoningEffortIsOptional(t *testing.T) {
-	for _, effort := range []string{"", "low"} {
+	for _, effort := range []string{"", "none", "low"} {
 		t.Run("effort="+effort, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var body map[string]json.RawMessage
@@ -75,7 +78,8 @@ func TestAssistantReasoningEffortIsOptional(t *testing.T) {
 					return
 				}
 				value, present := body["reasoning_effort"]
-				if present != (effort != "") || (present && string(value) != `"low"`) {
+				expected, _ := json.Marshal(effort)
+				if present != (effort != "") || (present && !bytes.Equal(value, expected)) {
 					t.Error("incorrect reasoning effort")
 				}
 				assistantProposal(w, sampleWorkflow())
@@ -92,6 +96,46 @@ func TestAssistantReasoningEffortIsOptional(t *testing.T) {
 			encoded, _ := json.Marshal(result)
 			if bytes.Contains(encoded, []byte("private provider context")) {
 				t.Fatal("provider reasoning leaked into result")
+			}
+		})
+	}
+}
+
+func TestAssistantTokenLimitMatchesEndpoint(t *testing.T) {
+	for _, test := range []struct {
+		endpoint string
+		field    string
+	}{
+		{"https://api.openai.com/v1/chat/completions", "max_completion_tokens"},
+		{"https://API.OPENAI.COM:443/v1/chat/completions", "max_completion_tokens"},
+		{"https://models.example/v1/chat/completions", "max_tokens"},
+		{"https://api.openai.com.example/v1/chat/completions", "max_tokens"},
+	} {
+		t.Run(test.endpoint, func(t *testing.T) {
+			client, err := NewAssistant(AssistantConfig{Endpoint: test.endpoint, Model: "gpt-6-sol", APIKey: "fixture-secret", ReasoningEffort: "none"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			fixture := assistantFixture(t, func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]json.RawMessage
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+					return
+				}
+				other := "max_tokens"
+				if test.field == other {
+					other = "max_completion_tokens"
+				}
+				if string(body[test.field]) != "16384" || body[other] != nil || string(body["reasoning_effort"]) != `"none"` {
+					t.Error("incorrect provider token limit or reasoning effort")
+				}
+				assistantProposal(w, sampleWorkflow())
+			})
+			// Keep the configuration selected by the real endpoint while sending
+			// the request only to the local provider fixture.
+			client.endpoint = fixture.endpoint
+			if _, err := client.Reply(t.Context(), assistantInput(t, "workflow", sampleWorkflow())); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}
@@ -128,7 +172,7 @@ func TestAssistantPreservesGraphAndUsesCurrentCatalog(t *testing.T) {
 	}
 }
 
-func TestAssistantValidatesCoordinatedExperiment(t *testing.T) {
+func TestAssistantRepairsCoordinatedExperiment(t *testing.T) {
 	raw, err := os.ReadFile("../../examples/workflows/experiments/three-node.json")
 	if err != nil {
 		t.Fatal(err)
@@ -137,9 +181,34 @@ func TestAssistantValidatesCoordinatedExperiment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := assistantFixture(t, func(w http.ResponseWriter, _ *http.Request) { assistantProposal(w, experiment) })
+	var calls atomic.Int32
+	client := assistantFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			invalid, _ := DecodeExperiment(bytes.NewReader(raw))
+			for i := 0; i < 2; i++ {
+				for _, node := range invalid.Participants[i].Workflow.Nodes {
+					if node.ID == "send" {
+						node.Inputs["destination"] = "unknown"
+					}
+				}
+			}
+			assistantProposal(w, invalid)
+			return
+		}
+		feedback := assistantRepairDiagnostics(t, r)
+		for _, participant := range []string{"A", "B"} {
+			found := false
+			for _, d := range feedback {
+				found = found || (d.Participant == participant && d.Node == "send" && d.Port == "destination")
+			}
+			if !found {
+				t.Errorf("missing located diagnostic for participant %s: %+v", participant, feedback)
+			}
+		}
+		assistantProposal(w, experiment)
+	})
 	result, err := client.Reply(t.Context(), assistantInput(t, "experiment", experiment))
-	if err != nil || len(result.Document) == 0 {
+	if err != nil || len(result.Document) == 0 || calls.Load() != 2 {
 		t.Fatalf("experiment proposal: %v", err)
 	}
 	if _, _, err := ValidateDocument("experiment", result.Document, nil); err != nil {
@@ -160,9 +229,27 @@ func TestAssistantRepairsInvalidProposalOnlyOnce(t *testing.T) {
 				if bytes.Contains(data, []byte(`"reasoning_content":"private provider context"`)) != (count == 2) {
 					t.Error("provider reasoning must be preserved only in the correction request")
 				}
+				if count == 2 {
+					r.Body = io.NopCloser(bytes.NewReader(data))
+					feedback := assistantRepairDiagnostics(t, r)
+					want := map[string]string{"result.name": "expected string", "repeat.done": "control edges must enter an action's in port", ".": "control connections contain a cycle"}
+					for _, d := range feedback {
+						key := d.Node + "." + d.Port
+						if message, ok := want[key]; ok && strings.Contains(d.Message, message) {
+							delete(want, key)
+						}
+					}
+					if len(want) != 0 {
+						t.Errorf("missing repair diagnostics: %v; got %+v", want, feedback)
+					}
+				}
 				wf := sampleWorkflow()
+				wf.Entry = "repeat"
+				wf.Nodes = append(wf.Nodes, workflow.Node{ID: "repeat", Block: "repeat", Inputs: map[string]any{"count": 2}})
+				wf.Edges = append(wf.Edges, workflow.Edge{Kind: "control", From: workflow.Endpoint{Node: "repeat", Port: "body"}, To: workflow.Endpoint{Node: "result", Port: "in"}})
 				if count == 1 || !repair {
-					wf.Entry = "nonexistent"
+					wf.Nodes[0].Inputs["name"] = 7
+					wf.Edges = append(wf.Edges, workflow.Edge{Kind: "control", From: workflow.Endpoint{Node: "result", Port: "next"}, To: workflow.Endpoint{Node: "repeat", Port: "done"}})
 				}
 				assistantProposal(w, wf)
 			})
@@ -175,6 +262,50 @@ func TestAssistantRepairsInvalidProposalOnlyOnce(t *testing.T) {
 				t.Fatal("provider reasoning leaked into result")
 			}
 		})
+	}
+}
+
+func assistantRepairDiagnostics(t *testing.T, r *http.Request) []workflow.ExperimentDiagnostic {
+	t.Helper()
+	var body struct {
+		Messages []assistantModelMessage `json:"messages"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Messages) == 0 {
+		t.Errorf("invalid repair request: %v", err)
+		return nil
+	}
+	message := body.Messages[len(body.Messages)-1]
+	var report struct {
+		Diagnostics []workflow.ExperimentDiagnostic `json:"diagnostics"`
+	}
+	_, data, _ := strings.Cut(message.Content, "Return a corrected complete document: ")
+	if err := json.Unmarshal([]byte(data), &report); err != nil || message.Role != "tool" {
+		t.Errorf("invalid repair feedback: %v", err)
+	}
+	return report.Diagnostics
+}
+
+func TestAssistantBoundsValidationFeedback(t *testing.T) {
+	for _, field := range []string{"node", strings.Repeat("界\n", 300)} {
+		diagnostics := make([]workflow.ExperimentDiagnostic, 20)
+		for i := range diagnostics {
+			diagnostics[i] = workflow.ExperimentDiagnostic{Participant: field, Diagnostic: workflow.Diagnostic{Node: field, Port: field, Message: field}}
+		}
+		feedback := assistantFeedback(assistantValidationError(diagnostics))
+		var report struct {
+			Diagnostics []workflow.ExperimentDiagnostic `json:"diagnostics"`
+			Omitted     int                             `json:"omitted"`
+		}
+		if len(feedback) > assistantFeedbackLimit || !utf8.ValidString(feedback) || json.Unmarshal([]byte(feedback), &report) != nil {
+			t.Fatal("feedback must stay bounded, valid UTF-8 and complete JSON")
+		}
+		if len(report.Diagnostics) == 0 || len(report.Diagnostics) > 16 || report.Omitted != len(diagnostics)-len(report.Diagnostics) {
+			t.Fatalf("incorrect diagnostic accounting: %+v", report)
+		}
+	}
+	feedback := assistantFeedback(errors.New(strings.Repeat("界", assistantFeedbackLimit)))
+	if len(feedback) > assistantFeedbackLimit || !utf8.ValidString(feedback) {
+		t.Fatal("unstructured error feedback must also stay bounded and valid UTF-8")
 	}
 }
 

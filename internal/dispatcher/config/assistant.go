@@ -36,9 +36,9 @@ func (cfg AssistantConfig) Validate() error {
 		return errors.New("studio.assistant.model must be a non-empty model identifier of at most 128 bytes")
 	}
 	switch cfg.ReasoningEffort {
-	case "", "low", "high", "max":
+	case "", "none", "low", "high", "max":
 	default:
-		return errors.New("studio.assistant.reasoning_effort must be empty, low, high or max")
+		return errors.New("studio.assistant.reasoning_effort must be empty, none, low, high or max")
 	}
 	if cfg.APIKeyFile != "" && (!filepath.IsAbs(cfg.APIKeyFile) || filepath.Clean(cfg.APIKeyFile) != cfg.APIKeyFile || strings.ContainsAny(cfg.APIKeyFile, "\r\n\x00")) {
 		return errors.New("studio.assistant.api_key_file must be a clean absolute path")

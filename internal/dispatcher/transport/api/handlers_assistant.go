@@ -109,7 +109,10 @@ func (h *Handler) assistantReply(c echo.Context) error {
 		if errors.Is(err, studio.ErrAssistantTimeout) || ctx.Err() != nil {
 			return apiError(http.StatusGatewayTimeout, CodeUnavailable, "experiment assistant timed out or was canceled; your draft is unchanged")
 		}
-		return apiError(http.StatusBadGateway, CodeUnavailable, "experiment assistant could not produce a valid response; your draft is unchanged")
+		if errors.Is(err, studio.ErrAssistantInvalidReply) {
+			return apiError(http.StatusUnprocessableEntity, CodeInvalidRequest, "experiment assistant could not produce a valid experiment; your draft is unchanged")
+		}
+		return apiError(http.StatusBadGateway, CodeUnavailable, "experiment assistant provider is unavailable; your draft is unchanged")
 	}
 	_ = controller.SetWriteDeadline(time.Now().Add(30 * time.Second))
 	defer controller.SetWriteDeadline(time.Time{})

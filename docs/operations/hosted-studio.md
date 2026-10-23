@@ -155,8 +155,9 @@ workflow/experiment build and ordinary run/share/re-run through the browser.
 
 ## Optional experiment assistant
 
-The assistant runs in the dispatcher and uses an operator-selected,
-OpenAI-compatible chat-completions endpoint with function calling, such as GLM.
+The assistant runs in the dispatcher and uses an operator-selected Chat
+Completions endpoint with function calling, including OpenAI and compatible
+providers such as GLM. The current adapter does not support the Responses API.
 The compiler sandbox remains offline. The assistant only proposes editable
 source; the normal build and submission actions remain separate. No provider is
 selected or enabled by default. Verify the endpoint and model supplied for your
@@ -164,15 +165,21 @@ provider account before enabling it.
 
 Provision a provider key in a regular file readable only by its owner and,
 optionally, the dispatcher's group (mode `0600` or `0640`). Do not place the key
-in the repository, console configuration or inventory. For example:
+in the repository, console configuration or inventory. For OpenAI GPT-6 Sol:
 
 ```toml
 [studio.assistant]
 enabled = true
-endpoint = "https://provider.example/v1/chat/completions"
-model = "provider-model-id"
+endpoint = "https://api.openai.com/v1/chat/completions"
+model = "gpt-6-sol"
 api_key_file = "/etc/debuglet/assistant.key"
+reasoning_effort = "none"
 ```
+
+GPT-6 Sol supports function calling through Chat Completions only with
+`reasoning_effort = "none"`. Reasoning with tools requires the Responses API,
+which this adapter does not implement. See the
+[OpenAI model documentation](https://developers.openai.com/api/docs/models/gpt-6-sol).
 
 If `api_key_file` is omitted, the dispatcher reads `DEBUGLET_ASSISTANT_API_KEY`
 from its environment. The key file takes precedence. The enabled dispatcher
@@ -184,9 +191,10 @@ unencrypted on the dispatcher-to-provider connection; use it only on a network
 you trust. It does not disable HTTPS certificate verification or permit redirects.
 Credentials in URLs, query strings and fragments remain refused.
 
-For models that support it, `reasoning_effort` accepts `low`, `high` or `max`.
-An omitted or empty value leaves the provider default unchanged. For interactive
-GLM-5.3-Flash authoring, use `reasoning_effort = "low"` to keep reasoning within
+For models that support it, `reasoning_effort` accepts `none`, `low`, `high` or
+`max`. An omitted or empty value leaves the provider default unchanged; it does
+not select `none`. For interactive GLM-5.3-Flash authoring, use
+`reasoning_effort = "low"` to keep reasoning within
 the request deadline. This controls reasoning depth rather than disabling it.
 Provider `reasoning_content`, when present, is retained only for the single
 validation-repair call; it is not returned to the browser or logged.
@@ -194,7 +202,7 @@ validation-repair call; it is not returned to the browser or logged.
 The Ansible equivalents are `dispatcher_assistant_enabled`,
 `dispatcher_assistant_endpoint`, `dispatcher_assistant_model` and
 `dispatcher_assistant_api_key_file`; the optional HTTP exception is
-`dispatcher_assistant_allow_insecure_http` (default `false`), and reasoning depth
+`dispatcher_assistant_allow_insecure_http` (default `false`), and the reasoning setting
 is `dispatcher_assistant_reasoning_effort` (default empty). Provision the private key file separately,
 then apply the normal configuration update and restart the dispatcher. The
 ordinary disabled deployment requires no key or additional service. Configure
@@ -209,8 +217,11 @@ and upstream error bodies are not logged by the assistant.
 
 The API bounds input, output, time and concurrency and limits the shared provider
 to six user requests per minute with a burst of four. Each may make two provider
-calls, capped at 16,384 output tokens per call. These are resource limits, not a
-monetary budget: configure a hard spending limit and alerts on the provider
+calls. Calls to `api.openai.com` use `max_completion_tokens = 16384`, which counts
+visible output and any reasoning tokens; other endpoints use `max_tokens = 16384`.
+See the [OpenAI Chat Completions reference](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create).
+These are resource limits, not a monetary budget: configure a hard spending
+limit and alerts on the provider
 account before enabling a shared key. Existing dispatcher account request limits
 also apply. The assistant never initiates measurement spending.
 
