@@ -117,6 +117,48 @@ func TestAssistantRejectsInputAndSanitizesProviderFailure(t *testing.T) {
 	}
 }
 
+func TestAssistantDistinguishesInvalidGraphAndProviderFailure(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		providerStatus int
+		status         int
+		code           string
+		calls          int32
+	}{
+		{"invalid graph", http.StatusOK, http.StatusUnprocessableEntity, CodeInvalidRequest, 2},
+		{"provider failure", http.StatusInternalServerError, http.StatusBadGateway, CodeUnavailable, 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var calls atomic.Int32
+			invalid := communityTestWorkflow()
+			invalid.Entry = "missing"
+			proposal, err := json.Marshal(map[string]any{"message": "provider-test-secret and upstream internals", "document": invalid})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f := assistantFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				if test.providerStatus != http.StatusOK {
+					http.Error(w, "provider-test-secret and upstream internals", test.providerStatus)
+					return
+				}
+				studioJSON(w, http.StatusOK, map[string]any{"choices": []any{map[string]any{"finish_reason": "tool_calls", "message": map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{"id": "proposal", "type": "function", "function": map[string]any{"name": "propose_document", "arguments": string(proposal)}}}}}}})
+			}))
+			status, code, body, _ := authRequest(t, f, "POST", "/studio/assistant", assistantBody(t), studioBrowser(t, f))
+			if status != test.status || code != test.code {
+				t.Fatalf("status/code %d %s, want %d %s: %s", status, code, test.status, test.code, body)
+			}
+			if strings.Contains(string(body), "provider-test-secret") || strings.Contains(string(body), "upstream internals") {
+				t.Fatal("provider details leaked")
+			}
+			if calls.Load() != test.calls {
+				t.Fatalf("provider calls %d, want %d", calls.Load(), test.calls)
+			}
+			oaCheckResponse(t, oaContract(t), "POST", "/studio/assistant", status, body)
+		})
+	}
+}
+
 func TestAssistantRejectsParallelAccountAndLimitsGlobalRequests(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	var calls atomic.Int32

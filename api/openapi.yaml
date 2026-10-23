@@ -10063,6 +10063,17 @@ paths:
             "application/json":
               "schema":
                 "$ref": "#/components/schemas/Error"
+        "422":
+          "description": "The assistant could not produce a valid proposal. Draft remains unchanged."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
         "429":
           "description": "Account admission, assistant capacity or global request rate exhausted. Retry-After gives seconds."
           "headers":
@@ -10090,7 +10101,7 @@ paths:
               "schema":
                 "$ref": "#/components/schemas/Error"
         "502":
-          "description": "Provider unavailable or reply invalid. Draft remains unchanged."
+          "description": "Provider unavailable. Draft remains unchanged."
           "headers":
             "Debuglet-API-Version":
               "description": "Contract version this dispatcher implements."
