@@ -38,8 +38,11 @@ hosted compiler.
 `role` (`user` or `assistant`) and `content`. It requires `measurements:write`;
 browser sessions use the usual CSRF proof. The response has `message` and,
 when an edit is proposed, `document` in the same graph format and kind. A reply
-without `document` asks for clarification. Proposed documents pass the existing
-graph validator before being returned. Incomplete input drafts are allowed.
+without `document` asks for clarification, or offers `action: "coordinate"` when
+a workflow needs coordinated participants. This action never includes a document;
+the caller asks for confirmation before converting the existing workflow and
+continuing with `kind: "experiment"`. Proposed documents pass the existing graph
+validator before being returned. Incomplete input drafts are allowed.
 The caller decides whether to apply the proposal; nothing is compiled, run or
 charged as a measurement by this operation.
 

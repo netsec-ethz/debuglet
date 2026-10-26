@@ -59,7 +59,11 @@ func assistantInput(t *testing.T, kind string, document any) AssistantRequest {
 }
 
 func assistantProposal(w http.ResponseWriter, document any) {
-	arguments, _ := json.Marshal(map[string]any{"message": "Renamed the experiment; its measurement behavior is unchanged.", "document": document})
+	assistantToolReply(w, map[string]any{"message": "Renamed the experiment; its measurement behavior is unchanged.", "document": document})
+}
+
+func assistantToolReply(w http.ResponseWriter, proposal any) {
+	arguments, _ := json.Marshal(proposal)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{
 		"finish_reason": "tool_calls", "message": map[string]any{"role": "assistant", "reasoning_content": "private provider context", "tool_calls": []any{map[string]any{
@@ -316,6 +320,80 @@ func TestAssistantClarificationDoesNotChangeDocument(t *testing.T) {
 	result, err := client.Reply(t.Context(), assistantInput(t, "workflow", sampleWorkflow()))
 	if err != nil || result.Message != "Which DNS resolver should this use?" || len(result.Document) != 0 {
 		t.Fatalf("clarification: %#v %v", result, err)
+	}
+}
+
+func TestAssistantCoordinateOfferRequiresConfirmation(t *testing.T) {
+	request := assistantInput(t, "workflow", sampleWorkflow())
+	original := bytes.Clone(request.Document)
+	client := assistantFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Tools []struct {
+				Function struct {
+					Parameters struct {
+						Properties map[string]struct {
+							Enum []string `json:"enum"`
+						} `json:"properties"`
+					} `json:"parameters"`
+				} `json:"function"`
+			} `json:"tools"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || len(payload.Tools) != 1 {
+			t.Errorf("invalid provider request: %v", err)
+			return
+		}
+		actions := payload.Tools[0].Function.Parameters.Properties["action"].Enum
+		if len(actions) != 1 || actions[0] != "coordinate" {
+			t.Errorf("provider action choices: %v", actions)
+		}
+		assistantToolReply(w, map[string]any{"message": "Make this a coordinated experiment so the probes can exchange results?", "action": "coordinate"})
+	})
+	result, err := client.Reply(t.Context(), request)
+	if err != nil || result.Action != "coordinate" || len(result.Document) != 0 || !bytes.Equal(request.Document, original) {
+		t.Fatalf("conversion offer changed the document or was lost: %#v %v", result, err)
+	}
+}
+
+func TestAssistantRejectsInvalidActionsAndAllowsOneCorrection(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		kind     string
+		proposal map[string]any
+		repair   bool
+	}{
+		{"unknown action", "workflow", map[string]any{"action": "run"}, false},
+		{"already coordinated", "experiment", map[string]any{"action": "coordinate"}, false},
+		{"action and edit", "workflow", map[string]any{"action": "coordinate", "document": sampleWorkflow()}, false},
+		{"action and null", "workflow", map[string]any{"action": "coordinate", "document": nil}, false},
+		{"corrected offer", "workflow", map[string]any{"action": "run"}, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var calls atomic.Int32
+			client := assistantFixture(t, func(w http.ResponseWriter, r *http.Request) {
+				count := calls.Add(1)
+				if count == 2 {
+					data, _ := io.ReadAll(r.Body)
+					if !bytes.Contains(data, []byte("ask the user before converting")) {
+						t.Error("missing action correction feedback")
+					}
+					if test.repair {
+						assistantToolReply(w, map[string]any{"message": "Make this a coordinated experiment?", "action": "coordinate"})
+						return
+					}
+				}
+				proposal := map[string]any{"message": "Make this a coordinated experiment?"}
+				for name, value := range test.proposal {
+					proposal[name] = value
+				}
+				assistantToolReply(w, proposal)
+			})
+			request := assistantInput(t, "workflow", sampleWorkflow())
+			request.Kind = test.kind
+			result, err := client.Reply(t.Context(), request)
+			if calls.Load() != 2 || len(result.Document) != 0 || (test.repair && (err != nil || result.Action != "coordinate")) || (!test.repair && (!errors.Is(err, ErrAssistantInvalidReply) || result.Action != "")) {
+				t.Fatalf("calls=%d response=%#v err=%v", calls.Load(), result, err)
+			}
+		})
 	}
 }
 
