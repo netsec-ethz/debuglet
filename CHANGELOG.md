@@ -5,183 +5,73 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Only `[Unreleased]` changes between tags. Release entries summarize user-visible
-changes; the linked API and deployment documentation contains operational detail.
+The `[Unreleased]` section contains changes since the latest tag. Release
+entries summarize user-visible changes. The linked API and deployment
+documentation contain operational details.
 
 ## [Unreleased]
 
 ### Changed
-- Executors automatically renew exhausted TESLA chains through a drained
-  reconnect, preserving identity and announcing the replacement anchor before
-  accepting runs. Admission pauses until accepted work, used-key disclosure
-  and output delivery finish; discovery reports `chain_renewing` (API 1.25).
-  Upgrade the dispatcher and console before executors. See
-  `docs/operations/configuration.md` for timing and recovery limits.
+- Executors renew exhausted TESLA chains without changing identity. Admission
+  pauses while renewal completes and discovery reports `chain_renewing` (API
+  1.25). Upgrade the dispatcher and console before executors.
 
 ### Security
-- UDP and ICMP datagrams that the pure-Go tagger sends are charged by the
-  eBPF packet counter (#67). The pure-Go tagger sends each tagged datagram
-  through a raw socket of its own, which the counter never registered, so
-  those datagrams left uncharged against the run's destination and executor
-  bitrate limits.
-  - Affected: v0.2.0-rc.3, v0.2.0 and v0.3.0-rc.1, on executors whose
-    packet counter is `ebpf` when a run's eBPF tagger fails to load and the
-    run falls back to the pure-Go tagger (logged as `Failed to initialize BPF tagger, falling
-    back to pure-Go`). Only UDP and ICMP to IPv4 destinations were affected;
-    TCP and TLS, the `fallback` counter and runs that got the eBPF tagger
-    were not. v0.2.0-rc.2 and earlier have no user-space datagram tagging.
-  - The counter now registers the raw socket under the same run, so those
-    datagrams are charged exactly like datagrams sent on the run's own
-    socket. Datagrams sent before the upgrade are not charged
-    retroactively.
-  - Until the upgrade, `packet_counter = "fallback"` charges these
-    datagrams in user space.
-  - See `docs/operations/executor-discovery.md`.
-- The executor stops tagging when its clock cannot place packets in the
-  epochs a verifier derives from capture time. Epochs advance on the
-  monotonic clock from the announced chain origin; previously a chain started
-  on an unsynchronised clock, or a wall-clock step or suspend afterwards, left
-  the executor tagging and reporting attribution as available although
-  honest packets mapped to the wrong epoch.
-  - Attribution gains the reasons `clock_unready` (the host clock readiness
-    was not `ready` when the chain started; it holds until a restart) and
-    `clock_drift` (wall and monotonic time elapsed since the origin differ by
-    more than min(epoch length / 2, 1 s); it clears by itself if the drift
-    returns within the bound, while a persistent drift needs a restart). No
-    key signs while either holds; a kernel tagger stops at its next
-    scheduled refresh, at most one epoch later if the slot removal succeeds.
-  - A node that tags packets refuses new runs with `FailedPrecondition`
-    while either reason holds; a node whose tagging mode is `none` admits
-    them. The executor logs an error when a chain starts on a clock that is
-    not ready.
-  - The key schedule never signs with the key of an epoch below one it has
-    already signed with. See `docs/tag-spec.md` §10.
+- Fixed an accounting bypass for IPv4 UDP and ICMP traffic when the eBPF
+  counter falls back to pure-Go tagging (#67). It affected v0.2.0-rc.3,
+  v0.2.0 and v0.3.0-rc.1; update affected executors.
+- Executors stop attribution when their clock is unready or drifts outside the
+  TESLA verification bound, preventing tags that honest verifiers cannot
+  validate.
 
 ### Added
-- Source-built `dbl-studio` authoring tool with a typed workflow compiler,
-  local visual editor integration and MCP tools. Workflows support network
-  actions, processing, conditions, bounded repetition and custom Go blocks.
-  See [workflow authoring](docs/development/workflow-authoring.md).
-- Coordinated workflow experiments for two or three executors, with typed
-  send/await channels and retained connection manifests for the console's
-  measurement map. Peer messaging requires directly reachable IPv4 TCP
-  listeners and is plaintext; see [execution limits](docs/development/workflows.md).
-- The executor answers pre-disclosure tag verification queries over the
-  control session (`VerifyTags`): for one group of captured packets of one
-  epoch it reports which candidate run, if any, reproduces every tag, without
-  returning tags or keys. It refuses disclosable epochs, unknown chains and
-  untrusted clocks. See `docs/operations/executor-discovery.md#attribution-state`.
-- Server-assisted probe verification (#341, API 1.18, dispatcher schema 25).
-  `POST /attribution/verify` checks up to 256 captured packets in at most 16
-  groups: a group whose key is disclosed is checked against the key store; a
-  group whose key is not yet disclosed is relayed to its executor over the
-  control session (`VerifyTags`), which answers yes or no for the whole group
-  and never returns tags or keys. Each relayed question charges one trial
-  per candidate run to a budget of 16 trials per executor, chain and epoch,
-  shared by every requester, charged durably before the relay and never
-  refunded. An answer that no single candidate reproduces every tag stays
-  pending (`unmatched`) for the offline check after disclosure. Every answer carries an
-  Ed25519 receipt over the dispatcher, API version, the dispatcher's query
-  time, the packet digest and the verdicts; `GET /attribution/receipt-keys`
-  lists the keys with their validity, and `[attribution] receipt_key_path`
-  names the key file, created when absent. `client.Verify` and `dbl verify`
-  send pending groups unless `--offline`, report `via server` with the
-  receipt key, and keep receipts and keys in the evidence bundle, which
-  `client.VerifyEvidence` checks again. The dispatcher's minimum supported
-  schema is 25.
-- An executor with a configured `[tesla] seed` discloses the tail of its
-  previous chain after a restart: it re-derives that chain, which never signs
-  again, and sends its due keys beside the current one in the heartbeat's new
-  `extra_disclosures` field, until the final key is out. Executor schema 8
-  records each chain's disclosure delay; chains recorded before it, starts
-  without a seed and starts on an unready clock still lose the tail. The
-  dispatcher accepts at most 4 extra disclosures per heartbeat, each verified
-  against its recorded chain.
-- Executor: a destination the dispatcher marks `denied` in a bandwidth
-  snapshot (#74; `DestinationLimit.denied`, additive) is refused for new
-  connections, datagrams and accepted peers, by name and by the addresses
-  the name resolved to, and the active TCP, TLS, UDP and ICMP sockets of
-  every run to it are closed before the snapshot's revision is
-  acknowledged, including a connection still being made at that moment. A
-  guest using `debuglet_io_v1` sees a closed socket and continues; a guest
-  blocked in a legacy socket import fails as on a lost connection. One
-  `Destination revoked` log line per run carries the socket count. A later
-  snapshot without the flag allows the destination again; executors and
-  dispatchers that do not set it behave as before. See
-  `docs/operations/socket-limits.md` for the bound.
-- Recorded destination opt-outs (API 1.19, dispatcher schema 26). `PATCH
-  /destination` accepts `denied`, `reason` and `expires_at`; a denied
-  destination refuses every new submission and allocation, zero floors
-  included. Each change
-  is appended to the dispatcher database with its operator account before it
-  applies, is applied again at startup, and an expiry is recorded as an
-  `allow` event of the dispatcher. `GET /destinations` lists the current
-  policies with their delivery state. Executors receive a denied destination
-  as a zero limit with the new `DestinationLimit.denied` flag in every
-  snapshot; executors of this release close the active sockets (see the
-  executor entry), older ones reduce running runs to their floor and are
-  listed as unconfirmed. Dispatcher
-  databases require the explicit upgrade to schema 26. See
-  `docs/operations/configuration.md#destination-limits-and-opt-outs`.
-- `debuglet-dispatcher -bind-executor EXECUTOR_ID -bind-certificate PATH`
-  binds an executor ID to a client certificate the administrator issued,
-  without an enrollment token (#415). It verifies the PEM certificate against
-  the configured `tls.ca_file` for client authentication, requires the
-  executor ID as its common name and refuses a file holding a private key. It
-  records the leaf's SHA-256 fingerprint, the value an enforcing dispatcher
-  admits the executor by; binding the same certificate again changes nothing,
-  and a different one replaces that executor ID's binding only.
-- Ansible: `executor_enrollment_token`, a per-host secret rendered as
-  `[credentials] enrollment_token` only when set, for an executor the
-  deployment does not bind from a certificate it holds (#415).
+- `dbl-studio` for authoring typed workflows, including a local visual editor
+  and workflow MCP tools.
+- Coordinated two- and three-executor workflow experiments with peer messaging
+  and connection manifests for the console map.
+- Server-assisted tag verification with signed receipts and CLI/SDK evidence
+  support (API 1.18; dispatcher schema 25).
+- Seeded executors can finish disclosing the previous TESLA chain after a
+  restart, preserving verification for packets near the restart boundary.
+- Destination opt-outs with durable operator policy, immediate executor
+  enforcement and delivery status (API 1.19; dispatcher schema 26). Upgrade
+  the dispatcher database before deploying this release.
+- Certificate-to-executor binding and enrollment-token support for managed
+  executor admission (#415).
 
 ### Fixed
-- Turning on `dispatcher_require_client_cert` no longer disconnects every
-  executor deployed with `generate-certs.sh` and `deploy-certs.yml` (#415).
-  Enforcement admits an executor only over the certificate bound to its ID,
-  and nothing bound those certificates. With
-  `dispatcher_bind_inventory_executors` (default on), `site.yml`,
-  `update-config.yml` and `deploy-certs.yml` now copy each inventory
-  executor's public `client.crt` to the dispatcher and bind it as the service
-  account before the dispatcher runs with the requirement, and
-  `deploy-certs.yml` re-binds a certificate `generate-certs.sh` reissued. The
-  preflight refuses to enable enforcement while an inventory executor has
-  neither a certificate to bind nor an enrollment token. `deploy/README.md`
-  and the operations guides no longer suggest that a certificate from the
-  deployment CA is enough.
+- Client-certificate enforcement now binds inventory certificates during
+  deployment, keeping managed executors connected (#415).
+- eBPF-enforced executors no longer fail a run when it closes a counted TCP or
+  UDP socket (#412).
+- Database upgrades provision the capabilities required by the candidate
+  executor before it starts; automatic eBPF setup now falls back cleanly when
+  the kernel cannot load the program (#414).
+
+## [0.3.1] - 2026-10-19
 
 ### Fixed
-- An executor counting packets with eBPF (`enforcement_mode: ebpf`) no longer
-  fails every run that closes a socket (#412). Closing a counted TCP or UDP
-  connection, dialed or accepted, deleted its socket-storage entry by the
-  descriptor it had just closed, so the guest's close failed with `close_tcp:
-  delete: bad file descriptor` and the run ended "debuglet failed" although
-  its output was delivered. Close no longer deletes the entry: it belongs to
-  the socket, and the kernel frees it when the socket is destroyed. Deleting
-  it before the close instead would let the data a socket still holds after
-  close leave unattributed and past its rate limit; that data keeps the run's
-  UUID and is dropped once the run's rate entry is removed.
+- Release API pagination now returns all published release assets.
+
+## [0.3.0] - 2026-10-19
+
+### Added
+- Signed Debian packages and an APT repository for supported Linux executor
+  installations, with guarded updates that preserve enrolled identities.
+- Browser-approved CLI login, managed executor enrollment and certificate
+  renewal, with clearer health diagnostics and capacity reporting.
+- Coordinated measurements across multiple executors, durable delivery
+  results, and operator-facing abuse and accounting controls.
+- Public attribution verification, including offline capture verification and
+  signed evidence support.
+
+### Changed
+- Executor setup, updates, and recovery now use a simpler shared-service
+  workflow, with documentation aligned to the supported installation paths.
 
 ### Fixed
-- `deploy/ansible/upgrade-database.yml` gives the candidate executor binary
-  exactly `executor_capabilities` before it activates and starts it (#414).
-  It used to start the executor without CAP_BPF, CAP_PERFMON, CAP_NET_ADMIN
-  and CAP_NET_RAW until a full deployment followed. A host that refuses the
-  capabilities now stops the upgrade before the service or database is
-  touched. The executor role, `rollout-executors.yml` and
-  `upgrade-database.yml` now grant them through one task file
-  (`deploy/ansible/tasks/executor-capabilities.yml`). `rollout-executors.yml`
-  now also grants them when `executor_ambient_caps` is set, as the role and
-  `verify.yml` already expected, and skips `setcap` when the binary already
-  carries the set.
-- With `packet_counter = "auto"`, an executor whose eBPF load fails falls
-  back to the userspace counter instead of exiting with `packet counter
-  cleanup unconfirmed` and being restarted in a loop (#414). A load attaches
-  nothing, so any load failure is a clean rollback. A failed attach whose
-  release cannot be confirmed still stops the executor. When the process
-  lacks CAP_BPF or CAP_NET_ADMIN, the logged error names the missing
-  capability rather than cilium/ebpf's "MEMLOCK may be too low" or "prealloc
-  maps not supported" hint, and the fallback reason is `not_permitted`.
+- Corrected eBPF socket accounting, client-certificate deployment, dispatcher
+  database initialization, and browser API routing.
 
 ## [0.3.0-rc.1] - 2026-10-06
 
