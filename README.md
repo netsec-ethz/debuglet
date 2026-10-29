@@ -1,67 +1,59 @@
 # Debuglet
 
-Debuglet runs small WebAssembly programs for network measurements. A **dispatcher** accepts jobs and stores results. **Executors** run debuglets within their configured time and bandwidth budgets. The project includes the `dbl` command-line client, a Go client library, a Go SDK for writing debuglets, and examples.
+Debuglet lets you program network measurements and run them from different
+vantage points. Start with a template, connect blocks in the visual editor, or
+write a WebAssembly program using the Go SDK. Collect results from one executor
+or coordinate an experiment across several.
 
 > Debuglet is an alpha for trusted environments. Read the [security policy](SECURITY.md) before operating a networked deployment.
 
+## Start here
+
+Open the [hosted console](https://debuglet.netsec.ethz.ch/console/) and sign in
+with an available provider. You do not need to install a dispatcher or executor
+to use existing nodes.
+
+| I want to… | Guide |
+| --- | --- |
+| Run my first experiment | [Choose a template, run it and read the result](docs/measurements.md#run-your-first-measurement) |
+| Host an executor | [Install and connect a machine](docs/operations/executor-onboarding.md) |
+| Build my own experiment | [Visual editor and AI/MCP](docs/development/workflow-authoring.md), or [Go SDK](docs/debuglets.md) |
+| Contribute to Debuglet | [Find the code, make a change and test it](CONTRIBUTING.md) |
+
 ## Try it locally
 
-Download the current Linux amd64 release from the [releases page](https://github.com/netsec-ethz/debuglet/releases), install it, then run:
+[Install a compatible full package](README-install.md), then run:
 
 ```sh
-export PATH="$HOME/.local/bin:$PATH"
 dbl demo
 ```
 
-The demo starts temporary local roles, runs a WebAssembly measurement, verifies the result, and cleans up. It needs no existing service, account, compiler, root access, wallet, or hand-written configuration. See [Install Debuglet](README-install.md) for the short installation path.
-
-A successful run prints `Debuglet VERSION completed locally: ...`, its executor
-and run IDs, and `Cleanup: complete`, then exits zero. If it fails, start with
-[troubleshooting](docs/operations/troubleshooting.md).
+The demo starts a temporary dispatcher and executor, runs a measurement and
+cleans up. It needs no account, wallet, compiler or root access. Success ends
+with `Cleanup: complete`. See [troubleshooting](docs/operations/troubleshooting.md)
+if it fails.
 
 ## How it fits together
 
 ```mermaid
 flowchart LR
-    C[Client: dbl or Go application] -->|HTTP API| D[Dispatcher]
-    D -->|submit, results, scheduling| DB[(Dispatcher state)]
-    D <-->|authenticated control paths| E[Executor]
-    E -->|runs| W[Debuglet: WASI program]
-    E -->|local state| ES[(Executor state)]
+    C[Console, CLI or application] -->|submit and read results| D[Dispatcher]
+    D <-->|schedule and collect output| E[Executors]
+    E -->|run within configured limits| W[WebAssembly measurements]
 ```
 
-The dispatcher exposes the API and coordinates work. Executors connect outward to it, so they do not require a public inbound control port. See the [measurement flow](docs/architecture.md#measurement-flow) for submission and execution, and [deployment topology](docs/operations/remote-deployment.md) for the operational model.
+The **dispatcher** authenticates users, schedules work and stores results.
+**Executors** connect outward to it and run measurements under their operators'
+network and resource policies. See [architecture](docs/architecture.md) for the
+interfaces and execution flow.
 
 ## Documentation
 
-The versioned guides in [`docs/`](docs/README.md) are published at the [documentation site](https://debuglet.netsec.ethz.ch/docs/). Use the documentation for the release you install.
-
-| Need | Start here |
-| --- | --- |
-| Install and run a local demo | [Install Debuglet](README-install.md) |
-| Run a first console measurement | [HTTP check and two-executor comparison](docs/measurements.md#run-your-first-measurement) |
-| Use the CLI | [CLI reference](docs/cli.md) |
-| Write a Go application client | [Go client library](docs/client.md) |
-| Write a debuglet | [Write a debuglet](docs/debuglets.md) |
-| Build visually or with an MCP client | [Workflow and experiment authoring](docs/development/workflow-authoring.md) |
-| Share a lab's experiments and results | [Communities](docs/communities.md) |
-| Integrate with the HTTP API | [OpenAPI contract](api/openapi.yaml) and [API guide](docs/api.md) |
-| Understand the code and protocol | [Architecture](docs/architecture.md) |
-| Operate a service | [Managed services](docs/operations/services.md) |
-| Contribute | [Contributing](CONTRIBUTING.md) |
-
-## Development
-
-Debuglet development and package checks run on Linux amd64 with Go 1.26.10. From a checkout:
-
-```sh
-make ci-test
-make ci-vet
-make ci-build
-make ci-package
-```
-
-Use [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow, generated code, and review expectations.
+The [documentation index](docs/README.md) links to user guides, CLI/API references
+and deployment instructions. The same source is published on the
+[documentation site](https://debuglet.netsec.ethz.ch/docs/). Use the guide for your
+installed version; see [compatibility](docs/versions.md) and the
+[releases page](https://github.com/netsec-ethz/debuglet/releases).
 
 ## License
 

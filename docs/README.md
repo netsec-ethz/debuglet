@@ -1,64 +1,44 @@
 # Debuglet documentation
 
-This directory is the versioned source for the [Debuglet documentation site](https://debuglet.netsec.ethz.ch/docs/), including user and operator guides, architecture, and public contracts. Read the version matching your installation.
+Use the [hosted console](https://debuglet.netsec.ethz.ch/console/) to run
+measurements on existing executors. Installation is only needed to host a node,
+use the CLI or develop locally. These guides describe the version of Debuglet
+in this checkout; check [compatibility](versions.md) before mixing versions.
 
-## Use Debuglet
+## Choose your starting point
 
-- [Run your first measurement](measurements.md#run-your-first-measurement) — use the console to check an HTTP endpoint, read its result and compare two executors.
-- [CLI reference](cli.md) — commands, local demo, and scriptable workflows.
-- [Go client library](client.md) — submit debuglets and read results from an application.
-- [Reusable and coordinated measurements](measurements.md) — saved profiles, retries and experiments across executors.
-- [Communities](communities.md) — shared projects, editable experiments, results and group funding.
-- [Portable results](results.md) — export retained output and admission facts for offline analysis.
-- [Controlled latency experiment](research/latency-evaluation.md) — compare native and WASM probes under known local network faults.
-- [Write a debuglet](debuglets.md) — execution model and Go authoring interface.
-- [Build workflows and experiments](development/workflow-authoring.md) — visual editing, local compilation and MCP authoring.
-- [Workflow blocks and execution](development/workflows.md) — typed connections, reusable blocks and communication between executors.
-- [HTTP API](api.md) — public contract, authentication, compatibility, and deprecation.
-- [Versions and compatibility](versions.md) — tested combinations, support policy, and breaking changes.
-- [Linux client container](operations/client-container.md) — remote client with persistent credentials.
-- [Troubleshooting](operations/troubleshooting.md) — first steps for setup, login, readiness and state errors.
+| Goal | Start here |
+| --- | --- |
+| **Run your first experiment** | [Choose a template, select a node and inspect the result](measurements.md#run-your-first-measurement). Then compare several vantage points. |
+| **Host an executor** | [Install and join a dispatcher](operations/executor-onboarding.md), including shell-only setup and a persistent service. |
+| **Build experiments** | [Visual editor, AI assistant and MCP](development/workflow-authoring.md), or [write a debuglet with the Go SDK](debuglets.md). |
+| **Contribute** | [Set up development, find the relevant subsystem and test a change](../CONTRIBUTING.md). |
 
-## Understand the system
+## Using and sharing experiments
 
-- [Threat model and supported scope](security.md) — actors, boundaries, identifier guarantees and conditions for untrusted use.
-- [Architecture](architecture.md) — components, trust boundaries, protocol flow, and storage.
-- [Vantage-point metadata](vantage-points.md) — design for network, location and reachability context with provenance.
-- [Packet tag specification](tag-spec.md) — `debuglet-tag-v1`: authenticated bytes, key derivation, verification and false-match bounds.
-- [Probe verification](verification.md) — design for how a probe recipient verifies which run sent a packet.
+- [Measurements](measurements.md): reuse runs, retry and coordinate several programs.
+- [Communities](communities.md): shared projects, experiments and group funding.
+- [Results](results.md): save highlights, reopen source and export data.
+- [Workflow reference](development/workflows.md): blocks, typed connections and communication.
+- [CLI](cli.md), [Go client](client.md) and [HTTP API](api.md): automate submissions and retrieve results.
 
 ## Operate a deployment
 
-- [Configuration reference](operations/configuration.md)
-- [Run Debuglet across hosts](operations/remote-deployment.md)
-- [Add your executor](operations/executor-onboarding.md) — console enrollment, shell-only setup and persistent installation.
-- [Debian installation and updates](operations/debian.md) — apt packages, explicit service activation and retained rollback payloads.
-- [Managed services](operations/services.md)
-- [Data retention, export and deletion](operations/data-retention.md)
-- [Chain payments](operations/payments.md) — modes, the supported Sui Testnet profile, startup validation, transfers and enablement.
-- [Executor recovery](operations/executor-recovery.md)
-- [Inspect an interrupted run](operations/recovery-inspection.md)
-- [Local validation checks](operations/local-checks.md)
-- [Signed releases and offline verification](operations/releases.md)
-- [External executor pilot](operations/external-pilot.md) — steps, records and support for an independently operated executor.
-- [Abuse response](operations/abuse-response.md) — report handling, destination denials, credential recovery and owned local drills.
+Start with [installation](../README-install.md) and
+[executor onboarding](operations/executor-onboarding.md). For your own dispatcher,
+use the [deployment guide](../deploy/README.md).
 
-Use the [deployment guide](../deploy/README.md) for the maintained Ansible procedures and upgrade inputs.
+- [Configuration](operations/configuration.md) and [managed services](operations/services.md).
+- [Authentication](operations/authentication.md) and [hosted editor/compiler](operations/hosted-studio.md).
+- [Debian updates](operations/debian.md), [signed releases](operations/releases.md) and [backup/restore](operations/backup-restore.md).
+- [Data retention](operations/data-retention.md), [payments](operations/payments.md) and [abuse response](operations/abuse-response.md).
+- [Troubleshooting](operations/troubleshooting.md), [executor recovery](operations/executor-recovery.md) and [monitoring](operations/monitoring.md).
 
-## Find the original walkthrough material
+## System reference
 
-| Topic | Current home |
-| --- | --- |
-| Submission and execution flow | [Architecture](architecture.md#measurement-flow) |
-| Guest-language examples | [Debuglet examples](../examples/debuglets); Go is supported, C and Rust are experimental |
-| Optional SCION and eBPF controls | [Executor configuration fields](../internal/executor/config/config.go) define `network.policy.scion`, `network.disable_scion_environment`, `network.packet_counter` and `network.interface`; see [kernel checks](../scripts/ci-kernel.sh) and [support limits](../SECURITY.md). SCION is off by default. |
-| Packet attribution | [Tag specification](tag-spec.md), [capture verifier](../tools/verify_pcap.py) and [current supported scope](../SECURITY.md); attribution is not destination consent or a general authentication guarantee |
-| Deployment and state | [Across-host topology](operations/remote-deployment.md), [managed services](operations/services.md), and the [deployment guide](../deploy/README.md) |
-| Local or legacy account-key users | [Re-login and recovery](cli.md#return-to-an-existing-account) |
+- [Architecture](architecture.md) and [threat model](security.md).
+- [Vantage-point metadata](vantage-points.md), [probe verification](verification.md) and [packet tag specification](tag-spec.md).
+- [OpenAPI contract](../api/openapi.yaml) and [versions/support policy](versions.md).
+- [CI checks](development/ci.md), [generated code](development/generated-code.md) and [guest languages](development/guest-languages.md).
 
-## Develop and contribute
-
-- [Continuous integration](development/ci.md)
-- [CI images](development/ci-images.md)
-- [Generated code](development/generated-code.md)
-- [Contributing](../CONTRIBUTING.md)
+Read the [security policy](../SECURITY.md) before operating a networked deployment.
