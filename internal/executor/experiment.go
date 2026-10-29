@@ -24,16 +24,25 @@ func (r runExperiment) Ready(ctx context.Context, metadata []byte) (wire.Experim
 	if len(metadata) > wire.MaxExperimentMetadata {
 		return result, status.Error(codes.ResourceExhausted, "experiment metadata exceeds limit")
 	}
-	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	pollCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	client, err := r.executor.dispatcherClient(ctx, r.spec.Binding)
+	client, err := r.executor.dispatcherClient(pollCtx, r.spec.Binding)
 	if err != nil {
 		return result, err
 	}
-	reply, err := client.ExperimentReady(ctx, &pb.ExperimentReadyRequest{
+	reply, err := client.ExperimentReady(pollCtx, &pb.ExperimentReadyRequest{
 		DebugletId: r.spec.DebugletID.String(), ExecutorId: r.executor.cfg.Identity.ExecutorID, Metadata: metadata,
 	})
 	if err != nil {
+		if pollCtx.Err() == context.DeadlineExceeded && status.Code(err) == codes.DeadlineExceeded {
+			// A slow poll does not expire the guest's readiness budget. The
+			// dispatcher records immutable metadata, so the SDK may poll again
+			// with the same run and metadata even if this reply was lost.
+			if err := r.executor.checkExecutionLease(ctx, r.spec.Binding); err != nil {
+				return result, err
+			}
+			return result, nil
+		}
 		return result, err
 	}
 	if err := r.executor.checkExecutionLease(ctx, r.spec.Binding); err != nil {

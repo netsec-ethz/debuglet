@@ -1,10 +1,41 @@
 # Contributing
 
-Start with an issue for a bug or proposal, then open a focused pull request. Describe the observable change, compatibility impact, and how a reviewer can verify it.
+Start with a [bug report or proposal](https://github.com/netsec-ethz/debuglet/issues),
+then open a focused pull request against `main`. Describe what changes for a
+user, any compatibility impact and how to verify it. Use the
+[security policy](SECURITY.md) for private vulnerability reports.
 
-## Development
+## Find the code
 
-Debuglet development and release checks run on Linux amd64 with Go 1.26.10. The usual checks are:
+| Change | Start here |
+| --- | --- |
+| CLI command | `cmd/dbl/` |
+| Public Go client | `pkg/client/` |
+| Guest SDK and network operations | `pkg/debuglet/` and `internal/executor/` |
+| Workflow blocks and compilation | `pkg/workflow/` |
+| Editor build service and MCP | `internal/studio/` and `cmd/dbl-studio/` |
+| Admission, scheduling, accounts and stored results | `internal/dispatcher/` |
+| Dispatcher/executor protocol | `protocol/protocol.proto` |
+| Packages, CI and deployment | `scripts/`, `.github/workflows/` and `deploy/` |
+| Web console | [Dashboard repository](https://gitlab.inf.ethz.ch/OU-PERRIG/yimin/debuglet/debuglet-dashboard) |
+
+Read the [architecture](docs/architecture.md) for the component boundaries.
+For a first extension, follow [adding a workflow block](docs/development/workflows.md#adding-a-built-in-block):
+the visual editor and MCP use the same catalog and compiler.
+
+## Develop and test
+
+Use Linux amd64 and Go 1.26.10, as pinned in `go.mod` and `mise.toml`.
+From the repository root:
+
+```sh
+go mod download
+make test-fast
+```
+
+During development, run the tests for the package you change. `make test-fast`
+runs native packages in short mode; `make test` also runs their compiler and
+integration cases. Before requesting review, run the relevant checks:
 
 ```sh
 make ci-fmt
@@ -14,33 +45,20 @@ make ci-build
 make ci-package
 ```
 
-Run the focused package tests while developing. Run the relevant full checks before requesting review. See [CI setup](docs/development/ci.md) for the complete validation matrix.
+Concurrency changes also need `make ci-race`. Changes to privileged networking
+need the isolated Linux kernel lane. [CI setup](docs/development/ci.md) describes
+the prerequisites and complete matrix; short tests do not replace these checks.
 
-`make test-fast` runs the native packages in short mode for the editing loop.
-`make test` includes their compiler and integration cases. `make coverage`
-collects statement coverage, source/generated reports and package timings under
-`.cache/ci/coverage/`; the ordinary CI test lane publishes the same reports.
-Short mode is not a substitute for the full or race checks before review.
+`make coverage` writes statement-coverage reports and package timings to
+`.cache/ci/coverage/`. Handwritten code and generated bindings have separate
+reports. Coverage identifies gaps; it is not branch coverage or proof of correctness.
 
-## Generated code
+## Keep changes reviewable
 
-Keep generated output in the same pull request as its source:
-
-- Protocol changes: edit `protocol/protocol.proto`, then run `make proto`.
-- SQL changes: edit queries or migrations, then run `make generate-sql`.
-- eBPF changes: regenerate its checked-in artifacts and run the kernel checks when available.
-
-## Pull requests
-
-- Keep changes small enough to review.
-- Include meaningful tests for behavior changes.
-- Update user-facing documentation when behavior changes.
-- Do not commit credentials, private keys, local inventory, databases, or build output.
-- Use a focused `feature/`, `fix/`, `docs/`, or `chore/` branch and target `main`.
-
-Read [Architecture](docs/architecture.md) to find the relevant subsystem. Follow [SECURITY.md](SECURITY.md) for private vulnerability reporting.
-
-For a concrete extension path, see [adding a built-in workflow
-block](docs/development/workflows.md#adding-a-built-in-block). The editor and MCP
-share the catalog and compiler, so ordinary blocks do not need separate
-implementations for each interface.
+- Use a focused `feature/`, `fix/`, `docs/` or `chore/` branch.
+- Test observable behavior, including meaningful failure cases.
+- Update documentation when user-facing behavior changes.
+- Keep generated output with its source: use `make proto` for protocol changes
+  and `make generate-sql` for queries or migrations. Follow the
+  [generation guide](docs/development/generated-code.md) for checks and eBPF artifacts.
+- Keep credentials, private keys, local inventory, databases and build output out of Git.

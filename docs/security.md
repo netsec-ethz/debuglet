@@ -1,6 +1,6 @@
 # Threat model and supported scope
 
-Debuglet is an alpha for trusted Linux amd64 environments. The local TEST
+Debuglet supports managed, trusted Linux amd64 environments. The local TEST
 profile and deliberately configured trusted deployments are supported; this is
 not a general-purpose sandbox for hostile guests or a production payment
 system. This reference describes the current code. See [SECURITY.md](../SECURITY.md)

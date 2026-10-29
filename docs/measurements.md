@@ -2,73 +2,59 @@
 
 ## Run your first measurement
 
-Use this walkthrough on a deployment whose operator confirms compatible console,
-dispatcher and executor versions and provides the console URL.
+Open the [hosted console](https://debuglet.netsec.ethz.ch/console/), or the console
+URL supplied by your dispatcher operator, and sign in with an enabled provider.
+You need an available executor and a permitted HTTP endpoint to measure.
 
-Ask the operator for a health endpoint they own that returns a small **HTTP 200**
-response and is permitted from the chosen executor. For example,
-`https://service.example/health` is a placeholder: replace it with that endpoint's
-complete URL, including the correct scheme, port and path. A public website is
-not a guaranteed test target. The console cannot inspect the operator's private
-destination and port restrictions in advance.
+1. Open **Templates** and choose **Chart HTTP timing without hiding failures**.
+2. Set **HTTP endpoint** to a health or test URL you are allowed to measure,
+   including `https://` or `http://` and the full path. Keep the default five
+   samples, then choose **Open editable copy**.
+3. Choose **Run**, select **one** available executor, then **Configure selected
+   nodes**. Check the destination, timeout and bandwidth limits. Use an immediate
+   start for this first run.
+4. Choose **Review measurement**, review its permissions and quote, then
+   **Run with TEST** if the deployment offers TEST funding.
+5. On **Results**, inspect the attempt table and timing chart. Each row records
+   the response status, duration or error. Wait for complete output; **Activity**
+   contains raw output, and **Details** contains the configuration and run ID.
 
-1. Sign in and open **New measurement**. Choose **HTTP timing & status** and
-   enter the approved URL in **HTTP target**. Leave **Response time threshold**
-   empty for this first check.
-2. Under **Vantage point**, select an executor marked **Available** and
-   **TEST · no wallet**. Open **Node details** to check its identity and reported
-   capabilities. Availability does not prove that your target is permitted or
-   reachable.
-3. Choose **Review measurement**. Check the executor, endpoint, **Permitted
-   destinations**, timeout and bandwidth. Keep the immediate start and default
-   limits if the deployment accepts them, then choose **Run with TEST**.
-4. On the run page, wait for **All program output received.** Inspect
-   **Measurement results** for **Checks passed**, **HTTP status** `200`,
-   **Time** and **Response body**. Check the **Raw program output** JSON too:
-   its `schema` is `debuglet.measurement.v1`, `template` is `http`, and `ok` and
-   the check's `ok` should be `true`. Keep the run ID from **Run details**;
-   **Download output** saves the received program output.
+TEST needs no wallet. A deployment with TEST allowances still requires enough
+operator-granted units; account registration does not itself guarantee credit.
+See [TEST allowances](operations/configuration.md#dispatcher-usage-allowances).
 
-TEST needs no wallet. If the dispatcher enforces TEST allowances, your account
-also needs enough operator-granted units; signing up does not grant them
-automatically. See [TEST allowances](operations/configuration.md#dispatcher-usage-allowances).
+The template uses new HTTP requests and does not follow redirects. Its chart
+includes transport-complete responses, **including HTTP error statuses**; check
+status codes separately. Durations include connection setup, TLS for HTTPS,
+server processing and reading the response, so they are not pure network RTT.
+The small sample demonstrates the method, not an SLA or statistical confidence.
 
-The template preserves `http://` or `https://` as entered; HTTPS uses TLS. It
-makes one GET request and requires a 2xx response. It does not follow redirects.
-**Time** measures the whole HTTP check, including connection setup, TLS when
-used, request transmission and reading the response body. Service processing
-contributes to it; this is not a pure network round-trip time (RTT).
+A finished run is not necessarily a successful measurement. Check errors and
+output completeness as well as the chart. If all requests fail, there are no
+completed-response timings to compare.
 
-An **exited** state means execution ended, not that the check passed. A parsed
-result can appear before all output arrives. Confirm the result, execution state
-and output completeness separately; **All program output received.** alone
-does not mean success.
-
-| What you see | Next step |
+| Problem | Next step |
 | --- | --- |
-| No available executor, **Offline** or **Maintenance** | Wait for readiness or ask the operator; the list refreshes automatically. |
-| Target denied by the operator network policy | Ask for a permitted endpoint or an executor whose policy permits it. Changing HTTP to HTTPS does not grant permission; do not bypass the policy. |
-| **Checks failed** with HTTP 3xx | Use the final URL only if the operator approves it. A redirect fails the template's 2xx expectation. |
-| Output still arriving, incomplete or completeness unconfirmed | Wait while output arrives; reload if completeness is unconfirmed. Keep incomplete output marked as incomplete rather than inferring success. |
+| No available nodes | Choose another node or ask the operator when one will be ready. |
+| Destination refused by network policy | Use a permitted endpoint or ask its operator to authorize the measurement. |
+| HTTP 3xx | Inspect the redirect; use the final permitted URL if that is the endpoint you intended to measure. |
+| No chart or incomplete output | Inspect **Activity** for errors and wait while output is still arriving. |
+
+Use **Edit and run again** to change the saved source. **Save result** keeps a
+useful report accessible through **Highlights**. See [source reuse and results](results.md).
 
 ## Compare two executors
 
-1. Open **Grouped measurement**, choose **Compare HTTP responses**, and enter
-   the same approved **HTTP target**. Confirm that both operators permit it.
-2. Under **Choose your nodes**, select two available TEST executors. Keep the
-   same timeout, bandwidth and response threshold for both. Choose **Review
-   group**, check both participants and their permitted destinations, then
-   **Submit group with TEST**.
-3. On **Grouped measurement**, open **Details and output** for each participant.
-   Check its complete output and result as above, then compare HTTP status,
-   response size and time alongside the executor and run IDs. **Export group
-   results** saves a snapshot; it can still contain running participants or
-   incomplete output.
+Open the same template, keep the target and sampling settings identical, and
+select two executors after **Run**. Choose **Configure selected nodes**, then
+**Review group** and **Submit group with TEST**. On the result page, select each
+participant to inspect its reports or compare the group's observations.
 
-These are two independent HTTP probes in one submission. They do not wait for a
-synchronized start, and one sample per executor does not establish a stable
-latency difference. For coordinated programs, see
-[Coordinate a batch of debuglets](#coordinate-a-batch-of-debuglets).
+These are independent copies of one program. They start as they become ready;
+there is no synchronized-start barrier. Compare repeated observations and errors,
+not just one latency sample. To make programs exchange messages or wait for one
+another, use **Add program** in the editor and follow
+[coordinated experiments](development/workflow-authoring.md).
 
 ## Save and apply a profile
 
@@ -202,6 +188,7 @@ this is not a guarantee of simultaneous execution. Experiment traffic uses the
 normal permitted sockets, while readiness travels through the dispatcher.
 
 The [five-executor example](../examples/experiments/README.md) includes a manifest,
-runner and UDP guest. It requires the new dispatcher and executor readiness
-extension; it does not add a console flow. Missing members, retries and partial
-results remain decisions for the experiment's author, within the run deadlines.
+runner and UDP guest. It uses the dispatcher and executor readiness extension
+through the SDK. For visual authoring, use the [experiment editor](development/workflow-authoring.md)
+instead. Missing members, retries and partial results remain decisions for the
+experiment's author, within the run deadlines.

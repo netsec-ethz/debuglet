@@ -4,10 +4,33 @@ A **debuglet** is the small WebAssembly program an executor runs for one measure
 
 ## Start from an example
 
+Install the [CLI](../README-install.md), clone this release of the source and
+use its Go version (currently 1.26.10). From the repository root, build the
+smallest example:
+
 ```sh
 make wasm SAMPLE_DIR=examples/debuglets/go/hello-local
-dbl run --wasm examples/debuglets/go/hello-local/debuglet.wasm --wait
 ```
+
+It prints `Hello from Debuglet!` and needs no network target. To run it on an
+existing dispatcher, replace the API URL and choose a ready executor from `nodes`:
+
+```sh
+dbl connect https://dispatcher.example/api --name research
+dbl --dispatcher research login
+dbl --dispatcher research nodes
+dbl --dispatcher research run \
+  --wasm examples/debuglets/go/hello-local/debuglet.wasm \
+  --executor EXECUTOR_ID --wait --allow-remote-test
+dbl --dispatcher research logs --follow RUN_ID
+```
+
+`login` asks you to approve CLI access in the browser. Use `--no-browser` on a
+headless machine and open the printed URL elsewhere. This example needs a
+compatible executor accepting TEST and sufficient TEST allowance if enforced;
+it does not fund an account. See [CLI authentication](cli.md#use-an-account-key-connection)
+for local or legacy account-key deployments. Replace `RUN_ID` with the ID from
+the run receipt; `logs` displays the greeting from the completed run.
 
 The [examples](../examples/debuglets) show supported patterns. Build Go debuglets for `GOOS=wasip1 GOARCH=wasm` and import `github.com/netsec-ethz/debuglet/pkg/debuglet` when you need Debuglet network operations.
 

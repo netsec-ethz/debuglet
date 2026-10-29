@@ -1,8 +1,8 @@
 # Create and run experiments
 
 Choose **New experiment** (`/console/experiments/new`) to design a program, then
-move to **Run** to choose executors and review its permissions. Use **Add a
-program** when two or three programs need to coordinate, each on a distinct
+move to **Run** to choose executors and review its permissions. Use **Add program**
+when two or three programs need to coordinate, each on a distinct
 executor. The same graph can be edited visually, authored by an MCP client or
 compiled from the command line with `dbl-studio`. Existing builder links remain
 valid.
@@ -40,7 +40,11 @@ the console can build workflows and experiments directly. Otherwise, use the
 local service with Go and a trusted checkout of the matching SDK to compile a
 bundle, then import it into the console.
 
-## Start the editor
+If you use the hosted editor, start with the [first measurement walkthrough](../measurements.md#run-your-first-measurement);
+no local build is needed. The sections below cover [local setup](#run-the-editor-locally),
+[command-line compilation](#build-and-review-a-bundle) and [MCP setup](#connect-an-mcp-client).
+
+## Run the editor locally
 
 On Linux, install Go 1.26.10, clone this version of Debuglet, and build the
 authoring tool from the repository root:
@@ -165,7 +169,8 @@ map. **Activity** contains traces and raw output; **Details** contains source,
 configuration and cost. Failure and incomplete-output warnings remain visible.
 **Edit and run again** opens an independent editable copy when source was retained;
 older runs without source can still reuse their retained settings. Save useful
-reports to the **Results library** to return to them and their originating run.
+reports to the results library, available under **Highlights**, to return to
+them and their originating run.
 
 New experiment programs include a connection manifest in their output, so the
 map can load after a page reload. It describes declared communication, not

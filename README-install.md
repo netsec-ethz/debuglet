@@ -1,19 +1,32 @@
 # Install Debuglet
 
-For tar installation, use Linux amd64, a POSIX shell, GNU tar, and coreutils. Choose the operator's
-exact **full bundle** for executor enrollment, managed services, or the local
-demo. No source checkout or compiler is needed. The published unsigned v0.2.0
-package predates `dbl executor join`; the current enrollment flow requires an
-operator-supplied candidate until a compatible signed release is published.
+To create and run experiments, open the [Debuglet console](https://debuglet.netsec.ethz.ch/console/).
+You only need a local package to host an executor, use the CLI, or run the local
+demo. MCP authoring uses the separately [source-built Studio](docs/development/workflow-authoring.md);
+it is not included in the runtime package.
+
+**Release availability:** v0.2.0 is the latest published release and predates
+`dbl executor join`. The current onboarding flow needs a compatible candidate
+from your dispatcher operator until the next signed release is published. The
+official public apt channel is not live yet. A version tag alone is not a release.
+
+## Supported platforms
+
+The supported package target is **Ubuntu 24.04, Linux amd64**. Current Linux
+fixtures cover the CLI, dispatcher, executor and local demo. There are no
+validated native packages for macOS, Windows or Linux arm64. Use a supported
+Linux machine to connect to the dispatcher from those platforms.
+
+The [client-container guide](docs/operations/client-container.md) preserves
+credentials across Linux container restarts; Docker Desktop and architecture
+emulation are not validated. See [compatibility](docs/versions.md) for version
+and deployment limits.
 
 ## Install with apt on Ubuntu 24.04 amd64
 
-The official public apt channel is not yet published. Use this route only when
-your operator supplies a published apt repository, its OpenPGP key fingerprint
-and an exact Debian package version. Verify the key
-through an independent trusted channel, then install the operator's keyring and
-repository configuration with `Signed-By` scoped to that keyring. Follow the
-complete [apt setup procedure](docs/operations/apt-repository.md).
+Once your operator supplies a published repository, its independently confirmed
+OpenPGP fingerprint and exact Debian version, follow the one-time
+[repository setup](docs/operations/apt-repository.md#configure-a-client). Then:
 
 ```sh
 sudo apt-get update
@@ -22,25 +35,45 @@ sudo apt-get install debuglet=DEBIAN_VERSION_PROVIDED_BY_OPERATOR
 /usr/bin/dbl demo
 ```
 
-The `debuglet` package selects the matching full payload, including the CLI,
-executor, dispatcher and bundled samples. Installation creates a missing
-`debuglet` system account and the parent state directories. Account registration,
-executor enrollment and service activation remain explicit. Use `/usr/bin/dbl`
-to avoid selecting an older tar installation on `PATH`. Upgrades retain payloads
-referenced by managed services. Follow the [Debian lifecycle
-procedure](docs/operations/debian.md) to drain, back up, replace and resume an
-existing service. Tar installation remains available below.
+The full package includes the CLI, executor, dispatcher and samples. Installation
+creates the `debuglet` system account and parent state directories when missing;
+it does not register an account, enroll an executor or start a service.
+`/usr/bin/dbl` avoids picking up an older tar installation on `PATH`.
+
+For an existing service, follow the [upgrade procedure](docs/operations/debian.md)
+before activation. Apt stages the new payload and retains payloads referenced by
+managed services; it does not drain, migrate or restart them for you.
+
+## Install a signed release
+
+Tar installation needs a POSIX shell, GNU tar, coreutils, Python 3.11+, curl and
+OpenSSH with `ssh-keygen -Y`. Obtain the bootstrap from a trusted checkout and
+provision the [release signing trust](docs/operations/releases.md#production-signer)
+independently. Select an exact published version with signed assets:
+
+```sh
+DEBUGLET_VERSION=VERSION_PROVIDED_BY_OPERATOR \
+DEBUGLET_REQUIRE_SIGNATURE=1 \
+DEBUGLET_RELEASE_TRUST=/etc/debuglet/release-allowed-signers \
+DEBUGLET_RELEASE_SIGNER=releases@debuglet.netsec.ethz.ch \
+DEBUGLET_PREFIX="$HOME/.local" \
+sh /path/to/trusted/bootstrap.sh
+export PATH="$HOME/.local/bin:$PATH"
+dbl --output json version
+dbl demo
+```
+
+Leave `DEBUGLET_ALLOW_UNSIGNED`, `DEBUGLET_COMPONENT` and `DEBUGLET_RELEASE_DIR`
+unset for this full online install. Signature failures stop before installer
+execution. [Offline installation and verification](docs/operations/releases.md)
+use the same trust checks. Tar installation does not create service accounts or
+activate services.
 
 ## Install a private development candidate
 
-Obtain a trusted standalone `bootstrap.sh`, the exact version and source
-revision, and the matching `debuglet-VERSION-linux-amd64.tar.gz`, `install.sh`,
-and `SHA256SUMS` through your operator's trusted channel. Keep those three
-package files together with their original names. Replace the version
-placeholder below with the supplied `v0.0.0-dev.<source-prefix>` and use your
-actual local paths. Candidates require a local directory and explicit unsigned
-opt-in; they are not public releases. Checksums are verified before the installer
-runs, but do not authenticate an unsigned publisher.
+Ask the operator for the exact version/source, trusted `bootstrap.sh`, and the
+matching full archive, `install.sh` and `SHA256SUMS`. Keep the three package files
+together with their original names. For a local candidate directory:
 
 ```sh
 DEBUGLET_VERSION=VERSION_PROVIDED_BY_OPERATOR \
@@ -53,83 +86,30 @@ dbl --output json version
 dbl demo
 ```
 
-Leave component and signature/trust settings unset for this unsigned full
-bundle; unsigned mode cannot override configured signature requirements.
-Confirm the reported version and source revision. The demo needs no service,
-account, wallet, or root access. Installation does not enroll a node, create a
-service account, or restart an existing service; follow [executor
-setup](docs/operations/executor-onboarding.md) or [managed
-services](docs/operations/services.md) next.
+Leave component and signature/trust settings unset. Check the reported version
+and source against the operator's values. Checksums detect changed files but
+do not authenticate an unsigned publisher. The demo needs no account, wallet,
+root access or existing service.
 
-For a system-wide candidate used by a managed service, run this command instead
-of the user-local installation above, with the same trusted inputs:
-
-```sh
-sudo env DEBUGLET_VERSION=VERSION_PROVIDED_BY_OPERATOR \
-  DEBUGLET_RELEASE_DIR="$HOME/Downloads/debuglet-candidate" \
-  DEBUGLET_ALLOW_UNSIGNED=1 DEBUGLET_PREFIX=/usr/local \
-  sh "$HOME/Downloads/bootstrap.sh"
-/usr/local/bin/dbl --output json version
-```
-
-Tar installation leaves service-account creation to the
-[persistent executor setup](docs/operations/executor-onboarding.md#run-persistently-on-linux).
-
-## Install a signed release
-
-Once your operator identifies an exact published version with signed assets,
-obtain the trusted standalone bootstrap and provision the signer's trust file
-independently using [Signed releases and offline
-verification](docs/operations/releases.md). Replace the version placeholder
-below and leave unsigned, component and local-directory settings unset. This
-route also requires curl, Python 3.11 or later, and OpenSSH with `ssh-keygen -Y`.
-
-```sh
-DEBUGLET_VERSION=VERSION_PROVIDED_BY_OPERATOR \
-DEBUGLET_REQUIRE_SIGNATURE=1 \
-DEBUGLET_RELEASE_TRUST=/etc/debuglet/release-allowed-signers \
-DEBUGLET_RELEASE_SIGNER=releases@debuglet.netsec.ethz.ch \
-DEBUGLET_PREFIX="$HOME/.local" \
-sh /path/to/trusted/bootstrap.sh
-```
-
-Signature verification precedes installer execution and never falls back to
-unsigned mode. For offline use, set `DEBUGLET_RELEASE_DIR` to the package
-directory including `release.json` and `release.json.sig`.
-
-For the older public v0.2.0 demo only, use `DEBUGLET_VERSION=v0.2.0
-DEBUGLET_ALLOW_UNSIGNED=1 sh /path/to/trusted/bootstrap.sh` with component,
-local-directory and signature/trust settings unset.
-
-## Supported platforms
-
-| Platform | `dbl` client | Dispatcher and executor | Bundled demo |
-| --- | --- | --- | --- |
-| Linux amd64 | Validated native package | Validated for trusted deployments | Validated locally |
-| macOS, Intel or Apple Silicon | No native package; Linux amd64 container workflow not yet validated end to end | Not supported natively | Not validated |
-| Windows or WSL | Not validated | Not validated | Not validated |
-| Linux arm64 or other architectures | No released package; not validated | Not validated | Not validated |
-
-On an unsupported host, use a Linux amd64 machine and run `dbl` there to
-connect to your dispatcher. Do not run the Linux installer directly on macOS
-or Windows. A source build alone does not establish platform support. See
-[Versions and compatibility](docs/versions.md) for the support policy
-and the limits of those checks. The [Linux client-container guide](docs/operations/client-container.md)
-keeps credentials across container restarts; using it on macOS or Windows does
-not establish support for Docker Desktop or emulation there.
+For a system-wide candidate, use `sudo env` with the same variables and
+`DEBUGLET_PREFIX=/usr/local`. Follow [persistent executor setup](docs/operations/executor-onboarding.md#run-persistently-on-linux)
+for service-account creation and activation. The older public v0.2.0 demo can be
+installed with the [explicit legacy procedure](docs/operations/releases.md#explicit-unsigned-legacy-or-development-install);
+it does not provide current enrollment.
 
 ## Next steps
 
-- Join an existing dispatcher with [executor setup, including SSH and shell-only instructions](docs/operations/executor-onboarding.md). Use its compatible full bundle; v0.2.0 does not include `dbl executor join`.
-- Learn the commands in the [CLI reference](docs/cli.md).
-- Return to an account with [re-login and recovery](docs/cli.md#return-to-an-existing-account), or start with [troubleshooting](docs/cli.md#troubleshooting).
-- Run local roles separately with the [local-role walkthrough](docs/cli.md#run-local-roles-separately).
-- Deploy a dispatcher or executor with the [across-host guide](docs/operations/remote-deployment.md).
+| What you want to do | Guide |
+| --- | --- |
+| Join the network, including from an SSH-only host | [Host an executor](docs/operations/executor-onboarding.md) |
+| Submit measurements, use device sign-in or recover access | [CLI reference](docs/cli.md) |
+| Run or update persistent services | [Managed services](docs/operations/services.md) |
+| Operate a dispatcher | [Deployment guide](deploy/README.md) |
 
 ## Build from source
 
-On Linux amd64 with Go 1.26.10, Git, Make, Bash, GNU tar, coreutils, Python 3.11
-or later, and `dpkg-deb` (the `dpkg` package):
+On Linux amd64, install Go 1.26.10, Git, Make, Bash, GNU tar, coreutils, Python
+3.11+ and `dpkg-deb` (from `dpkg`), then:
 
 ```sh
 git clone https://github.com/netsec-ethz/debuglet.git
@@ -138,52 +118,41 @@ make ci-build
 make ci-package
 ```
 
-The full bundle is under `.cache/ci/packages/`. The build prints its exact
-archive name, including the generated `v0.0.0-dev.<source-prefix>` version. Run
-the development-candidate command above with that version,
-`DEBUGLET_RELEASE_DIR="$PWD/.cache/ci/packages"`, and `sh scripts/bootstrap.sh`.
-For another machine, copy the trusted bootstrap and the three package files;
-the source checkout stays on the build machine. The build also produces the
-component packages below and `debuglet-VERSION-linux-amd64.deb`,
-`debuglet-payload-VERSION-linux-amd64.deb`, `deb-packages.json` and
-`SHA256SUMS-debian` under `.cache/ci/packages/debian/`. The Debian version drops
-the leading `v`, changes a prerelease hyphen to `~`, and appends `-1`; for example
-`v1.2.3-rc.1` becomes `1.2.3~rc.1-1`. Debian files wrap the same full tar payload.
-Use `make ci-debian` on an Ubuntu 24.04 amd64 Docker host to rehearse signed apt
-metadata, installation and tamper rejection with disposable test keys.
+The build prints the archive name under `.cache/ci/packages/`, including its
+`v0.0.0-dev.<source-prefix>` version. Install it using the candidate command
+above, `DEBUGLET_RELEASE_DIR="$PWD/.cache/ci/packages"` and
+`sh scripts/bootstrap.sh`. Other machines need only the trusted bootstrap and
+package files, not a compiler or source checkout.
 
-The package output includes `compatibility.json` and
-`SHA256SUMS-compatibility`. This separate record identifies the core package,
-source revision, API version and OpenAPI digest together with the console
-repository and commit selected in `configs/release-compatibility.json`. Review
-that selection and the matching acceptance results when preparing a release.
-The console remains a separate build and deployment.
+Debian packages are in `.cache/ci/packages/debian/`. The Debian version drops
+`v`, changes the prerelease separator to `~` and adds `-1`: for example,
+`v1.0.0-rc.1` becomes `1.0.0~rc.1-1`. The separately built console is pinned in
+`configs/release-compatibility.json`; packages record that pairing in
+`compatibility.json`. See [release preparation](docs/operations/releases.md#prepare-a-release)
+for package acceptance and publication.
 
 ## Install one component
 
-Component packages are available from current source builds and are intended for releases after v0.2.0. The v0.2.0 release contains only the full bundle.
+Use the full bundle for enrollment, managed-service commands, `dbl demo`,
+`dbl up` and bundled samples. Component packages are intended for callers who
+only need one role; v0.2.0 contains only the full bundle.
 
-| Audience | Component | Source build directory | Installed command |
-| --- | --- | --- | --- |
-| Client users | `cli` | `.cache/ci/packages/cli/` | `dbl` |
-| Executor operators | `executor` | `.cache/ci/packages/executor/` | `debuglet-executor` |
-| Dispatcher operators | `dispatcher` | `.cache/ci/packages/dispatcher/` | `debuglet-dispatcher` |
+| Component | Installed command | Source-build directory |
+| --- | --- | --- |
+| `cli` | `dbl` | `.cache/ci/packages/cli/` |
+| `executor` | `debuglet-executor` | `.cache/ci/packages/executor/` |
+| `dispatcher` | `debuglet-dispatcher` | `.cache/ci/packages/dispatcher/` |
 
-Use either bootstrap invocation above with `DEBUGLET_COMPONENT=cli`,
-`executor`, or `dispatcher`. For local packages, point `DEBUGLET_RELEASE_DIR`
-to that component's directory containing its archive, `install-COMPONENT.sh`,
-and `SHA256SUMS-COMPONENT`. Select the same exact version as the full bundle.
-Check the installed command with `--help`; the component packages omit the
-bundled demo. Role installations share a prefix safely: upgrading one changes
-only its own command link. The daemon packages include their SQLite support
-and embedded migrations; they do not require
-`goose` or `sqlc` at runtime. Daemons still need configuration and a prepared
-database; see the operator guide below.
-
-Use the full bundle for `dbl demo`, `dbl up`, `dbl dispatcher up`, `dbl executor up`, and bundled samples. The CLI-only package is for connecting to an existing dispatcher and submitting your own WASM files.
-
-Docker builds use `deploy/docker/debuglet.Dockerfile` targets `cli`, `executor` and `dispatcher` for one component, or `full` for local tools and samples. The local Compose fixture seeds its databases with the full image. With its dispatcher running, client commands use `docker compose run --rm tools --config /state/dbl.toml ...`; the daemon images do not contain `dbl`.
+Set `DEBUGLET_COMPONENT` in the appropriate bootstrap command. For offline
+packages, point `DEBUGLET_RELEASE_DIR` at the component directory with its
+archive, `install-COMPONENT.sh` and `SHA256SUMS-COMPONENT`. Components share a
+prefix without replacing each other's command links. Daemons include SQLite
+support and migrations, but still need configuration and a prepared database.
+Docker targets and local Compose use are documented in [deployment](deploy/README.md).
 
 ## For operators
 
-For system-wide installation, retention and service management, use [Managed services](docs/operations/services.md). Networked deployments and database upgrades follow the [deployment guide](deploy/README.md).
+Read [managed services](docs/operations/services.md) for installation and service
+ownership, and [deployment](deploy/README.md) for configuration and database
+upgrades. Publishing a package does not deploy a console or update an existing
+executor automatically.

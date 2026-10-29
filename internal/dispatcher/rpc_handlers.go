@@ -597,11 +597,17 @@ func (d *Dispatcher) ownedDebuglet(ctx context.Context, owner *rpc.SessionOwner,
 	if err == nil {
 		return row, nil
 	}
+	if ctx.Err() != nil {
+		return database.Debuglet{}, status.FromContextError(ctx.Err()).Err()
+	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return database.Debuglet{}, status.Error(codes.Internal, "stored debuglet data is invalid")
 	}
 	identity, err := queries.GetDebugletIdentityByUUID(ctx, id)
 	if err != nil {
+		if ctx.Err() != nil {
+			return database.Debuglet{}, status.FromContextError(ctx.Err()).Err()
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			return database.Debuglet{}, status.Error(codes.NotFound, "debuglet does not exist")
 		}
