@@ -1,8 +1,9 @@
 # Install Debuglet
 
 To create and run experiments, open the [Debuglet console](https://debuglet.netsec.ethz.ch/console/).
-You only need a local installation to host an executor, use the CLI/MCP, or run
-the local demo.
+You only need a local package to host an executor, use the CLI, or run the local
+demo. MCP authoring uses the separately [source-built Studio](docs/development/workflow-authoring.md);
+it is not included in the runtime package.
 
 **Release availability:** v0.2.0 is the latest published release and predates
 `dbl executor join`. The current onboarding flow needs a compatible candidate

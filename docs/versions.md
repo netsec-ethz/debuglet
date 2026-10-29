@@ -40,8 +40,9 @@ account-owned `dbl executor join` and the newer authoring APIs.
 The supported deployment is a managed research service on Linux amd64, with
 explicitly enrolled executors, authenticated TLS and operator network policies.
 Debian packages target Ubuntu 24.04 amd64. The shared executor profile adds
-process and resource limits; it is not a general hostile-code sandbox. Sui
-payments and non-Go guest SDKs remain experimental. See the [security model](security.md)
+process and resource limits; it is not a general hostile-code sandbox. Chain
+payments remain outside the supported profile and must stay disabled there.
+Non-Go guest SDKs remain experimental. See the [security model](security.md)
 for the boundaries and [installation guide](../README-install.md) for prerequisites.
 
 Use the console revision identified by the release's compatibility manifest.
