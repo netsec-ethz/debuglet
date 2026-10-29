@@ -46,6 +46,8 @@ documentation contain operational details.
   executor admission (#415).
 
 ### Fixed
+- Coordinated experiments retain their readiness budget after a slow polling
+  request, instead of failing early while their start barrier is still open.
 - Client-certificate enforcement now binds inventory certificates during
   deployment, keeping managed executors connected (#415).
 - eBPF-enforced executors no longer fail a run when it closes a counted TCP or
