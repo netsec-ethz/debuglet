@@ -13,13 +13,25 @@ import apt_repository as apt
 
 class InputTests(unittest.TestCase):
     def test_published_release_requires_exact_tag(self):
-        record = {'tag_name': 'v1.2.3', 'draft': False, 'published_at': '2026-10-15T12:00:00Z'}
+        record = {'tag_name': 'v1.2.3', 'draft': False, 'prerelease': False,
+                  'published_at': '2026-10-15T12:00:00Z'}
         apt.check_published_release(record, 'v1.2.3')
         for field, invalid in [('tag_name', 'v1.2.2'), ('draft', True), ('published_at', None)]:
             with self.subTest(field=field), self.assertRaises(ValueError):
                 apt.check_published_release(dict(record, **{field: invalid}), 'v1.2.3')
         with self.assertRaises(ValueError):
             apt.check_published_release(record, '../main')
+
+    def test_stable_channel_refuses_prereleases(self):
+        record = {'tag_name': 'v1.0.0', 'draft': False, 'prerelease': False,
+                  'published_at': '2026-10-15T12:00:00Z'}
+        for version in ('v1.0.0', 'v1.0.0-rc.1'):
+            for prerelease in (True, False, None):
+                if version == 'v1.0.0' and prerelease is False:
+                    continue
+                with self.subTest(version=version, prerelease=prerelease), self.assertRaisesRegex(
+                        ValueError, 'stable apt channel requires a final release'):
+                    apt.check_published_release(dict(record, tag_name=version, prerelease=prerelease), version)
 
     def test_duplicate_metadata_and_path_escape_refused(self):
         with self.assertRaises(ValueError):

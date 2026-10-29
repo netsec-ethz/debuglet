@@ -284,6 +284,8 @@ def prepare(release_directory, version, source, trust, signer, directory, key, f
 def check_published_release(record, version):
     from release import VERSION
     require(VERSION.fullmatch(version), 'invalid release version')
+    require('-' not in version and record.get('prerelease') is False,
+            'the stable apt channel requires a final release, not a prerelease')
     require(record.get('tag_name') == version and record.get('draft') is False
             and isinstance(record.get('published_at'), str) and record['published_at'],
             'release must be published for the exact protected version tag')
