@@ -17,6 +17,8 @@ documentation contain operational details.
   1.25). Upgrade the dispatcher and console before executors.
 
 ### Security
+- Updated the JOSE and WebSocket dependencies and the runtime container base to
+  address published dependency vulnerabilities.
 - Fixed an accounting bypass for IPv4 UDP and ICMP traffic when the eBPF
   counter falls back to pure-Go tagging (#67). It affected v0.2.0-rc.3,
   v0.2.0 and v0.3.0-rc.1; update affected executors.
@@ -25,6 +27,10 @@ documentation contain operational details.
   validate.
 
 ### Added
+- Hosted visual and AI-assisted authoring, reusable personal and community
+  templates, and saved results linked back to their editable experiments.
+- DNS, TCP, UDP, TLS and hop measurements with typed analysis and report blocks.
+  Optional operations require a compatible executor and its configured policy.
 - `dbl-studio` for authoring typed workflows, including a local visual editor
   and workflow MCP tools.
 - Coordinated two- and three-executor workflow experiments with peer messaging

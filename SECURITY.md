@@ -1,6 +1,6 @@
 # Security policy
 
-Debuglet is an alpha intended for trusted environments. The versioned [threat model](docs/security.md) describes actors, trust boundaries and current limitations. The [Security and supported scope Wiki page](https://github.com/netsec-ethz/debuglet/wiki/Security-and-supported-scope) contains operator guidance.
+Debuglet is intended for managed, trusted Linux amd64 environments. The versioned [threat model](docs/security.md) describes actors, trust boundaries and current limitations. The [Security and supported scope Wiki page](https://github.com/netsec-ethz/debuglet/wiki/Security-and-supported-scope) contains operator guidance.
 
 ## Supported versions
 

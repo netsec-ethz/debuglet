@@ -5,7 +5,7 @@ vantage points. Start with a template, connect blocks in the visual editor, or
 write a WebAssembly program using the Go SDK. Collect results from one executor
 or coordinate an experiment across several.
 
-> Debuglet is an alpha for trusted environments. Read the [security policy](SECURITY.md) before operating a networked deployment.
+> Debuglet is intended for managed, trusted environments. Read the [security policy](SECURITY.md) before operating a networked deployment.
 
 ## Start here
 
