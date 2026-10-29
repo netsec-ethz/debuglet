@@ -566,6 +566,37 @@ func tgAssertSnapshot(t *testing.T, f *tgFixture, before string, what string) {
 // ========================== TESTS ===========================
 // ============================================================
 
+func TestOwnedDebugletPreservesContextFailure(t *testing.T) {
+	f := newTGFixture(t, nil)
+	run := f.seedDirect(t, tgFloorA)
+	owner := f.d.executors[tgExecutorID].owner
+	before := f.snapshot(t)
+	for _, deadline := range []bool{false, true} {
+		name, want := "canceled", codes.Canceled
+		if deadline {
+			name, want = "deadline while waiting for database", codes.DeadlineExceeded
+		}
+		t.Run(name, func(t *testing.T) {
+			// The pool has one connection. Holding it makes the query wait
+			// until its caller expires, without requiring a slow disk.
+			conn, err := f.db.Conn(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+			defer cancel()
+			if !deadline {
+				cancel()
+			}
+			if _, err := f.d.ownedDebuglet(ctx, owner, run.id); status.Code(err) != want {
+				t.Fatalf("query context failure became %v; want %s", err, want)
+			}
+		})
+	}
+	tgAssertSnapshot(t, f, before, "canceled ownership reads")
+}
+
 // TestTerminalResultGuards proves the terminal-result contract at the
 // dispatcher boundary: normalization, one in-process winner per debuglet with
 // effects exactly once (payment on real SQLite orders/earnings, scheduler
