@@ -13,7 +13,7 @@ import (
 )
 
 // blTooLargeMessage is the fixed message of a body above the limit.
-const blTooLargeMessage = "request body exceeds 33554432 bytes"
+const blTooLargeMessage = "request body exceeds 67108864 bytes"
 
 // blBody builds a JSON body of exactly size bytes whose padding is the string
 // value that head opens and tail closes. The members after the padding are

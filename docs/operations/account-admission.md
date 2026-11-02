@@ -50,7 +50,7 @@ known IDs before choosing another request.
 ## Upload sizes and upgrades
 
 Both intent and submission accept at most 128 runs. The entire HTTP JSON body
-is limited to 32 MiB, including base64 and metadata; unknown-length bodies have
+is limited to 64 MiB, including base64 and metadata; unknown-length bodies have
 the same bound. Each decoded module is at most 24 MiB and each logical stored
 run at most 32 MiB. The charge includes decoded WASM, base64/comma-encoded args
 and destinations, transaction/control text and 512 bytes of row overhead. A

@@ -256,7 +256,7 @@ injects the participant ID, whole-experiment fingerprint and channel manifest
 into each program's canonical workflow and digest. Build the whole experiment
 after editing any participant; individual compiled programs cannot be rebuilt
 as standalone workflows. Bundles are limited to 32 MiB, and the console checks
-the final grouped request against the API's 32 MiB limit before submission.
+the final grouped request against the API's 64 MiB limit before submission.
 
 ## Repetition
 
