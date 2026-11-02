@@ -5,6 +5,21 @@ cd "$(dirname "$0")/.."
 mkdir -p .cache/ci/demo-evidence
 work="$(mktemp -d "${TMPDIR:-/tmp}/debuglet-demo-install.XXXXXXXX")"
 trap 'rm -rf -- "$work"' EXIT
+# Retry dependency transport failures before installation and acceptance. The
+# acceptance test itself still runs exactly once, with its failure preserved.
+for attempt in 1 2 3; do
+    if timeout 180s "${GO:-go}" mod download; then
+        break
+    else
+        status=$?
+    fi
+    if [[ $attempt == 3 ]]; then
+        echo 'module download failed after three attempts' >&2
+        exit "$status"
+    fi
+    echo "module download attempt $attempt failed; retrying" >&2
+    sleep 2
+done
 install_candidate "$work/install" .cache/ci/demo-install.log "${DEMO_PACKAGE_DIR:-.cache/ci/packages}"
 export DEBUGLET_DEMO_INSTALL_ROOT="$installed_root"
 export DEBUGLET_DEMO_EVIDENCE_DIR="$(realpath .cache/ci/demo-evidence)"
