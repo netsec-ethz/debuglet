@@ -11,6 +11,23 @@ import (
 )
 
 func TestPreparedBatchIdentity(t *testing.T) {
+	t.Run("ten four MiB programs fit one group", func(t *testing.T) {
+		wasm := make([]byte, 4<<20)
+		requests := make([]Request, 10)
+		for i := range requests {
+			requests[i] = Request{OrderID: int64(i), ExecutorID: "executor", Wasm: wasm, Policy: Policy{TimeoutMS: 86400000}}
+		}
+		batch, err := Prepare(requests)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if intentEnvelopeSize(batch.debuglets) <= 32<<20 {
+			t.Fatal("fixture did not exceed the previous request limit")
+		}
+		if _, err := submitEnvelope(batch.debuglets, "transaction", "authorization"); err != nil {
+			t.Fatal(err)
+		}
+	})
 	t.Run("frozen bytes survive caller mutation", func(t *testing.T) {
 		start := int64(1700000000)
 		wasmA := []byte{1, 2, 3}
@@ -156,8 +173,8 @@ func TestPreparedBatchIdentity(t *testing.T) {
 		}
 		bigger := make([]byte, n+3)
 		_, err = Prepare([]Request{{ExecutorID: "e", Wasm: bigger, Policy: Policy{TimeoutMS: 1}}})
-		if err == nil || !strings.Contains(err.Error(), "32 MiB") {
-			t.Fatalf("expected 32 MiB bound error, got %v", err)
+		if err == nil || !strings.Contains(err.Error(), "64 MiB") {
+			t.Fatalf("expected 64 MiB bound error, got %v", err)
 		}
 	})
 
@@ -211,9 +228,9 @@ func TestPreparedBatchIdentity(t *testing.T) {
 				}
 				padding := maxEnvelopeBytes - len(encodedSubmit(base))
 				for _, extra := range []int{0, 1} {
-					name := "exact 32 MiB accepted"
+					name := "exact 64 MiB accepted"
 					if extra != 0 {
-						name = "32 MiB plus one rejected before submit"
+						name = "64 MiB plus one rejected before submit"
 					}
 					t.Run(name, func(t *testing.T) {
 						requests[0].Args[0] = strings.Repeat("x", padding+extra)
@@ -249,7 +266,7 @@ func TestPreparedBatchIdentity(t *testing.T) {
 							}
 						} else {
 							se := asSubmissionError(t, err)
-							if se.Stage != "submit" || se.TransactionID != metadata.tx || se.OutcomeUnknown || !strings.Contains(err.Error(), "32 MiB") {
+							if se.Stage != "submit" || se.TransactionID != metadata.tx || se.OutcomeUnknown || !strings.Contains(err.Error(), "64 MiB") {
 								t.Fatal("oversize must be a submit-stage rejection retaining the transaction")
 							}
 							if f.count("PUT", "/api/debuglet") != 0 {

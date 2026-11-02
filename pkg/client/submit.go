@@ -180,7 +180,7 @@ func retryEnvelope(body []byte, retry *wire.RetryLink) ([]byte, error) {
 		return nil, err
 	}
 	if len(body)+len(link)+len(`,"retry":`) > maxEnvelopeBytes {
-		return nil, errors.New("client: encoded retry exceeds the 32 MiB limit")
+		return nil, errors.New("client: encoded retry exceeds the 64 MiB limit")
 	}
 	result := make([]byte, 0, len(body)+len(link)+len(`,"retry":`))
 	result = append(result, body[:len(body)-1]...)

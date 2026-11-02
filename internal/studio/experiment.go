@@ -100,9 +100,9 @@ func (b *Builder) BuildExperiment(ctx context.Context, e workflow.Experiment) (*
 		result.ProgramBytes += len(bundle.Wasm)
 		result.EncodedProgramBytes += base64.StdEncoding.EncodedLen(len(bundle.Wasm))
 		// Policies, identities and other fields are added by the console; its final
-		// exact request-size check remains authoritative for the 32 MiB API limit.
-		if result.EncodedProgramBytes >= 32<<20 {
-			return nil, errors.New("participant programs exceed the grouped API's 32 MiB request limit; reduce the programs or participant count")
+		// exact request-size check remains authoritative for the 64 MiB API limit.
+		if result.EncodedProgramBytes >= 64<<20 {
+			return nil, errors.New("participant programs exceed the grouped API's 64 MiB request limit; reduce the programs or participant count")
 		}
 	}
 	encoded, err := json.Marshal(result)

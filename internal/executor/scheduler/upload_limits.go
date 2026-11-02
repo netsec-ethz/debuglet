@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	// MaxModuleBytes is a decoded WASM limit. HTTP's separate 32 MiB envelope
+	// MaxModuleBytes is a decoded WASM limit. HTTP's separate 64 MiB envelope
 	// includes base64 and JSON overhead; gRPC's message ceiling includes protobuf.
 	MaxModuleBytes    = uploadsize.MaxModuleBytes
 	MaxStoredRunBytes = uploadsize.MaxStoredRunBytes

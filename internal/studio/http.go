@@ -159,7 +159,7 @@ func NewHandler(builder *Builder, config ServerConfig, origin string) (http.Hand
 			}
 			return nil
 		}
-		mux.Handle("/api/", http.MaxBytesHandler(proxy, 32<<20))
+		mux.Handle("/api/", http.MaxBytesHandler(proxy, 64<<20))
 	} else {
 		mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 503, errors.New("no dispatcher configured; start dbl-studio serve with --dispatcher to sign in and submit"))

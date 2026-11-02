@@ -12,7 +12,7 @@ import (
 const (
 	// maxEnvelopeBytes bounds each whole encoded request envelope. Prepare
 	// measures the intent; submission is measured after its metadata is known.
-	maxEnvelopeBytes = 32 << 20
+	maxEnvelopeBytes = 64 << 20
 	// maxTimeoutMS keeps time.Duration(TimeoutMS)*time.Millisecond within
 	// int64 on the server.
 	maxTimeoutMS = math.MaxInt64 / int64(time.Millisecond)
@@ -61,7 +61,7 @@ func Prepare(requests []Request) (*PreparedBatch, error) {
 		return nil, fmt.Errorf("client: encoding batch: %w", err)
 	}
 	if size := intentEnvelopeSize(debuglets); size > maxEnvelopeBytes {
-		return nil, fmt.Errorf("client: encoded request envelope is %d bytes, exceeds the 32 MiB limit", size)
+		return nil, fmt.Errorf("client: encoded request envelope is %d bytes, exceeds the 64 MiB limit", size)
 	}
 	return &PreparedBatch{debuglets: debuglets, count: len(requests)}, nil
 }
@@ -95,7 +95,7 @@ func submitEnvelope(debuglets []byte, transactionID, authKey string) ([]byte, er
 	const prefix = `{"debuglets":`
 	size := len(prefix) + len(debuglets) + len(`,"transaction_id":`) + len(tx) + len(`,"auth_key":`) + len(key) + 1
 	if size > maxEnvelopeBytes {
-		return nil, fmt.Errorf("client: encoded submit envelope is %d bytes, exceeds the 32 MiB limit", size)
+		return nil, fmt.Errorf("client: encoded submit envelope is %d bytes, exceeds the 64 MiB limit", size)
 	}
 	body := make([]byte, 0, size)
 	body = append(body, prefix...)
