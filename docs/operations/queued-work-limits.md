@@ -17,7 +17,7 @@ row for fixed metadata. The charge is a logical admission budget: SQLite pages,
 indexes, WAL files and retained output consume additional disk space. Output
 has its own configured spool and retained-output limits.
 
-The existing HTTP limit remains 32 MiB for the entire encoded request, including
+The existing HTTP limit is 64 MiB for the entire encoded request, including
 base64 and JSON syntax. A decoded module at the 24 MiB limit cannot fit in that
 HTTP envelope after encoding and metadata. Direct executor gRPC messages also
 have a separate 32 MiB ceiling, including protobuf overhead. The module and

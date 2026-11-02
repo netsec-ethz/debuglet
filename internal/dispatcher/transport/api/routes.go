@@ -33,7 +33,7 @@ const (
 // maxRequestBodyBytes bounds every request body the API reads. It is the bound
 // pkg/client applies to the exact encoded envelopes it sends, so a request the
 // SDK sends is never refused for its size.
-const maxRequestBodyBytes = 32 << 20
+const maxRequestBodyBytes = 64 << 20
 
 type Handler struct {
 	dispatcher *dispatcher.Dispatcher

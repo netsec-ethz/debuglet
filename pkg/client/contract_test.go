@@ -107,7 +107,7 @@ func TestHTTPErrorExposesTheDocumentedCode(t *testing.T) {
 		{"code that is not a string", http.StatusBadRequest, `{"code":42,"message":"x"}`, "", "x"},
 		{"oversized code", http.StatusBadRequest, `{"code":"` + strings.Repeat("a", 65) + `","message":"x"}`, "", "x"},
 		{"plain text body", http.StatusBadGateway, `gateway said no`, "", "gateway said no"},
-		{"payload too large", http.StatusRequestEntityTooLarge, `{"code":"payload_too_large","message":"request body exceeds 33554432 bytes"}`, CodePayloadTooLarge, "request body exceeds 33554432 bytes"},
+		{"payload too large", http.StatusRequestEntityTooLarge, `{"code":"payload_too_large","message":"request body exceeds 67108864 bytes"}`, CodePayloadTooLarge, "request body exceeds 67108864 bytes"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
