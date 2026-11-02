@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/netsec-ethz/debuglet/internal/controlsession"
 	"github.com/netsec-ethz/debuglet/internal/executor/scheduler"
 	pb "github.com/netsec-ethz/debuglet/protocol"
 	"google.golang.org/grpc/codes"
@@ -115,6 +116,47 @@ func TestExperimentReadinessSurvivesOneSlowPoll(t *testing.T) {
 	}
 }
 
+type readinessDeadlineContext struct {
+	context.Context
+	deadline time.Time
+}
+
+func (c readinessDeadlineContext) Deadline() (time.Time, bool) { return c.deadline, true }
+
+func TestReadinessDeadlineBeforeContextCancellation(t *testing.T) {
+	// Model the transport observing an expired deadline before the context's
+	// timer callback runs. Depending on Err here loses the entire ready wait.
+	ctx := readinessDeadlineContext{Context: t.Context(), deadline: time.Now().Add(-time.Second)}
+	if ctx.Err() != nil || !readinessDeadlineReached(ctx) {
+		t.Fatal("elapsed deadline must not depend on the context timer callback")
+	}
+	ctx.deadline = time.Now().Add(time.Hour)
+	if readinessDeadlineReached(ctx) || readinessDeadlineReached(context.Background()) {
+		t.Fatal("a future or absent deadline must not expire a readiness poll")
+	}
+}
+
+func TestExperimentReadinessRejectsLostLeaseAfterSlowPoll(t *testing.T) {
+	peer := experimentPeer{ready: func(ctx context.Context, _ *pb.ExperimentReadyRequest) (*pb.ExperimentReadyResponse, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	e, _ := newExecutorRPCFixture(t, peer, nil)
+	clientFor := e.clientFor
+	var calls int
+	e.clientFor = func(ctx context.Context, binding controlsession.Binding) (pb.DispatcherServiceClient, error) {
+		calls++
+		if calls > 1 {
+			return nil, status.Error(codes.FailedPrecondition, "execution lease lost")
+		}
+		return clientFor(ctx, binding)
+	}
+	control := runExperiment{executor: e, spec: scheduler.Spec{DebugletID: uuid.New(), Binding: operationBinding()}}
+	if _, err := control.Ready(t.Context(), nil); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("lost lease became a pending poll: %v", err)
+	}
+}
+
 func TestExperimentReadinessPreservesExpiryAndRefusal(t *testing.T) {
 	for _, code := range []codes.Code{codes.DeadlineExceeded, codes.FailedPrecondition, codes.PermissionDenied} {
 		t.Run(code.String(), func(t *testing.T) {
@@ -139,6 +181,17 @@ func TestExperimentReadinessPreservesExpiryAndRefusal(t *testing.T) {
 		defer cancel()
 		if _, err := control.Ready(ctx, nil); !errors.Is(err, context.DeadlineExceeded) && status.Code(err) != codes.DeadlineExceeded {
 			t.Fatalf("caller expiry became a pending poll: %v", err)
+		}
+	})
+	t.Run("caller deadline before cancellation", func(t *testing.T) {
+		peer := experimentPeer{ready: func(context.Context, *pb.ExperimentReadyRequest) (*pb.ExperimentReadyResponse, error) {
+			return nil, status.Error(codes.FailedPrecondition, "expired call reached dispatcher")
+		}}
+		e, _ := newExecutorRPCFixture(t, peer, nil)
+		control := runExperiment{executor: e, spec: scheduler.Spec{DebugletID: uuid.New(), Binding: operationBinding()}}
+		ctx := readinessDeadlineContext{Context: t.Context(), deadline: time.Now().Add(-time.Second)}
+		if _, err := control.Ready(ctx, nil); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("elapsed caller deadline became a pending poll: %v", err)
 		}
 	})
 }
