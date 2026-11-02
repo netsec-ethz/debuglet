@@ -96,17 +96,21 @@ func (r *Runtime) event(node, block, status string, outputs map[string]any, mess
 	if len(b) > 65536 {
 		return fmt.Errorf("node output exceeds 64 KiB")
 	}
-	if r.events >= 4096 || r.bytes+len(b)+1 > 4*1024*1024 {
-		return fmt.Errorf("workflow trace exceeds its output limit")
+	_, err = r.writeRecord(append(b, '\n'))
+	return err
+}
+
+func (r *Runtime) writeRecord(record []byte) (int, error) {
+	if r.events >= 4096 || r.bytes+len(record) > 4*1024*1024 {
+		return 0, fmt.Errorf("workflow trace exceeds its output limit")
 	}
-	b = append(b, '\n')
-	n, err := r.writer.Write(b)
+	n, err := r.writer.Write(record)
 	r.events++
 	r.bytes += n
-	if err == nil && n != len(b) {
+	if err == nil && n != len(record) {
 		err = io.ErrShortWrite
 	}
-	return err
+	return n, err
 }
 
 // Check validates JSON values at each typed boundary, including dynamic data.

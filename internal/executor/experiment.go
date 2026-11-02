@@ -34,12 +34,15 @@ func (r runExperiment) Ready(ctx context.Context, metadata []byte) (wire.Experim
 		DebugletId: r.spec.DebugletID.String(), ExecutorId: r.executor.cfg.Identity.ExecutorID, Metadata: metadata,
 	})
 	if err != nil {
-		if pollCtx.Err() == context.DeadlineExceeded && status.Code(err) == codes.DeadlineExceeded {
+		if status.Code(err) == codes.DeadlineExceeded && readinessDeadlineReached(pollCtx) {
 			// A slow poll does not expire the guest's readiness budget. The
 			// dispatcher records immutable metadata, so the SDK may poll again
 			// with the same run and metadata even if this reply was lost.
 			if err := r.executor.checkExecutionLease(ctx, r.spec.Binding); err != nil {
 				return result, err
+			}
+			if readinessDeadlineReached(ctx) {
+				return result, context.DeadlineExceeded
 			}
 			return result, nil
 		}
@@ -61,4 +64,11 @@ func (r runExperiment) Ready(ctx context.Context, metadata []byte) (wire.Experim
 		})
 	}
 	return result, nil
+}
+
+func readinessDeadlineReached(ctx context.Context) bool {
+	// gRPC can report a deadline before the context's asynchronous timer has
+	// set Err. Use the deadline itself, as its transport does for RST_STREAM.
+	deadline, ok := ctx.Deadline()
+	return ok && !time.Now().Before(deadline)
 }

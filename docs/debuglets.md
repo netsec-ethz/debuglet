@@ -81,6 +81,43 @@ and never retry automatically; oversized datagrams return `ErrTooLarge` without
 sending. A zero deadline clears that socket deadline, without extending the
 run's lifetime. Invalid guest memory and never-issued handles still trap.
 
+## Live graph samples
+
+Call `debuglet.WriteSample` to append a numeric observation to the console's
+live results. It uses ordinary stdout and needs no additional host extension.
+For example, after obtaining a successful RTT sample:
+
+```go
+err := debuglet.WriteSample(os.Stdout, debuglet.Sample{
+    Name: "RTT", Series: "Zürich → Tokyo", Unit: "ms",
+    TimestampMS: time.Now().UnixMilli(), Value: rttMilliseconds,
+})
+if err != nil {
+    return fmt.Errorf("write RTT sample: %w", err)
+}
+```
+
+Use the observation time if it was measured earlier. The guest's wall clock
+does not establish synchronization between executors. Records contain
+`schema: "debuglet.timeseries.v1"`, `name`, optional `series`, `unit`,
+`timestamp_ms` and `value`. Names contain 1–160 UTF-8 bytes, series at most 160
+and units at most 40. Empty series and units are allowed. Values must be finite;
+timestamps must be integer Unix milliseconds from 0 to 9,007,199,254,740,991.
+Each JSON line, including its newline, is at most 4,096 bytes. The containing
+run supplies executor identity; a record cannot assign itself another executor.
+
+Invalid samples write nothing. Check write errors and short writes; the emitter
+does not retry an uncertain partial write. Serialise callers sharing a writer.
+Use consistent names and units, and record failed measurements separately rather
+than inventing a zero latency. Existing raw-output exports preserve the samples.
+
+The emitter does not extend the run, change output quotas or resume interrupted
+work. For long measurements, calculate the number and size of records across
+all peers and metrics, then select sampling intervals and deployment limits
+accordingly. Normal run, frame, account and node limits still apply. A successful
+stdout write does not confirm durable dispatcher storage; inspect output
+completeness alongside the graph.
+
 ## Compatibility
 
 Build and test debuglets against the Debuglet release you plan to use. The executor records the debuglet ABI in its installation manifest. A debuglet must target an ABI the executor supports.

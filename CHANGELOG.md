@@ -27,6 +27,8 @@ documentation contain operational details.
   validate.
 
 ### Added
+- Live graph samples through the **Plot sample** workflow block and the Go SDK's
+  `WriteSample` emitter, using ordinary run output and existing execution limits.
 - Hosted visual and AI-assisted authoring, reusable personal and community
   templates, and saved results linked back to their editable experiments.
 - DNS, TCP, UDP, TLS and hop measurements with typed analysis and report blocks.

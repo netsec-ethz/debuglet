@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 func validateMeasurementInputs(n Node, add func(string, string, string)) {
@@ -24,6 +25,15 @@ func validateMeasurementInputs(n Node, add func(string, string, string)) {
 		}
 	}
 	switch n.Block {
+	case "plot_sample":
+		for _, field := range []struct {
+			name     string
+			min, max int
+		}{{"name", 1, 160}, {"series", 0, 160}, {"unit", 0, 40}} {
+			if value, ok := n.Inputs[field.name].(string); ok && (!utf8.ValidString(value) || len(value) < field.min || len(value) > field.max) {
+				add(n.ID, field.name, fmt.Sprintf("must contain %d–%d UTF-8 bytes", field.min, field.max))
+			}
+		}
 	case "dns_query":
 		enum("transport", "udp", "tcp")
 		if resolver, ok := n.Inputs["resolver"].(string); ok {

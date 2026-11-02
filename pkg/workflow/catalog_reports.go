@@ -5,6 +5,8 @@ package workflow
 
 func reportCatalog() []Block {
 	return []Block{
+		{"plot_sample", "Plot sample", "Results", "Append one finite value to a named live graph at the guest's current time. Use series to distinguish peers or directions. Samples share the workflow's existing action and output limits.", false,
+			[]Port{input("name", "string"), input("value", "number"), optional("unit", "string", ""), optional("series", "string", "")}, []Port{}, []string{"next"}},
 		{"select_field", "Select field", "Data", "Read one named field from every object in a list, preserving order. Missing fields and non-object rows are errors. Connect a number field to existing statistics blocks.", true,
 			[]Port{input("values", "any"), input("field", "string")}, []Port{output("values", "any")}, []string{}},
 		{"filter_rows", "Filter rows", "Data", "Keep rows whose named field matches a value. Operators: equals, not_equals, greater_than, less_than, at_least, at_most. Equality compares JSON without coercion; ordering requires numbers. Missing fields and non-object rows are errors.", true,
