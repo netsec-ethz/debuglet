@@ -16,6 +16,12 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/tagger"
 )
 
+type pendingDatagram struct {
+	payload   []byte
+	from      netip.AddrPort
+	accounted bool
+}
+
 // datagramDeadline bounds one listener operation and joins its cancellation
 // callback before resetting the deadline for the next operation.
 func datagramDeadline(ctx context.Context, timeout int64, set func(time.Time) error) (context.Context, func(), error) {
@@ -66,36 +72,80 @@ func HostIOReceiveUDP(env *WasmEnv) func(context.Context, Memory, uint32, uint32
 			return ioResult(0, err)
 		}
 		defer finish()
-		// The complete legal UDP payload fits here, even when the guest asks
-		// for only a prefix. Charge the full admitted payload, never the prefix.
-		buf := make([]byte, 65535)
+		env.mu.Lock()
+		pending := env.udpPending
+		env.udpPending = nil
+		env.mu.Unlock()
+		// A polling deadline can expire after the socket has consumed a packet.
+		// Retain that one packet for the next call rather than turning host-side
+		// admission or accounting latency into unexplained application loss.
+		defer func() {
+			if pending != nil && ctx.Err() == nil {
+				env.mu.Lock()
+				if !env.closed {
+					env.udpPending = pending
+				}
+				env.mu.Unlock()
+			}
+		}()
+		var buffer []byte
+		if pending != nil {
+			buffer = pending.payload[:cap(pending.payload)]
+		} else {
+			buffer = make([]byte, 65535)
+		}
 		for {
 			if err := opCtx.Err(); err != nil {
 				return ioResult(0, context.Cause(opCtx))
 			}
-			n, from, err := listener.ReadFromUDPAddrPort(buf)
-			if err != nil {
-				if opCtx.Err() != nil {
-					err = context.Cause(opCtx)
+			if pending == nil {
+				// Charge the complete legal UDP payload, never only the prefix
+				// requested by the guest. At most one such buffer is retained.
+				n, from, err := listener.ReadFromUDPAddrPort(buffer)
+				if err != nil {
+					if opCtx.Err() != nil {
+						err = context.Cause(opCtx)
+					}
+					return ioResult(0, err)
 				}
-				return ioResult(0, err)
+				pending = &pendingDatagram{payload: buffer[:n], from: from}
 			}
+			buf, from := pending.payload, pending.from
+			n := len(buf)
 			match, err := env.Net.AdmitAddr(opCtx, netpolicy.Inbound, from)
 			if err != nil {
+				if opCtx.Err() != nil {
+					return ioResult(0, context.Cause(opCtx))
+				}
+				pending = nil
 				continue
 			}
-			if err = env.Accountant.Account(opCtx, app.TransferIn, match.Key, n); err != nil {
-				return ioResult(0, err)
+			if !pending.accounted {
+				if err = env.Accountant.Account(opCtx, app.TransferIn, match.Key, n); err != nil {
+					if opCtx.Err() == nil {
+						pending = nil
+					}
+					return ioResult(0, err)
+				}
+				pending.accounted = true
 			}
 			if opCtx.Err() != nil {
 				return ioResult(0, context.Cause(opCtx))
 			}
 			if _, err = env.Net.AdmitAddr(opCtx, netpolicy.Inbound, from); err != nil {
+				if opCtx.Err() != nil {
+					return ioResult(0, context.Cause(opCtx))
+				}
+				pending = nil
 				continue
+			}
+			if opCtx.Err() != nil {
+				return ioResult(0, context.Cause(opCtx))
 			}
 			from = netip.AddrPortFrom(from.Addr().Unmap(), from.Port())
 			addr := from.String()
 			if uint32(len(addr)) > senderLength {
+				pending = nil
 				return ioResult(0, io.ErrShortBuffer)
 			}
 			copied := min(n, int(length), MAX_SLICE_LENGTH)
@@ -110,6 +160,7 @@ func HostIOReceiveUDP(env *WasmEnv) func(context.Context, Memory, uint32, uint32
 			env.mu.Lock()
 			env.udpReplyPeer = from
 			env.mu.Unlock()
+			pending = nil
 			return ioResult(copied, nil)
 		}
 	}

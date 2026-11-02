@@ -64,7 +64,8 @@ type WasmEnv struct {
 	UdpServer     *net.UDPConn
 	UdpServerPort int
 	UdpServerAddr string
-	udpReplyPeer  netip.AddrPort // last admitted receive; protected by mu
+	udpReplyPeer  netip.AddrPort   // last admitted receive; protected by mu
+	udpPending    *pendingDatagram // one received packet awaiting delivery; protected by mu
 
 	ScionServer pan.ListenConn
 
@@ -185,6 +186,7 @@ func (e *WasmEnv) Close() error {
 	e.closeOnce.Do(func() {
 		e.mu.Lock()
 		e.closed = true
+		e.udpPending = nil
 		tcp, tcpPort := e.TcpServer, e.TcpServerPort
 		udp, udpPort := e.UdpServer, e.UdpServerPort
 		scion := e.ScionServer
