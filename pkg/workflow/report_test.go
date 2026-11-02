@@ -74,6 +74,31 @@ func TestGeneratedReportWorkflowExecutesWASI(t *testing.T) {
 
 func executeReportWorkflow(t *testing.T, w Workflow) (map[string]map[string]any, map[string]int) {
 	t.Helper()
+	output := executeWorkflowWASI(t, w)
+	outputs := map[string]map[string]any{}
+	counts := map[string]int{}
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		var event struct {
+			Schema  string         `json:"schema"`
+			Node    string         `json:"node_id"`
+			Block   string         `json:"block"`
+			Status  string         `json:"status"`
+			Outputs map[string]any `json:"outputs"`
+		}
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Schema != "debuglet.workflow.v1" || event.Status != "completed" {
+			t.Fatalf("unexpected workflow event: %s", line)
+		}
+		outputs[event.Node] = event.Outputs
+		counts[event.Block]++
+	}
+	return outputs, counts
+}
+
+func executeWorkflowWASI(t *testing.T, w Workflow) string {
+	t.Helper()
 	if testing.Short() {
 		t.Skip("generated WASI program compilation")
 	}
@@ -106,24 +131,5 @@ func executeReportWorkflow(t *testing.T, w Workflow) (map[string]map[string]any,
 	if _, err := r.InstantiateWithConfig(ctx, wasm, wazero.NewModuleConfig().WithStdout(&stdout).WithStderr(&stderr)); err != nil {
 		t.Fatalf("run generated WASI report: %v\nstderr: %s\nstdout: %s", err, &stderr, &stdout)
 	}
-	outputs := map[string]map[string]any{}
-	counts := map[string]int{}
-	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
-		var event struct {
-			Schema  string         `json:"schema"`
-			Node    string         `json:"node_id"`
-			Block   string         `json:"block"`
-			Status  string         `json:"status"`
-			Outputs map[string]any `json:"outputs"`
-		}
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			t.Fatal(err)
-		}
-		if event.Schema != "debuglet.workflow.v1" || event.Status != "completed" {
-			t.Fatalf("unexpected workflow event: %s", line)
-		}
-		outputs[event.Node] = event.Outputs
-		counts[event.Block]++
-	}
-	return outputs, counts
+	return stdout.String()
 }

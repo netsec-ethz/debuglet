@@ -1719,6 +1719,39 @@
     ]
   },
   {
+    "id": "plot_sample",
+    "label": "Plot sample",
+    "category": "Results",
+    "description": "Append one finite value to a named live graph at the guest's current time. Use series to distinguish peers or directions. Samples share the workflow's existing action and output limits.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "name",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "value",
+        "type": "number",
+        "required": true
+      },
+      {
+        "name": "unit",
+        "type": "string",
+        "default": ""
+      },
+      {
+        "name": "series",
+        "type": "string",
+        "default": ""
+      }
+    ],
+    "outputs": [],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
     "id": "select_field",
     "label": "Select field",
     "category": "Data",

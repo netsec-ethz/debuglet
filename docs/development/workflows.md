@@ -170,6 +170,24 @@ appears once per executed iteration. The [sample report](../../examples/workflow
 shows filtering, field selection, a mean, a metric, a table and explanatory text
 using fixed sample data, with no network access needed.
 
+### Live graphs
+
+Drag **Plot sample** from **Results** onto the canvas, connect a numeric output
+to `value`, and connect the action's control path through the block. Set `name`
+and an optional `unit`; use `series` to distinguish peers or directions. Each
+execution appends one point at the guest's current time. Put it inside Repeat
+to update the same graph over time. Branch on the measurement's success before
+plotting a latency; report failures separately instead of plotting them as zero.
+
+The block emits one `debuglet.timeseries.v1` line in ordinary run output and
+then its normal action trace. Names contain 1–160 UTF-8 bytes, series at most
+160 and units at most 40. It has a `next` control connection and no data outputs.
+Samples and action traces share the workflow's existing 4,096-event/4 MiB
+budget. Repeat still permits at most 100 iterations and a workflow at most
+1,000 action steps. This block does not turn a workflow into a day-long monitor.
+Custom Go guests can use the [SDK sample emitter](../debuglets.md#live-graph-samples)
+for longer measurements, within the deployment's runtime and output limits.
+
 ## Reusable visual groups
 
 The editor can fold a selection into one named block. Its interface comes from
