@@ -5,9 +5,9 @@ an authoring tool. It compiles to one Go WASI debuglet. Network operations,
 processing, branches and bounded repetition execute on the selected executor;
 they do not require a round trip through an AI client or dispatcher.
 
-An experiment connects several of these workflows. In the console,
-**Workflow builder** edits one program; **Experiment builder** selects a
-participant, edits its program and connects it to the others. Start with the
+An experiment connects several of these workflows. In the console, start from
+**New experiment** to edit one program or select participants and connect their
+programs. Start with the
 [authoring guide](workflow-authoring.md) to build the local editor, compile
 bundles or connect an MCP client.
 
@@ -182,11 +182,13 @@ plotting a latency; report failures separately instead of plotting them as zero.
 The block emits one `debuglet.timeseries.v1` line in ordinary run output and
 then its normal action trace. Names contain 1–160 UTF-8 bytes, series at most
 160 and units at most 40. It has a `next` control connection and no data outputs.
-Samples and action traces share the workflow's existing 4,096-event/4 MiB
-budget. Repeat still permits at most 100 iterations and a workflow at most
-1,000 action steps. This block does not turn a workflow into a day-long monitor.
-Custom Go guests can use the [SDK sample emitter](../debuglets.md#live-graph-samples)
-for longer measurements, within the deployment's runtime and output limits.
+Ordinary workflows share a 4,096-event/4 MiB budget. For continuous collection,
+use **Every**: periodic workflows retain a small diagnostic trace and allow up
+to 100,000 explicit result events or 32 MiB of output, whichever comes first.
+Choose a reporting interval that fits those limits and the deployment's runtime
+policy. Repeat still permits at most 100 iterations; Every has a separate
+1,000-action budget per tick. Custom Go guests can use the
+[SDK sample emitter](../debuglets.md#live-graph-samples) directly.
 
 ## Reusable visual groups
 
