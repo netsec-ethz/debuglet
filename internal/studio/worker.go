@@ -174,7 +174,11 @@ func boundWorkerRequests(next http.Handler, timeout time.Duration) http.Handler 
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()
-		response := &workerResponse{header: make(http.Header)}
+		responseLimit := 32 << 20
+		if r.URL.Path == "/studio/experiments/build" {
+			responseLimit = MaxExperimentBundleBytes
+		}
+		response := &workerResponse{header: make(http.Header), limit: responseLimit}
 		next.ServeHTTP(response, r.WithContext(ctx))
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			writeError(w, http.StatusGatewayTimeout, errors.New("studio operation exceeded its time limit"))
@@ -185,8 +189,8 @@ func boundWorkerRequests(next http.Handler, timeout time.Duration) http.Handler 
 			return
 		}
 		body := bytes.TrimSuffix(response.body.Bytes(), []byte{'\n'})
-		if response.overflow || len(body) > MaxExperimentBundleBytes {
-			writeError(w, http.StatusInternalServerError, errors.New("studio response exceeds 64 MiB"))
+		if response.overflow || len(body) > responseLimit {
+			writeError(w, http.StatusInternalServerError, errors.New("studio response exceeds its size limit"))
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -204,6 +208,7 @@ func boundWorkerRequests(next http.Handler, timeout time.Duration) http.Handler 
 type workerResponse struct {
 	header   http.Header
 	status   int
+	limit    int
 	body     bytes.Buffer
 	overflow bool
 }
@@ -215,9 +220,9 @@ func (w *workerResponse) WriteHeader(status int) {
 	}
 }
 func (w *workerResponse) Write(p []byte) (int, error) {
-	if len(p) > MaxExperimentBundleBytes+1-w.body.Len() {
+	if len(p) > w.limit+1-w.body.Len() {
 		w.overflow = true
-		return 0, errors.New("studio response exceeds 64 MiB")
+		return 0, errors.New("studio response exceeds its size limit")
 	}
 	return w.body.Write(p)
 }

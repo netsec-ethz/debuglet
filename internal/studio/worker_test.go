@@ -132,7 +132,7 @@ func TestWorkerRejectsConcurrentBuildAndPropagatesCancellation(t *testing.T) {
 	}
 }
 
-func TestWorkerBoundsAdmissionTimeAndResponse(t *testing.T) {
+func TestWorkerBoundsAdmissionAndTime(t *testing.T) {
 	entered := make(chan struct{}, workerRequestSlots)
 	release := make(chan struct{})
 	handler := boundWorkerRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -164,15 +164,47 @@ func TestWorkerBoundsAdmissionTimeAndResponse(t *testing.T) {
 	if response := workerRequest(handler, "GET", "/studio/catalog", nil); response.Code != 504 || strings.Contains(response.Body.String(), "late") {
 		t.Fatalf("deadline returned %d: %s", response.Code, response.Body)
 	}
-	handler = boundWorkerRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		chunk := bytes.Repeat([]byte{'x'}, 1<<20)
-		for i := 0; i < 33; i++ {
-			_, _ = w.Write(chunk)
-		}
-	}), time.Second)
-	if response := workerRequest(handler, "GET", "/studio/catalog", nil); response.Code != 500 || !json.Valid(response.Body.Bytes()) || response.Body.Len() > 1024 {
-		t.Fatalf("oversized response not replaced by JSON error: %d, %d bytes", response.Code, response.Body.Len())
+}
+
+func TestWorkerBoundsResponsesByRoute(t *testing.T) {
+	for _, test := range []struct {
+		name, method, path string
+		size               int
+		want               int
+	}{
+		{"exact ordinary limit", "GET", "/studio/catalog", 32 << 20, 200},
+		{"oversized catalog", "GET", "/studio/catalog", 33 << 20, 500},
+		{"oversized validation", "POST", "/studio/experiments/validate", 33 << 20, 500},
+		{"large bundle", "POST", "/studio/experiments/build", 33 << 20, 200},
+		{"exact bundle limit", "POST", "/studio/experiments/build", MaxExperimentBundleBytes, 200},
+		{"oversized bundle", "POST", "/studio/experiments/build", MaxExperimentBundleBytes + 1, 500},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			handler := boundWorkerRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(200)
+				chunk := bytes.Repeat([]byte{'x'}, 1<<20)
+				_, _ = io.WriteString(w, `"`)
+				for left := test.size - 2; left > 0; {
+					part := min(left, len(chunk))
+					if _, err := w.Write(chunk[:part]); err != nil {
+						return
+					}
+					left -= part
+				}
+				_, _ = io.WriteString(w, `"`)
+			}), WorkerRequestTimeout)
+			response := workerRequest(handler, test.method, test.path, nil)
+			if response.Code != test.want {
+				t.Fatalf("response: status=%d bytes=%d, want %d", response.Code, response.Body.Len(), test.want)
+			}
+			if test.want == 200 {
+				if response.Body.Len() != test.size {
+					t.Fatalf("response truncated: %d bytes, want %d", response.Body.Len(), test.size)
+				}
+			} else if response.Body.Len() > 1024 || !json.Valid(response.Body.Bytes()) {
+				t.Fatalf("oversized response not replaced by JSON error: %d bytes", response.Body.Len())
+			}
+		})
 	}
 }
 
