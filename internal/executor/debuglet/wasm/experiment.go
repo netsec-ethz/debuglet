@@ -61,6 +61,12 @@ func hostExperimentReady(env *WasmEnv) func(context.Context, Memory, uint32, uin
 		if err := callCtx.Err(); err != nil {
 			return experimentError(err)
 		}
+		env.mu.Lock()
+		if !env.closed {
+			copy := result
+			env.meshGroup = &copy
+		}
+		env.mu.Unlock()
 		data, err := json.Marshal(result)
 		if err != nil {
 			return -1

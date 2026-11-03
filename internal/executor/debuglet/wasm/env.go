@@ -21,6 +21,7 @@ import (
 	"syscall"
 
 	"github.com/google/uuid"
+	"github.com/netsec-ethz/debuglet/pkg/wire"
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
 	"go.uber.org/zap"
 )
@@ -32,7 +33,12 @@ type WasmEnv struct {
 	closeErr     error
 	lateCloseErr error
 
-	Experiment ExperimentControl
+	Experiment                                           ExperimentControl
+	meshMu                                               sync.Mutex
+	meshUDP                                              *meshUDP
+	meshTCP                                              *meshTCP
+	meshGroup                                            *wire.Experiment
+	meshUDPClaim, meshTCPClaim, meshUDPUsed, meshTCPUsed bool
 
 	DebugletID uuid.UUID
 	Policy     scheduler.Policy
@@ -191,6 +197,7 @@ func (e *WasmEnv) Close() error {
 		udp, udpPort := e.UdpServer, e.UdpServerPort
 		scion := e.ScionServer
 		e.mu.Unlock()
+		e.closeErr = errors.Join(e.closeErr, e.closeMesh())
 		if tcp != nil {
 			e.closeErr = errors.Join(e.closeErr, tcp.Close())
 			e.tcpReservation.Release()

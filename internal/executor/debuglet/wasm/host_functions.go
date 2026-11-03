@@ -396,6 +396,9 @@ func hostGetRemoteAddr(env *WasmEnv) func(ctx context.Context, mod Memory, sockI
 // WASM key: "accept_tcp"
 func HostAcceptTCP(env *WasmEnv) func(ctx context.Context) int32 {
 	return func(ctx context.Context) int32 {
+		if env.meshOwnsListener(true) {
+			panic(netpolicy.ErrDenied)
+		}
 		handle, err := acceptTCPSocket(ctx, ctx, env)
 		if err != nil {
 			panic(fmt.Errorf("accept_tcp: %w", err))
@@ -513,6 +516,9 @@ func hostGetUDPAddr(env *WasmEnv) func(ctx context.Context, mod Memory, bufPtr, 
 // WASM key: "receive_udp_from"
 func hostReceiveUDPFrom(env *WasmEnv) func(ctx context.Context, mod Memory, recvp, recvLen, senderp, senderLen, addrLenp uint32) int32 {
 	return func(ctx context.Context, mod Memory, recvp, recvLen, senderp, senderLen, addrLenp uint32) int32 {
+		if env.meshOwnsListener(false) {
+			panic(netpolicy.ErrDenied)
+		}
 		if err := env.Net.AvailableListener(netpolicy.UDP); err != nil {
 			env.warnPrivate("hostReceiveUDPFrom: inbound refused", err)
 			panic(fmt.Errorf("receive_udp_from: %w", err))

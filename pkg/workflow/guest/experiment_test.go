@@ -54,7 +54,7 @@ func experimentGroup(t *testing.T, session *Experiment) experimentwire.Experimen
 	t.Helper()
 	group := experimentwire.Experiment{ID: "group"}
 	for i, participant := range []string{"a", "b", "c"} {
-		metadata, err := json.Marshal(experimentEndpoint{participant, session.fingerprint, groupAddress(i)})
+		metadata, err := json.Marshal(experimentEndpoint{Participant: participant, Fingerprint: session.fingerprint, Address: groupAddress(i)})
 		if err != nil {
 			t.Fatal(err)
 		}

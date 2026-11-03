@@ -51,6 +51,9 @@ func datagramDeadline(ctx context.Context, timeout int64, set func(time.Time) er
 // truncation flag as three uint32 values; the result counts copied bytes.
 func HostIOReceiveUDP(env *WasmEnv) func(context.Context, Memory, uint32, uint32, uint32, uint32, uint32, int64) uint64 {
 	return func(ctx context.Context, mem Memory, ptr, length, sender, senderLength, metadata uint32, timeout int64) uint64 {
+		if env.meshOwnsListener(false) {
+			return ioResult(0, netpolicy.ErrDenied)
+		}
 		if _, err := extractMem[byte](mem, ptr, length); err != nil {
 			panic(err)
 		}
@@ -173,6 +176,9 @@ func HostIOReceiveUDP(env *WasmEnv) func(context.Context, Memory, uint32, uint32
 // quota-reserved and closed before returning; the listener stays open.
 func HostIOReplyUDP(env *WasmEnv) func(context.Context, Memory, uint32, uint32, uint32, uint32, int64) uint64 {
 	return func(ctx context.Context, mem Memory, addrPtr, addrLen, ptr, length uint32, timeout int64) uint64 {
+		if env.meshOwnsListener(false) {
+			return ioResult(0, netpolicy.ErrDenied)
+		}
 		address, err := extractStr(mem, addrPtr, addrLen)
 		if err != nil {
 			panic(err)
