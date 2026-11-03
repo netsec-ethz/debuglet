@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -110,6 +111,43 @@ func TestHTTPProxyIsFixedAndBoundsBodies(t *testing.T) {
 		if _, err := NewHandler(nil, ServerConfig{Dispatcher: target}, "http://127.0.0.1:8090"); err == nil {
 			t.Errorf("accepted %s", target)
 		}
+	}
+}
+
+func TestHTTPProxyExperimentResponseBounds(t *testing.T) {
+	for _, test := range []struct {
+		name, method, path string
+		size               int
+		want               int
+	}{
+		{"large bundle", "POST", "/studio/experiments/build", 33 << 20, 200},
+		{"ordinary build", "POST", "/studio/build", 33 << 20, 502},
+		{"validation", "POST", "/studio/experiments/validate", 33 << 20, 502},
+		{"wrong method", "GET", "/studio/experiments/build", 33 << 20, 502},
+		{"query options", "POST", "/studio/experiments/build?x=1", 33 << 20, 502},
+		{"oversized bundle", "POST", "/studio/experiments/build", MaxExperimentBundleBytes + 1, 502},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Length", fmt.Sprint(test.size))
+				if test.want != 200 {
+					w.WriteHeader(200)
+					return
+				}
+				_, _ = io.WriteString(w, strings.Repeat("x", test.size))
+			}))
+			defer upstream.Close()
+			handler, err := NewHandler(nil, ServerConfig{Dispatcher: upstream.URL}, "http://127.0.0.1:8090")
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(test.method, "http://127.0.0.1:8090/api"+test.path, nil)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != test.want || (test.want == 200 && response.Body.Len() != test.size) {
+				t.Fatalf("response: status=%d size=%d", response.Code, response.Body.Len())
+			}
+		})
 	}
 }
 

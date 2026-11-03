@@ -146,10 +146,15 @@ func NewHandler(builder *Builder, config ServerConfig, origin string) (http.Hand
 			writeError(w, 502, errors.New("dispatcher is unreachable; check the configured dispatcher address"))
 		}
 		proxy.ModifyResponse = func(response *http.Response) error {
-			if response.ContentLength > 32<<20 {
-				return errors.New("dispatcher response exceeds 32 MiB")
+			limit := int64(32 << 20)
+			request := response.Request
+			if request != nil && request.Method == http.MethodPost && request.URL.EscapedPath() == "/studio/experiments/build" && request.URL.RawQuery == "" {
+				limit = MaxExperimentBundleBytes
 			}
-			response.Body = &limitedBody{ReadCloser: response.Body, remaining: 32 << 20}
+			if response.ContentLength > limit {
+				return errors.New("dispatcher response exceeds its size limit")
+			}
+			response.Body = &limitedBody{ReadCloser: response.Body, remaining: limit}
 			// Cookies belong to the local console proxy, not the upstream hostname.
 			cookies := response.Cookies()
 			response.Header.Del("Set-Cookie")
@@ -225,7 +230,7 @@ func (r *limitedBody) Read(p []byte) (int, error) {
 		var probe [1]byte
 		n, err := r.ReadCloser.Read(probe[:])
 		if n > 0 {
-			return 0, errors.New("dispatcher response exceeds 32 MiB")
+			return 0, errors.New("dispatcher response exceeds its size limit")
 		}
 		return 0, err
 	}

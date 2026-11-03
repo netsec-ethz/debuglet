@@ -208,6 +208,52 @@ func TestStudioAcceptsExactResponseLimit(t *testing.T) {
 	}
 }
 
+func TestStudioExperimentResponseBounds(t *testing.T) {
+	for _, test := range []struct {
+		name, path string
+		size       int
+		chunked    bool
+		want       int
+	}{
+		{"large bundle", "/studio/experiments/build", 33 << 20, false, 200},
+		{"validation retains smaller bound", "/studio/experiments/validate", 33 << 20, false, 502},
+		{"declared oversized bundle", "/studio/experiments/build", studioExperimentResponseLimit + 1, false, 502},
+		{"chunked oversized bundle", "/studio/experiments/build", studioExperimentResponseLimit + 1, true, 502},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := studioUnixFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if test.chunked {
+					w.(http.Flusher).Flush()
+				} else {
+					w.Header().Set("Content-Length", fmt.Sprint(test.size))
+					if test.want != 200 {
+						w.WriteHeader(200)
+						return
+					}
+				}
+				_, _ = io.WriteString(w, `"`)
+				_, _ = io.WriteString(w, strings.Repeat("x", test.size-2))
+				_, _ = io.WriteString(w, `"`)
+			}))
+			req, _ := http.NewRequestWithContext(f.ctx, "POST", f.root.URL+test.path, strings.NewReader(`{}`))
+			req.Header.Set("Content-Type", "application/json")
+			for name, value := range studioBrowser(t, f) {
+				req.Header.Set(name, value)
+			}
+			response, err := f.root.Client().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			size, err := io.Copy(io.Discard, response.Body)
+			if response.StatusCode != test.want || err != nil || (test.want == 200 && size != int64(test.size)) {
+				t.Fatalf("response: status=%d size=%d error=%v", response.StatusCode, size, err)
+			}
+		})
+	}
+}
+
 func TestStudioSlowReaderReleasesCapacity(t *testing.T) {
 	var calls atomic.Int32
 	f := studioUnixFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
