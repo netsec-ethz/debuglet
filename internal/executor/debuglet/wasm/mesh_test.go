@@ -10,6 +10,7 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/guestio"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
+	"strings"
 	"testing"
 	"time"
 )
@@ -84,5 +85,30 @@ func TestMeshClaimsListenersBeforeLegacyCalls(t *testing.T) {
 	result := hostMesh(env, "stop")(ctx, boundedExperimentMemory{mod.Memory()}, 0, uint32(len(data)), 16384, 32768)
 	if uint32(result>>32) != 0 || env.meshUDPClaim {
 		t.Fatalf("stop result=%x", result)
+	}
+}
+
+func TestMeshSnapshotUsesBoundedWorkerMemoryChunks(t *testing.T) {
+	env := newReceiveEnv()
+	mod := newGuestModule(t)
+	rows := make([]map[string]any, 15)
+	for i := range rows {
+		row := meshUDPRow(strings.Repeat("a", 128), strings.Repeat("b", 128), &meshUDPWindow{rtts: []float64{2, 4}}, 0)
+		rows[i] = row
+	}
+	env.meshUDP = &meshUDP{queue: []guestio.MeshSnapshot{{OK: true, Rows: rows}}}
+	request := []byte(`{"service":1}`)
+	mod.Memory().Write(0, request)
+	result := hostMesh(env, "snapshot")(t.Context(), boundedExperimentMemory{mod.Memory()}, 0, uint32(len(request)), 16384, 32768)
+	if uint32(result>>32) != guestio.OK || uint32(result) <= MAX_SLICE_LENGTH {
+		t.Fatalf("expected chunked response, result=%x", result)
+	}
+	data, ok := mod.Memory().Read(16384, uint32(result))
+	if !ok {
+		t.Fatal("missing output")
+	}
+	var snapshot guestio.MeshSnapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil || !snapshot.OK || len(snapshot.Rows) != 15 {
+		t.Fatalf("snapshot lost rows: %+v %v", snapshot, err)
 	}
 }
