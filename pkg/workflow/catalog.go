@@ -50,6 +50,7 @@ func Catalog() []Block {
 	}, measurementCatalog()...), reportCatalog()...)
 	blocks = append(blocks, analysisCatalog()...)
 	blocks = append(blocks, collectionCatalog()...)
+	blocks = append(blocks, meshCatalog()...)
 	return append(blocks, iterationCatalog()...)
 }
 

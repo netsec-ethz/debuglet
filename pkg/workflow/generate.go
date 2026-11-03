@@ -47,7 +47,7 @@ func generate(w Workflow, experimentConfig string) (Program, error) {
 	}
 	if experimentConfig == "" {
 		for _, n := range w.Nodes {
-			if n.Block == "send_message" || n.Block == "await_message" || n.Block == "phase_barrier" {
+			if experimentBlock(n.Block) {
 				return Program{}, fmt.Errorf("%s requires building the whole experiment", n.Block)
 			}
 		}
@@ -100,7 +100,7 @@ func generate(w Workflow, experimentConfig string) (Program, error) {
 		}
 		out.WriteString("var experiment *guest.Experiment\n")
 		// Retain the declared graph even if readiness fails before the first block.
-		fmt.Fprintf(&out, "func main(){if _,err:=fmt.Fprintln(os.Stdout,%q);err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)};var err error;experiment,err=guest.JoinExperiment(%q);if err==nil{err=run%d()};if err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)}}\n", string(manifest), experimentConfig, indexes[w.Entry])
+		fmt.Fprintf(&out, "func main(){if _,err:=fmt.Fprintln(os.Stdout,%q);err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)};var err error;experiment,err=guest.JoinExperiment(%q);if err==nil{err=func()error{defer experiment.Close();runtime.SetScheduleAnchor(experiment.StartTime());return run%d()}()};if err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)}}\n", string(manifest), experimentConfig, indexes[w.Entry])
 	}
 	for i, c := range w.CustomBlocks {
 		fmt.Fprintf(&out, "// Custom block %s\nfunc custom%d(inputs map[string]any)(map[string]any,error){\n%s\n}\n", c.ID, i, c.Code)
@@ -179,8 +179,42 @@ func generate(w Workflow, experimentConfig string) (Program, error) {
 		case "wait":
 			fmt.Fprintf(&out, "if err=guest.Wait(in[\"duration_ms\"]);err!=nil{return runtime.Fail(%q,%q,err)}\nif err=runtime.Record(%q,%q,map[string]any{});err!=nil{return err}\n", n.ID, n.Block, n.ID, n.Block)
 			callNext("next")
+		case "every", "for_each_peer":
+			body := control[Endpoint{n.ID, "body"}]
+			bodyNodes := reachable(body, adj)
+			ids := make([]string, 0, len(bodyNodes))
+			for id := range bodyNodes {
+				ids = append(ids, id)
+			}
+			slices.Sort(ids)
+			if n.Block == "every" {
+				out.WriteString("err=runtime.Every(in,func(values map[string]any)error{\n")
+			} else {
+				out.WriteString("err=runtime.ForEachPeer(in,experiment.ParticipantID(),experiment.ParticipantIDs(),func(values map[string]any)error{\n")
+			}
+			out.WriteString("runtime.Forget(")
+			for _, id := range ids {
+				fmt.Fprintf(&out, "%q,", id)
+			}
+			out.WriteString(")\n")
+			fmt.Fprintf(&out, "if err:=runtime.Record(%q,%q,values);err!=nil{return err};return run%d()\n});runtime.Forget(%q);if err!=nil{return runtime.Fail(%q,%q,err)}\n", n.ID, n.Block, indexes[body], n.ID, n.ID, n.Block)
+			callNext("done")
 		default:
 			switch n.Block {
+			case "experiment_peers":
+				out.WriteString("values,err:=experiment.Peers(in)\n")
+			case "udp_probe_start":
+				out.WriteString("values,err:=experiment.UDPProbeStart(in)\n")
+			case "udp_probe_snapshot":
+				out.WriteString("values,err:=experiment.UDPProbeSnapshot(in)\n")
+			case "udp_probe_stop":
+				out.WriteString("values,err:=experiment.UDPProbeStop(in)\n")
+			case "tcp_responder_start":
+				out.WriteString("values,err:=experiment.TCPResponderStart(in)\n")
+			case "tcp_transfer":
+				out.WriteString("values,err:=experiment.TCPTransfer(in,runtime.ActionDeadline())\n")
+			case "tcp_responder_stop":
+				out.WriteString("values,err:=experiment.TCPResponderStop(in)\n")
 			case "send_message":
 				out.WriteString("values,err:=experiment.Send(in)\n")
 			case "await_message":
@@ -241,6 +275,21 @@ func generate(w Workflow, experimentConfig string) (Program, error) {
 	}
 	program := Program{Source: string(source), WorkflowSHA256: digest, Destinations: []string{}}
 	for _, n := range w.Nodes {
+		if n.Block == "udp_probe_start" {
+			program.RequireUDPListener = true
+		}
+		if n.Block == "udp_probe_start" || n.Block == "tcp_responder_start" {
+			if !slices.Contains(program.RequiredHostFunctions, "debuglet_io_v1.mesh_stop") {
+				program.RequiredHostFunctions = append(program.RequiredHostFunctions, "debuglet_io_v1.mesh_stop")
+			}
+		}
+		function := map[string]string{"udp_probe_start": "mesh_start", "tcp_responder_start": "mesh_start", "udp_probe_snapshot": "mesh_snapshot", "udp_probe_stop": "mesh_stop", "tcp_responder_stop": "mesh_stop", "tcp_transfer": "mesh_transfer"}[n.Block]
+		if function != "" {
+			name := "debuglet_io_v1." + function
+			if !slices.Contains(program.RequiredHostFunctions, name) {
+				program.RequiredHostFunctions = append(program.RequiredHostFunctions, name)
+			}
+		}
 		if n.Block == "ping" || n.Block == "hop_probe" {
 			program.RequireICMP = true
 		}
