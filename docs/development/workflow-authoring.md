@@ -2,7 +2,7 @@
 
 Choose **New experiment** (`/console/experiments/new`) to design a program, then
 move to **Run** to choose executors and review its permissions. Use **Add program**
-when two or three programs need to coordinate, each on a distinct
+when two to sixteen programs need to coordinate, each on a distinct
 executor. The same graph can be edited visually, authored by an MCP client or
 compiled from the command line with `dbl-studio`. Existing builder links remain
 valid.

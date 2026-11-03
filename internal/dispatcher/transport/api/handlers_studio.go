@@ -21,10 +21,11 @@ import (
 )
 
 const (
-	studioWorkflowLimit      = 1 << 20
-	studioExperimentLimit    = 4 << 20
-	studioResponseLimit      = 32 << 20
-	studioConcurrentRequests = 4
+	studioWorkflowLimit           = 1 << 20
+	studioExperimentLimit         = 4 << 20
+	studioResponseLimit           = 32 << 20
+	studioExperimentResponseLimit = 64 << 20
+	studioConcurrentRequests      = 4
 	// The worker owns its six-minute compiler deadline. The extra interval
 	// lets it report that outcome, while bounding a stalled worker as well.
 	studioRequestTimeout = 6*time.Minute + 10*time.Second
@@ -157,14 +158,18 @@ func (h *Handler) proxyStudio(c echo.Context) error {
 		return studioTransportError(ctx, err)
 	}
 	defer response.Body.Close()
-	if response.ContentLength > studioResponseLimit {
+	responseLimit := int64(studioResponseLimit)
+	if req.Method == http.MethodPost && c.Path() == "/studio/experiments/build" {
+		responseLimit = studioExperimentResponseLimit
+	}
+	if response.ContentLength > responseLimit {
 		return apiError(http.StatusBadGateway, CodeUnavailable, "hosted compiler response exceeds its size limit")
 	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, studioResponseLimit+1))
+	data, err := io.ReadAll(io.LimitReader(response.Body, responseLimit+1))
 	if err != nil {
 		return studioTransportError(ctx, err)
 	}
-	if len(data) > studioResponseLimit {
+	if int64(len(data)) > responseLimit {
 		return apiError(http.StatusBadGateway, CodeUnavailable, "hosted compiler response exceeds its size limit")
 	}
 	mediaType, _, err := mime.ParseMediaType(response.Header.Get(echo.HeaderContentType))

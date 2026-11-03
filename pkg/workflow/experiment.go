@@ -62,8 +62,8 @@ func ValidateExperiment(e Experiment) []ExperimentDiagnostic {
 	if strings.TrimSpace(e.Name) == "" || len(e.Name) > 128 {
 		add("", "", "", "name must contain 1–128 characters")
 	}
-	if len(e.Participants) < 2 || len(e.Participants) > 3 {
-		add("", "", "", "an experiment requires 2–3 participants")
+	if len(e.Participants) < 2 || len(e.Participants) > 16 {
+		add("", "", "", "an experiment requires 2–16 participants")
 		return ds
 	}
 	members := map[string]bool{}

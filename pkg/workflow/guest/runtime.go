@@ -25,6 +25,7 @@ type Runtime struct {
 	timers               map[string]time.Time
 	collections          map[string]*collection
 	collectionBytes      int
+	schedule             scheduleState
 }
 
 func New(digest string) *Runtime {
@@ -80,6 +81,13 @@ func (r *Runtime) event(node, block, status string, outputs map[string]any, mess
 	if err := checkValue(outputs, 0); err != nil {
 		return err
 	}
+	// Periodic workflows keep explicit results, not a trace of every probe and
+	// arithmetic operation. Values still update even when tracing is exhausted.
+	trace := r.schedule.used && status == "completed" && block != "emit" &&
+		block != "report_metric" && block != "report_table" && block != "report_text" && block != "report_chart"
+	if trace && (r.schedule.traceEvents >= 64 || r.schedule.traceBytes >= 64*1024) {
+		return nil
+	}
 	event := struct {
 		Schema   string         `json:"schema"`
 		Workflow string         `json:"workflow_sha256"`
@@ -96,12 +104,20 @@ func (r *Runtime) event(node, block, status string, outputs map[string]any, mess
 	if len(b) > 65536 {
 		return fmt.Errorf("node output exceeds 64 KiB")
 	}
+	if trace {
+		r.schedule.traceEvents++
+		r.schedule.traceBytes += len(b) + 1
+	}
 	_, err = r.writeRecord(append(b, '\n'))
 	return err
 }
 
 func (r *Runtime) writeRecord(record []byte) (int, error) {
-	if r.events >= 4096 || r.bytes+len(record) > 4*1024*1024 {
+	maxEvents, maxBytes := 4096, 4*1024*1024
+	if r.schedule.used {
+		maxEvents, maxBytes = 100000, 32*1024*1024
+	}
+	if r.events >= maxEvents || r.bytes+len(record) > maxBytes {
 		return 0, fmt.Errorf("workflow trace exceeds its output limit")
 	}
 	n, err := r.writer.Write(record)
@@ -414,7 +430,8 @@ func Wait(v any) error {
 	if !ok || math.IsNaN(n) || n < 0 || n > 60000 {
 		return fmt.Errorf("wait must be between 0 and 60000 ms")
 	}
-	time.Sleep(time.Duration(n * float64(time.Millisecond)))
+	clock := scheduleState{}
+	clock.wait(time.Now().Add(time.Duration(n * float64(time.Millisecond))))
 	return nil
 }
 

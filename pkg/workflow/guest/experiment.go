@@ -44,10 +44,11 @@ type experimentEndpoint struct {
 	Participant string `json:"participant"`
 	Fingerprint string `json:"fingerprint"`
 	Address     string `json:"address"`
+	UDPAddress  string `json:"udp_address,omitempty"`
 }
 
 type experimentPeer struct {
-	runID, executorID, address string
+	runID, executorID, address, udpAddress string
 }
 
 type experimentFrame struct {
@@ -92,6 +93,8 @@ type Experiment struct {
 	inbox                        []experimentMessage
 	inboxBytes                   int
 	barriers                     map[string]*experimentBarrierState
+	startTime                    time.Time
+	meshServices                 map[string]*debuglet.MeshService
 }
 
 // JoinExperiment publishes this run's listener, checks the admitted membership,
@@ -109,7 +112,8 @@ func JoinExperiment(configJSON string) (*Experiment, error) {
 	if err != nil {
 		return nil, fmt.Errorf("experiment requires a reachable TCP listener: %w", err)
 	}
-	metadata, err := json.Marshal(experimentEndpoint{config.Participant, config.Fingerprint, address})
+	udpAddress, _ := debuglet.ListenUDPAddr()
+	metadata, err := json.Marshal(experimentEndpoint{Participant: config.Participant, Fingerprint: config.Fingerprint, Address: address, UDPAddress: udpAddress})
 	if err != nil {
 		return nil, err
 	}
@@ -140,8 +144,9 @@ func newExperiment(config experimentConfig) (*Experiment, error) {
 		participant: config.Participant, fingerprint: config.Fingerprint,
 		peers: map[string]experimentPeer{}, channels: map[string]experimentChannel{},
 		received: map[string]experimentSequence{}, pending: map[string]experimentRequest{},
-		requests: map[string]experimentRequest{},
-		barriers: map[string]*experimentBarrierState{},
+		requests:     map[string]experimentRequest{},
+		barriers:     map[string]*experimentBarrierState{},
+		meshServices: map[string]*debuglet.MeshService{},
 	}
 	for _, participant := range config.Participants {
 		if participant == "" || len(participant) > 128 {
@@ -190,9 +195,16 @@ func (e *Experiment) admit(group experimentwire.Experiment, address string) erro
 			return fmt.Errorf("admitted listener does not match this participant")
 		}
 		members[endpoint.Participant], runs[member.ID], addresses[endpoint.Address] = true, true, true
-		e.peers[endpoint.Participant] = experimentPeer{member.ID, member.ExecutorID, endpoint.Address}
+		if endpoint.UDPAddress != "" {
+			h, p, err := net.SplitHostPort(endpoint.UDPAddress)
+			if err != nil || !networkHost(h) || !networkPort(p) {
+				return fmt.Errorf("invalid admitted UDP listener")
+			}
+		}
+		e.peers[endpoint.Participant] = experimentPeer{member.ID, member.ExecutorID, endpoint.Address, endpoint.UDPAddress}
 	}
 	e.id = group.ID
+	e.startTime = time.Unix(0, group.StartTimeNS)
 	return nil
 }
 

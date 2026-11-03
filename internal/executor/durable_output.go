@@ -132,6 +132,40 @@ func (e *Executor) outputStorageFailed(err error) {
 	}
 }
 
+// coalesceOutput preserves byte order and flushes immediately when the queue is
+// empty. It consumes at most one queue's worth per call, so a busy producer does
+// not monopolize the drain. Full frames pass through without copying.
+func coalesceOutput(input <-chan []byte, first []byte, emit func([]byte)) {
+	batch := first
+	for count := 0; count < outputQueueFrames && len(batch) < pb.MaxOutputFrameBytes; count++ {
+		select {
+		case next, ok := <-input:
+			if !ok {
+				emit(batch)
+				return
+			}
+			if len(next) == 0 {
+				continue
+			}
+			if len(batch)+len(next) > pb.MaxOutputFrameBytes {
+				emit(batch)
+				batch = next
+				continue
+			}
+			if cap(batch) < pb.MaxOutputFrameBytes {
+				copyOf := make([]byte, len(batch), pb.MaxOutputFrameBytes)
+				copy(copyOf, batch)
+				batch = copyOf
+			}
+			batch = append(batch, next...)
+		default:
+			emit(batch)
+			return
+		}
+	}
+	emit(batch)
+}
+
 // newDurableOutput admits metadata before any guest producer or fallible setup.
 // A failed setup therefore still has a separately finalized empty output prefix.
 func (e *Executor) newDurableOutput(op *debugletOperation, spec scheduler.Spec) (*outputPump, error) {
@@ -201,7 +235,7 @@ func (e *Executor) newDurableOutput(op *debugletOperation, spec scheduler.Spec) 
 					fail(outputstore.ErrOutputLimit)
 				}
 			} else if err := e.acknowledgeOutput(storageCtx, spec.DebugletID, receipt); err != nil {
-				fail(err)
+				fail(fmt.Errorf("acknowledge output identity: %w", err))
 			}
 		}
 		bytesPerSecond, burst := e.cfg.Output.Rate()
@@ -215,7 +249,7 @@ func (e *Executor) newDurableOutput(op *debugletOperation, spec scheduler.Spec) 
 				// Cancellation removes backpressure, but the already accepted bounded
 				// queue is still spooled before its producer is finalized.
 				if err := limiter.WaitN(op.ctx, len(data)); err != nil {
-					fail(err)
+					fail(fmt.Errorf("wait for output rate: %w", err))
 					deliveryCancel()
 				}
 			}
@@ -232,7 +266,7 @@ func (e *Executor) newDurableOutput(op *debugletOperation, spec scheduler.Spec) 
 					loss = "producer_failed"
 					e.outputStorageFailed(err)
 				}
-				fail(err)
+				fail(fmt.Errorf("append durable output: %w", err))
 				return
 			}
 			if stream == nil || deliveryCtx.Err() != nil || rejected != nil {
@@ -257,10 +291,14 @@ func (e *Executor) newDurableOutput(op *debugletOperation, spec scheduler.Spec) 
 				return
 			}
 			if err := e.acknowledgeOutput(storageCtx, spec.DebugletID, receipt); err != nil {
-				fail(err)
+				fail(fmt.Errorf("acknowledge durable output: %w", err))
 				deliveryCancel()
 			}
 		}
+		// Stdout is a byte stream: coalesce only chunks already queued, without
+		// waiting or growing the existing per-frame/queue bounds. This avoids a
+		// durable transaction and remote acknowledgement for every tiny Write.
+		processQueued := func(data []byte) { coalesceOutput(input, data, process) }
 		// Only Run owns closing input. Failed setup never starts Run, so the
 		// producer-finished signal also ends this bounded drain.
 	drain:
@@ -270,7 +308,7 @@ func (e *Executor) newDurableOutput(op *debugletOperation, spec scheduler.Spec) 
 				if !ok {
 					break drain
 				}
-				process(data)
+				processQueued(data)
 			case <-p.producerDone:
 				for {
 					select {
@@ -278,7 +316,7 @@ func (e *Executor) newDurableOutput(op *debugletOperation, spec scheduler.Spec) 
 						if !ok {
 							break drain
 						}
-						process(data)
+						processQueued(data)
 					default:
 						break drain
 					}
@@ -304,7 +342,7 @@ func (e *Executor) newDurableOutput(op *debugletOperation, spec scheduler.Spec) 
 		finishDone()
 		if err != nil {
 			e.outputStorageFailed(err)
-			fail(err)
+			fail(fmt.Errorf("finalize durable output: %w", err))
 			return
 		}
 		if rejected != nil {

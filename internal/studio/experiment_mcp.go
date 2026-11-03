@@ -33,7 +33,7 @@ func experimentTools(server *mcp.Server, builder *Builder, files *store) {
 		}
 		return nil, map[string]any{"diagnostics": diagnostics}, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "build_experiment", Description: "Compile 2–3 participant workflows into a portable experiment bundle, with source, exact shared context and program digests. Does not submit, allocate executors or spend funds. Import the bundle into the experiment editor to inspect or edit it."}, func(ctx context.Context, req *mcp.CallToolRequest, input experimentInput) (*mcp.CallToolResult, metadata, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "build_experiment", Description: "Compile 2–16 participant workflows into a portable experiment bundle, with source, exact shared context and program digests. The total bundle and submission size limits still apply. Does not submit, allocate executors or spend funds. Import the bundle into the experiment editor to inspect or edit it."}, func(ctx context.Context, req *mcp.CallToolRequest, input experimentInput) (*mcp.CallToolResult, metadata, error) {
 		if builder == nil {
 			return nil, metadata{}, errors.New("compiler unavailable: configure --sdk")
 		}

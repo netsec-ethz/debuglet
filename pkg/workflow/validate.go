@@ -227,8 +227,29 @@ func Validate(w Workflow) []Diagnostic {
 			if field == "timeout_ms" && (number < 1 || number > 60000 || math.Trunc(number) != number) {
 				add(n.ID, field, "must be an integer between 1 and 60000 ms")
 			}
-			if field == "duration_ms" && (number < 0 || number > 60000) {
-				add(n.ID, field, "must be between 0 and 60000 ms")
+			if field == "duration_ms" {
+				min, max := float64(0), float64(60000)
+				whole := n.Block == "every" || n.Block == "udp_probe_start" || n.Block == "tcp_responder_start"
+				if whole {
+					min, max = 1, 86400000
+				}
+				if number < min || number > max || whole && math.Trunc(number) != number {
+					unit := "ms"
+					if whole {
+						unit = "whole milliseconds"
+					}
+					add(n.ID, field, fmt.Sprintf("must be between %.0f and %.0f %s", min, max, unit))
+				}
+			}
+		}
+		for field, bounds := range map[string][2]float64{"interval_ms": {1000, 86400000}, "start_delay_ms": {0, 60000}, "slot_ms": {1000, 60000}} {
+			if n.Block != "every" && n.Block != "for_each_peer" {
+				continue
+			}
+			if v, ok := n.Inputs[field]; ok {
+				if number, ok := asNumber(v); ok && (number < bounds[0] || number > bounds[1] || math.Trunc(number) != number) {
+					add(n.ID, field, fmt.Sprintf("must be an integer between %.0f and %.0f ms", bounds[0], bounds[1]))
+				}
 			}
 		}
 		validateMeasurementInputs(n, add)
@@ -240,6 +261,26 @@ func Validate(w Workflow) []Diagnostic {
 			}
 		}
 	}
+	periodic := 0
+	hasTCPReceiver, hasUDPService := false, false
+	for _, n := range w.Nodes {
+		if n.Block == "every" {
+			periodic++
+		}
+		hasTCPReceiver = hasTCPReceiver || n.Block == "tcp_responder_start"
+		hasUDPService = hasUDPService || n.Block == "udp_probe_start"
+	}
+	if periodic > 1 {
+		add("", "", "a workflow may contain only one Every schedule")
+	}
+	for _, n := range w.Nodes {
+		if hasTCPReceiver && (n.Block == "send_message" || n.Block == "await_message" || n.Block == "phase_barrier") {
+			add(n.ID, "", "TCP receiver owns the listener; message channels and phase barriers cannot share it")
+		}
+		if hasUDPService && (n.Block == "udp_receive" || n.Block == "udp_reply") {
+			add(n.ID, "", "UDP probes own the listener; receive and reply blocks cannot share it")
+		}
+	}
 	if hasCycle(dataAdj) {
 		add("", "", "data connections contain a cycle")
 	}
@@ -247,7 +288,7 @@ func Validate(w Workflow) []Diagnostic {
 		add("", "", "control connections contain a cycle; use Repeat or For each item for bounded repetition")
 	} else {
 		for _, n := range w.Nodes {
-			if n.Block != "repeat" && n.Block != "for_each" {
+			if !loopBlock(n.Block) {
 				continue
 			}
 			var body, done string
@@ -271,6 +312,12 @@ func Validate(w Workflow) []Diagnostic {
 				add(n.ID, "body", "workflow entry cannot be inside a loop body")
 			}
 			for id := range inside {
+				if nodes[id].Block == "every" {
+					add(id, "", "Every cannot run inside another loop")
+				}
+				if n.Block == "for_each_peer" && nodes[id].Block == "for_each_peer" {
+					add(id, "", "peer turn loops cannot be nested")
+				}
 				if after[id] {
 					add(n.ID, "body", "loop body must end before the done continuation")
 					break
@@ -282,7 +329,7 @@ func Validate(w Workflow) []Diagnostic {
 					break
 				}
 			}
-			if n.Block == "for_each" {
+			if n.Block == "for_each" || n.Block == "every" || n.Block == "for_each_peer" {
 				// The body may execute zero times. Its outputs, and any pure
 				// expressions using them, cannot feed an action outside it.
 				pending := []string{n.ID}
@@ -301,7 +348,7 @@ func Validate(w Workflow) []Diagnostic {
 						if catalog[nodes[next].Block].Pure {
 							pending = append(pending, next)
 						} else if !inside[next] {
-							add(next, "", "for each body outputs are only available inside its body; collect results to use them after done")
+							add(next, "", "loop body outputs are only available inside its body; collect results to use them after done")
 						}
 					}
 				}

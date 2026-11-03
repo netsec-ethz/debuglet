@@ -124,7 +124,7 @@ func TestBuildExperimentPreservesContextAndCompilesEveryParticipant(t *testing.T
 			t.Fatalf("participant %s is not WASM", p.ID)
 		}
 	}
-	if len(data) > MaxExperimentBundleBytes || bundle.EncodedProgramBytes >= 32<<20 {
+	if len(data) > MaxExperimentBundleBytes || bundle.EncodedProgramBytes >= 64<<20 {
 		t.Fatal("oversized experiment")
 	}
 	read, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "read_artifact", Arguments: artifactInput{meta.ArtifactID}})

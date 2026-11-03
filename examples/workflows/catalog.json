@@ -2287,6 +2287,322 @@
     "control_outputs": []
   },
   {
+    "id": "every",
+    "label": "Every",
+    "category": "Control",
+    "description": "Start body on a fixed cadence for at most 24 hours. Missed ticks are skipped. The last body may finish afterward within the run timeout; mesh transfers respect the schedule deadline. Each iteration has a 1000-action budget; results remain bounded. Experiment ticks use the common start, not synchronized clocks.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "interval_ms",
+        "type": "number",
+        "required": true
+      },
+      {
+        "name": "duration_ms",
+        "type": "number",
+        "required": true
+      },
+      {
+        "name": "immediate",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "name": "start_delay_ms",
+        "type": "number",
+        "default": 5000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "iteration",
+        "type": "number"
+      },
+      {
+        "name": "elapsed_ms",
+        "type": "number"
+      },
+      {
+        "name": "missed_intervals",
+        "type": "number"
+      }
+    ],
+    "control_outputs": [
+      "body",
+      "done"
+    ]
+  },
+  {
+    "id": "for_each_peer",
+    "label": "Take turns with peers",
+    "category": "Experiment",
+    "description": "Visit every directed participant pair in deterministic, non-overlapping time slots. Only the sender executes body; receivers run in the background. A late sender uses only the remaining slot. Requires an experiment; host clock error still affects timing.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "slot_ms",
+        "type": "number",
+        "default": 30000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "peer",
+        "type": "string"
+      },
+      {
+        "name": "turn",
+        "type": "number"
+      }
+    ],
+    "control_outputs": [
+      "body",
+      "done"
+    ]
+  },
+  {
+    "id": "experiment_peers",
+    "label": "Experiment peers",
+    "category": "Experiment",
+    "description": "Read the admitted participant roster and their listener addresses.",
+    "pure": false,
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "self",
+        "type": "string"
+      },
+      {
+        "name": "peers",
+        "type": "any"
+      },
+      {
+        "name": "participants",
+        "type": "strings"
+      },
+      {
+        "name": "index",
+        "type": "number"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "udp_probe_start",
+    "label": "Start UDP probes",
+    "category": "Network",
+    "description": "Start bounded background probes to admitted peers, measuring round-trip timing and receiver-confirmed directional loss. Read completed windows with UDP probe snapshot.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "interval_ms",
+        "type": "number",
+        "default": 1000
+      },
+      {
+        "name": "window_ms",
+        "type": "number",
+        "default": 300000
+      },
+      {
+        "name": "duration_ms",
+        "type": "number",
+        "default": 86400000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "service",
+        "type": "string"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "udp_probe_snapshot",
+    "label": "UDP probe snapshot",
+    "category": "Network",
+    "description": "Read completed probe windows without stopping the receiver. Missing windows and failures stay explicit.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "service",
+        "type": "string",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      },
+      {
+        "name": "rows",
+        "type": "any"
+      },
+      {
+        "name": "window_start_ms",
+        "type": "number"
+      },
+      {
+        "name": "window_end_ms",
+        "type": "number"
+      },
+      {
+        "name": "skipped_windows",
+        "type": "number"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "udp_probe_stop",
+    "label": "Stop UDP probes",
+    "category": "Network",
+    "description": "Stop this run's background UDP measurement service.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "service",
+        "type": "string",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "tcp_responder_start",
+    "label": "Start TCP receiver",
+    "category": "Network",
+    "description": "Serve bounded TCP transfers from admitted peers in the background. Owns the run's TCP listener until stopped; cannot share it with message channels.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "duration_ms",
+        "type": "number",
+        "default": 86400000
+      },
+      {
+        "name": "max_bytes",
+        "type": "number",
+        "default": 33554432
+      },
+      {
+        "name": "max_transfer_ms",
+        "type": "number",
+        "default": 10000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "service",
+        "type": "string"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "tcp_transfer",
+    "label": "TCP transfer",
+    "category": "Network",
+    "description": "Send a bounded payload to an admitted peer and report receiver-confirmed goodput. Use Take turns with peers to avoid simultaneous transfers; its slot deadline bounds this operation.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "peer",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "bytes",
+        "type": "number",
+        "default": 33554432
+      },
+      {
+        "name": "timeout_ms",
+        "type": "number",
+        "default": 10000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      },
+      {
+        "name": "sent_bytes",
+        "type": "number"
+      },
+      {
+        "name": "received_bytes",
+        "type": "number"
+      },
+      {
+        "name": "duration_ms",
+        "type": "number"
+      },
+      {
+        "name": "goodput_mbps",
+        "type": "number"
+      },
+      {
+        "name": "peer",
+        "type": "string"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "tcp_responder_stop",
+    "label": "Stop TCP receiver",
+    "category": "Network",
+    "description": "Stop this run's background TCP responder and release its listener.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "service",
+        "type": "string",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
     "id": "for_each",
     "label": "For each item",
     "category": "Control",

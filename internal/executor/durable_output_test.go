@@ -97,7 +97,7 @@ func TestDurableOutputRetainsAcceptedQueueAfterBrokenTransport(t *testing.T) {
 		return
 	}
 	retained, err := e.output.Get(t.Context(), spec.DebugletID)
-	if err != nil || retained.End == nil || retained.End.LastSequence != 3 || retained.EndAcknowledged || retained.AcknowledgedSequence != 0 || retained.End.Status != pb.DebugletOutputStatus_DEBUGLET_OUTPUT_STATUS_COMPLETE {
+	if err != nil || retained.End == nil || (retained.End.LastSequence < 1 || retained.End.LastSequence > 3) || retained.EmittedBytes != 11 || retained.EndAcknowledged || retained.AcknowledgedSequence != 0 || retained.End.Status != pb.DebugletOutputStatus_DEBUGLET_OUTPUT_STATUS_COMPLETE {
 		t.Fatalf("retained accepted prefix: %+v %v", retained, err)
 	}
 	if runtime.starts.Load() != 1 || runtime.closes.Load() != 1 {
@@ -112,7 +112,11 @@ func TestDurableOutputRetainsAcceptedQueueAfterBrokenTransport(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(saved) != 3 || string(saved[0].Output) != "one" || string(saved[1].Output) != "two" || string(saved[2].Output) != "three" {
+	var replayed []byte
+	for _, frame := range saved {
+		replayed = append(replayed, frame.Output...)
+	}
+	if int64(len(saved)) != retained.End.LastSequence || string(replayed) != "onetwothree" {
 		t.Fatal("output replay changed or duplicated bytes")
 	}
 	if runtime.starts.Load() != 1 {
@@ -155,7 +159,8 @@ func TestDurableOutputQuotaReceiptWaitsForProducerJoin(t *testing.T) {
 	canceled, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	runtime := &operationRuntime{run: func(ctx context.Context, out chan<- []byte) error {
-		out <- []byte("accepted")
+		// A full first frame keeps the accepted prefix and rejected suffix distinct.
+		out <- bytes.Repeat([]byte("a"), pb.MaxOutputFrameBytes)
 		out <- []byte("spooled suffix")
 		<-ctx.Done()
 		close(canceled)

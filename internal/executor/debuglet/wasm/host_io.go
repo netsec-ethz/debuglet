@@ -81,6 +81,9 @@ func hostIODial(env *WasmEnv) func(context.Context, Memory, uint32, uint32, uint
 // returned connection. Refused peers share the same deadline.
 func HostIOAcceptTCP(env *WasmEnv) func(context.Context, int64) uint64 {
 	return func(ctx context.Context, timeout int64) uint64 {
+		if env.meshOwnsListener(true) {
+			return ioResult(0, netpolicy.ErrDenied)
+		}
 		acceptCtx := ctx
 		if timeout != 0 {
 			var cancel context.CancelFunc

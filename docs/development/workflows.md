@@ -5,9 +5,9 @@ an authoring tool. It compiles to one Go WASI debuglet. Network operations,
 processing, branches and bounded repetition execute on the selected executor;
 they do not require a round trip through an AI client or dispatcher.
 
-An experiment connects several of these workflows. In the console,
-**Workflow builder** edits one program; **Experiment builder** selects a
-participant, edits its program and connects it to the others. Start with the
+An experiment connects several of these workflows. In the console, start from
+**New experiment** to edit one program or select participants and connect their
+programs. Start with the
 [authoring guide](workflow-authoring.md) to build the local editor, compile
 bundles or connect an MCP client.
 
@@ -182,11 +182,13 @@ plotting a latency; report failures separately instead of plotting them as zero.
 The block emits one `debuglet.timeseries.v1` line in ordinary run output and
 then its normal action trace. Names contain 1–160 UTF-8 bytes, series at most
 160 and units at most 40. It has a `next` control connection and no data outputs.
-Samples and action traces share the workflow's existing 4,096-event/4 MiB
-budget. Repeat still permits at most 100 iterations and a workflow at most
-1,000 action steps. This block does not turn a workflow into a day-long monitor.
-Custom Go guests can use the [SDK sample emitter](../debuglets.md#live-graph-samples)
-for longer measurements, within the deployment's runtime and output limits.
+Ordinary workflows share a 4,096-event/4 MiB budget. For continuous collection,
+use **Every**: periodic workflows retain a small diagnostic trace and allow up
+to 100,000 explicit result events or 32 MiB of output, whichever comes first.
+Choose a reporting interval that fits those limits and the deployment's runtime
+policy. Repeat still permits at most 100 iterations; Every has a separate
+1,000-action budget per tick. Custom Go guests can use the
+[SDK sample emitter](../debuglets.md#live-graph-samples) directly.
 
 ## Reusable visual groups
 
@@ -205,7 +207,7 @@ underlying program.
 
 ## Experiments with several executors
 
-An experiment contains two or three ordinary participant workflows and named,
+An experiment contains two to sixteen ordinary participant workflows and named,
 directed channels. Participant names are labels, not fixed roles. Choose a
 different executor for each participant when reviewing the grouped submission.
 Every executor must advertise a directly reachable IPv4 TCP listener and permit
@@ -255,10 +257,62 @@ The experiment source is at most 4 MiB, with at most 64 channels. Compilation
 injects the participant ID, whole-experiment fingerprint and channel manifest
 into each program's canonical workflow and digest. Build the whole experiment
 after editing any participant; individual compiled programs cannot be rebuilt
-as standalone workflows. Bundles are limited to 32 MiB, and the console checks
-the final grouped request against the API's 32 MiB limit before submission.
+as standalone workflows. Bundles are limited to 64 MiB, and the console checks
+the final grouped request against the API's 64 MiB limit before submission.
+Sixteen is the authoring limit, not a guarantee that sixteen large compiled
+programs fit in one request.
+
+### Continuous peer measurements
+
+The peer measurement blocks use the experiment's admitted participants. **Experiment
+peers** supplies peer identifiers; an address is discovered during readiness,
+so a saved template does not need to contain the machines' IP addresses.
+
+For UDP timing and delivery, start a **UDP probe** service before an Every loop.
+Read a snapshot in the loop, process its per-peer rows, and connect the valid
+values to live plots or reports. Stop the service after the loop. The executor
+keeps sending probes and responding to peers while the visual program processes
+results. Each snapshot includes the measurement window; missing timing or loss
+evidence remains unavailable rather than becoming zero.
+Probes run at most once per second per peer. Report windows are interval
+multiples up to five minutes; snapshots retain at most four completed windows
+and report how many were skipped if the program reads too slowly.
+
+For TCP goodput, start a **TCP responder**, then use **TCP transfer** to send a
+bounded payload to an admitted peer. Use the deterministic pair schedule to
+give directed transfers separate time slots. Only receiver-confirmed bytes
+contribute to goodput. Configure both a byte limit and a deadline. This measures
+the useful transfer rate achieved by these endpoints, not spare link capacity.
+Each transfer sends at most 32 MiB over at most ten seconds, with up to two
+additional seconds for the final receipt, all within its pair slot. A shorter
+transfer is valid when the receiver confirms all bytes actually sent. Each run
+has separate conservative 8 GiB sending and receiving budgets; unsuccessful
+attempts still consume their reservation.
+
+These blocks require executors advertising their measurement-service host
+functions. They use the run's ordinary destination policy, traffic accounting,
+listeners and lifetime. Services have bounded state and stop when the run ends.
+The TCP responder exclusively owns the TCP listener and cannot be combined with
+Send message, Await message or Wait for phase in the same program. The UDP probe
+service similarly cannot share its listener with Receive UDP or Reply UDP.
+Ordinary experiment readiness still runs before either service starts.
+
+Save the graph as a personal or community template to retain the schedule,
+processing and report wiring. The source attached to a submitted run can be
+opened as an editable copy; historical WASM-only submissions do not acquire a
+visual graph automatically.
 
 ## Repetition
+
+For measurements that run for a fixed duration, use **Every** with an interval
+and duration. Connect `body` to the actions for one sampling window and `done`
+to cleanup or a final report. Keep the body bounded; late iterations are skipped
+rather than replayed in a burst. Ordinary Repeat and For each item remain useful
+inside a window. Each window has an action budget, and the run's normal lifetime
+and traffic permissions still apply. The duration stops new iterations; an
+ordinary action already in progress can finish afterward. Reserve time for that
+tail in the run policy. Mesh TCP transfers additionally honor their pair-slot
+and schedule deadlines.
 
 Repeat has a `body` and a `done` output. The body runs sequentially until its
 control path ends, then starts again. Its action outputs are cleared between
@@ -266,8 +320,9 @@ iterations. Repeat's `iteration` output starts at 1. After the requested count,
 execution continues at `done`. A body cannot also lead into that continuation
 or be entered by another control path. Arbitrary cycles are rejected.
 
-Programs support up to 128 nodes, 100 repeat iterations and 1,000 action steps.
-A single wait or network timeout is at most 60 seconds. Graph control limits
+Programs support up to 128 nodes and 100 repeat iterations. Ordinary execution
+has a 1,000-action budget; Every applies a separate bounded budget to each tick.
+A single wait or ordinary network timeout is at most 60 seconds. Graph control limits
 complement the ordinary executor's runtime, traffic and destination limits.
 
 Create a **sample collection** before Repeat, wire its handle to **Collect
@@ -334,6 +389,9 @@ Consumers of block events should filter by the `debuglet.workflow.v1` schema.
 
 Individual strings are limited to 16 KiB and lists to 1,024 entries. Each event
 is at most 64 KiB; a run emits at most 4,096 events and 4 MiB of trace output.
+Periodic workflows instead retain up to 100,000 result records and 32 MiB,
+while limiting ordinary block tracing to 64 events and 64 KiB. Live samples and
+explicit report blocks remain recorded within the result budget.
 The experiment manifest is an additional record of at most 64 KiB.
 Large responses fail explicitly rather than silently producing complete-looking
 measurements.
