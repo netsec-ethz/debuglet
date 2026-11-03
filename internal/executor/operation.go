@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/netsec-ethz/debuglet/internal/executor/debuglet"
@@ -70,6 +71,7 @@ func (op *debugletOperation) finish(workErr error, pump *outputPump) scheduler.C
 		err := pump.Wait(ctx)
 		end()
 		if err != nil {
+			err = fmt.Errorf("finish output drain: %w", err)
 			op.cancel(err)
 			pump.Cancel()
 			// Wait synchronously: an unresponsive transport must not leave an
