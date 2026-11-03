@@ -186,7 +186,7 @@ func boundWorkerRequests(next http.Handler, timeout time.Duration) http.Handler 
 		}
 		body := bytes.TrimSuffix(response.body.Bytes(), []byte{'\n'})
 		if response.overflow || len(body) > MaxExperimentBundleBytes {
-			writeError(w, http.StatusInternalServerError, errors.New("studio response exceeds 32 MiB"))
+			writeError(w, http.StatusInternalServerError, errors.New("studio response exceeds 64 MiB"))
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -217,7 +217,7 @@ func (w *workerResponse) WriteHeader(status int) {
 func (w *workerResponse) Write(p []byte) (int, error) {
 	if len(p) > MaxExperimentBundleBytes+1-w.body.Len() {
 		w.overflow = true
-		return 0, errors.New("studio response exceeds 32 MiB")
+		return 0, errors.New("studio response exceeds 64 MiB")
 	}
 	return w.body.Write(p)
 }

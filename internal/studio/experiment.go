@@ -16,7 +16,7 @@ import (
 )
 
 const MaxExperimentBytes = 4 << 20
-const MaxExperimentBundleBytes = 32 << 20
+const MaxExperimentBundleBytes = 64 << 20
 
 type ExperimentBundle struct {
 	Version             int                 `json:"version"`
@@ -110,7 +110,7 @@ func (b *Builder) BuildExperiment(ctx context.Context, e workflow.Experiment) (*
 		return nil, err
 	}
 	if len(encoded) > MaxExperimentBundleBytes {
-		return nil, errors.New("compiled experiment bundle exceeds 32 MiB")
+		return nil, errors.New("compiled experiment bundle exceeds 64 MiB")
 	}
 	return result, nil
 }

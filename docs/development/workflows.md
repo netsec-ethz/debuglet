@@ -205,7 +205,7 @@ underlying program.
 
 ## Experiments with several executors
 
-An experiment contains two or three ordinary participant workflows and named,
+An experiment contains two to sixteen ordinary participant workflows and named,
 directed channels. Participant names are labels, not fixed roles. Choose a
 different executor for each participant when reviewing the grouped submission.
 Every executor must advertise a directly reachable IPv4 TCP listener and permit
@@ -255,10 +255,51 @@ The experiment source is at most 4 MiB, with at most 64 channels. Compilation
 injects the participant ID, whole-experiment fingerprint and channel manifest
 into each program's canonical workflow and digest. Build the whole experiment
 after editing any participant; individual compiled programs cannot be rebuilt
-as standalone workflows. Bundles are limited to 32 MiB, and the console checks
+as standalone workflows. Bundles are limited to 64 MiB, and the console checks
 the final grouped request against the API's 64 MiB limit before submission.
+Sixteen is the authoring limit, not a guarantee that sixteen large compiled
+programs fit in one request.
+
+### Continuous peer measurements
+
+The peer measurement blocks use the experiment's admitted participants. **Experiment
+peers** supplies peer identifiers; an address is discovered during readiness,
+so a saved template does not need to contain the machines' IP addresses.
+
+For UDP timing and delivery, start a **UDP probe** service before an Every loop.
+Read a snapshot in the loop, process its per-peer rows, and connect the valid
+values to live plots or reports. Stop the service after the loop. The executor
+keeps sending probes and responding to peers while the visual program processes
+results. Each snapshot includes the measurement window; missing timing or loss
+evidence remains unavailable rather than becoming zero.
+
+For TCP goodput, start a **TCP responder**, then use **TCP transfer** to send a
+bounded payload to an admitted peer. Use the deterministic pair schedule to
+give directed transfers separate time slots. Only receiver-confirmed bytes
+contribute to goodput. Configure both a byte limit and a deadline. This measures
+the useful transfer rate achieved by these endpoints, not spare link capacity.
+
+These blocks require executors advertising their measurement-service host
+functions. They use the run's ordinary destination policy, traffic accounting,
+listeners and lifetime. Services have bounded state and stop when the run ends.
+The TCP responder exclusively owns the TCP listener and cannot be combined with
+Send message, Await message or Wait for phase in the same program. The UDP probe
+service similarly cannot share its listener with Receive UDP or Reply UDP.
+Ordinary experiment readiness still runs before either service starts.
+
+Save the graph as a personal or community template to retain the schedule,
+processing and report wiring. The source attached to a submitted run can be
+opened as an editable copy; historical WASM-only submissions do not acquire a
+visual graph automatically.
 
 ## Repetition
+
+For measurements that run for a fixed duration, use **Every** with an interval
+and duration. Connect `body` to the actions for one sampling window and `done`
+to cleanup or a final report. Keep the body bounded; late iterations are skipped
+rather than replayed in a burst. Ordinary Repeat and For each item remain useful
+inside a window. Each window has an action budget, and the run's normal lifetime
+and traffic permissions still apply.
 
 Repeat has a `body` and a `done` output. The body runs sequentially until its
 control path ends, then starts again. Its action outputs are cleared between
@@ -266,8 +307,9 @@ iterations. Repeat's `iteration` output starts at 1. After the requested count,
 execution continues at `done`. A body cannot also lead into that continuation
 or be entered by another control path. Arbitrary cycles are rejected.
 
-Programs support up to 128 nodes, 100 repeat iterations and 1,000 action steps.
-A single wait or network timeout is at most 60 seconds. Graph control limits
+Programs support up to 128 nodes and 100 repeat iterations. Ordinary execution
+has a 1,000-action budget; Every applies a separate bounded budget to each tick.
+A single wait or ordinary network timeout is at most 60 seconds. Graph control limits
 complement the ordinary executor's runtime, traffic and destination limits.
 
 Create a **sample collection** before Repeat, wire its handle to **Collect
