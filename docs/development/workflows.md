@@ -272,12 +272,20 @@ values to live plots or reports. Stop the service after the loop. The executor
 keeps sending probes and responding to peers while the visual program processes
 results. Each snapshot includes the measurement window; missing timing or loss
 evidence remains unavailable rather than becoming zero.
+Probes run at most once per second per peer. Report windows are interval
+multiples up to five minutes; snapshots retain at most four completed windows
+and report how many were skipped if the program reads too slowly.
 
 For TCP goodput, start a **TCP responder**, then use **TCP transfer** to send a
 bounded payload to an admitted peer. Use the deterministic pair schedule to
 give directed transfers separate time slots. Only receiver-confirmed bytes
 contribute to goodput. Configure both a byte limit and a deadline. This measures
 the useful transfer rate achieved by these endpoints, not spare link capacity.
+Each transfer sends at most 32 MiB over at most ten seconds, with up to two
+additional seconds for the final receipt, all within its pair slot. A shorter
+transfer is valid when the receiver confirms all bytes actually sent. Each run
+has separate conservative 8 GiB sending and receiving budgets; unsuccessful
+attempts still consume their reservation.
 
 These blocks require executors advertising their measurement-service host
 functions. They use the run's ordinary destination policy, traffic accounting,
@@ -299,7 +307,10 @@ and duration. Connect `body` to the actions for one sampling window and `done`
 to cleanup or a final report. Keep the body bounded; late iterations are skipped
 rather than replayed in a burst. Ordinary Repeat and For each item remain useful
 inside a window. Each window has an action budget, and the run's normal lifetime
-and traffic permissions still apply.
+and traffic permissions still apply. The duration stops new iterations; an
+ordinary action already in progress can finish afterward. Reserve time for that
+tail in the run policy. Mesh TCP transfers additionally honor their pair-slot
+and schedule deadlines.
 
 Repeat has a `body` and a `done` output. The body runs sequentially until its
 control path ends, then starts again. Its action outputs are cleared between
@@ -376,6 +387,9 @@ Consumers of block events should filter by the `debuglet.workflow.v1` schema.
 
 Individual strings are limited to 16 KiB and lists to 1,024 entries. Each event
 is at most 64 KiB; a run emits at most 4,096 events and 4 MiB of trace output.
+Periodic workflows instead retain up to 100,000 result records and 32 MiB,
+while limiting ordinary block tracing to 64 events and 64 KiB. Live samples and
+explicit report blocks remain recorded within the result budget.
 The experiment manifest is an additional record of at most 64 KiB.
 Large responses fail explicitly rather than silently producing complete-looking
 measurements.
