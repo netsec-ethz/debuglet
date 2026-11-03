@@ -5,14 +5,14 @@ package guestio
 
 // Optional host functions added after the original recoverable socket API.
 const (
-	TLSInspect   = "tls_inspect"
-	HopProbe     = "hop_probe"
-	ReceiveUDP   = "receive_udp"
-	ReplyUDP     = "reply_udp"
-	MeshStart    = "mesh_start"
-	MeshSnapshot = "mesh_snapshot"
-	MeshStop     = "mesh_stop"
-	MeshTransfer = "mesh_transfer"
+	TLSInspect           = "tls_inspect"
+	HopProbe             = "hop_probe"
+	ReceiveUDP           = "receive_udp"
+	ReplyUDP             = "reply_udp"
+	MeshStartFunction    = "mesh_start"
+	MeshSnapshotFunction = "mesh_snapshot"
+	MeshStopFunction     = "mesh_stop"
+	MeshTransferFunction = "mesh_transfer"
 )
 
 // SupportedHostFunctions returns the optional exports provided by this build.
@@ -21,10 +21,10 @@ const (
 func SupportedHostFunctions() []string {
 	return []string{
 		Module + "." + HopProbe,
-		Module + "." + MeshSnapshot,
-		Module + "." + MeshStart,
-		Module + "." + MeshStop,
-		Module + "." + MeshTransfer,
+		Module + "." + MeshSnapshotFunction,
+		Module + "." + MeshStartFunction,
+		Module + "." + MeshStopFunction,
+		Module + "." + MeshTransferFunction,
 		Module + "." + ReceiveUDP,
 		Module + "." + ReplyUDP,
 		Module + "." + TLSInspect,
