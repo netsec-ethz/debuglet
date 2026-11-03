@@ -229,11 +229,16 @@ func Validate(w Workflow) []Diagnostic {
 			}
 			if field == "duration_ms" {
 				min, max := float64(0), float64(60000)
-				if n.Block == "every" || n.Block == "udp_probe_start" || n.Block == "tcp_responder_start" {
+				whole := n.Block == "every" || n.Block == "udp_probe_start" || n.Block == "tcp_responder_start"
+				if whole {
 					min, max = 1, 86400000
 				}
-				if number < min || number > max || math.Trunc(number) != number {
-					add(n.ID, field, fmt.Sprintf("must be an integer between %.0f and %.0f ms", min, max))
+				if number < min || number > max || whole && math.Trunc(number) != number {
+					unit := "ms"
+					if whole {
+						unit = "whole milliseconds"
+					}
+					add(n.ID, field, fmt.Sprintf("must be between %.0f and %.0f %s", min, max, unit))
 				}
 			}
 		}

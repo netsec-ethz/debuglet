@@ -430,7 +430,8 @@ func Wait(v any) error {
 	if !ok || math.IsNaN(n) || n < 0 || n > 60000 {
 		return fmt.Errorf("wait must be between 0 and 60000 ms")
 	}
-	time.Sleep(time.Duration(n * float64(time.Millisecond)))
+	clock := scheduleState{}
+	clock.wait(time.Now().Add(time.Duration(n * float64(time.Millisecond))))
 	return nil
 }
 

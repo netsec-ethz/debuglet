@@ -27,6 +27,10 @@ func periodicWorkflow() Workflow {
 }
 
 func TestEveryGenerationAndScope(t *testing.T) {
+	legacy := Workflow{Version: 1, Name: "Fractional wait", Entry: "wait", Nodes: []Node{{ID: "wait", Block: "wait", Inputs: map[string]any{"duration_ms": 0.5}}}}
+	if ds := Validate(legacy); len(ds) != 0 {
+		t.Fatalf("legacy wait changed: %v", ds)
+	}
 	w := periodicWorkflow()
 	p, err := Generate(w)
 	if err != nil || !strings.Contains(p.Source, "runtime.Every") || !strings.Contains(p.Source, "runtime.Forget(\"out\")") {
