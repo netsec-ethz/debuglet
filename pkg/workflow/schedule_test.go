@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -156,5 +158,78 @@ func TestVisualMeshBoundsAndHostRequirements(t *testing.T) {
 	w := Workflow{Version: 1, Name: "Listener conflict", Entry: "start", Nodes: []Node{{ID: "start", Block: "tcp_responder_start"}, {ID: "message", Block: "await_message", Inputs: map[string]any{"source": "peer", "channel": "x"}}}}
 	if ds := Validate(w); len(ds) == 0 {
 		t.Fatal("TCP responder and message receiver share listener")
+	}
+}
+
+// Capability metadata must match compiled imports, not only generated source:
+// linking an unused service operation would reject otherwise legacy executors.
+func TestGeneratedMeshCapabilityImports(t *testing.T) {
+	if testing.Short() {
+		t.Skip("generated WASI compilation")
+	}
+	for _, kind := range []string{"legacy", "udp", "tcp"} {
+		t.Run(kind, func(t *testing.T) {
+			w := Workflow{Version: 1, Name: kind, Entry: "first", Nodes: []Node{{ID: "first", Block: "emit", Inputs: map[string]any{"name": "ready", "value": true}}}}
+			if kind != "legacy" {
+				start, middle, stop := "udp_probe_start", "udp_probe_snapshot", "udp_probe_stop"
+				if kind == "tcp" {
+					start, middle, stop = "tcp_responder_start", "tcp_transfer", "tcp_responder_stop"
+				}
+				w.Nodes = []Node{{ID: "first", Block: start}, {ID: "read", Block: middle}, {ID: "stop", Block: stop}}
+				w.Edges = []Edge{edge("control", "first", "next", "read", "in"), edge("control", "read", "next", "stop", "in"), edge("data", "first", "service", "stop", "service")}
+				if kind == "udp" {
+					w.Edges = append(w.Edges, edge("data", "first", "service", "read", "service"))
+				} else {
+					w.Nodes[1].Inputs = map[string]any{"peer": "b"}
+				}
+			}
+			e := Experiment{Version: 1, Kind: "experiment", Name: kind, Participants: []Participant{{ID: "a", Workflow: w}, {ID: "b", Workflow: w}}}
+			_, p, err := GenerateParticipant(e, "a")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if kind == "legacy" && strings.Contains(p.Source, "experiment.Close()") {
+				t.Fatal("legacy experiment linked service cleanup")
+			}
+			dir := t.TempDir()
+			source, binary := filepath.Join(dir, "main.go"), filepath.Join(dir, "imports.wasm")
+			if err := os.WriteFile(source, []byte(p.Source), 0600); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, "go", "build", "-buildvcs=false", "-o", binary, source)
+			cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GOPROXY=off", "GOSUMDB=off", "GOOS=wasip1", "GOARCH=wasm")
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("build: %v %s", err, output)
+			}
+			wasm, err := os.ReadFile(binary)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := wazero.NewRuntime(ctx)
+			defer r.Close(ctx)
+			module, err := r.CompileModule(ctx, wasm)
+			if err != nil {
+				t.Fatal(err)
+			}
+			actual, declared := []string{}, []string{}
+			for _, function := range module.ImportedFunctions() {
+				namespace, name, _ := function.Import()
+				if namespace == "debuglet_io_v1" && strings.HasPrefix(name, "mesh_") {
+					actual = append(actual, namespace+"."+name)
+				}
+			}
+			for _, name := range p.RequiredHostFunctions {
+				if strings.HasPrefix(name, "debuglet_io_v1.mesh_") {
+					declared = append(declared, name)
+				}
+			}
+			slices.Sort(actual)
+			slices.Sort(declared)
+			if !reflect.DeepEqual(actual, declared) {
+				t.Fatalf("actual imports %v; declared %v", actual, declared)
+			}
+		})
 	}
 }

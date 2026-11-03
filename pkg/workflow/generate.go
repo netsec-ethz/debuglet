@@ -99,8 +99,15 @@ func generate(w Workflow, experimentConfig string) (Program, error) {
 			return Program{}, fmt.Errorf("experiment manifest exceeds 64 KiB")
 		}
 		out.WriteString("var experiment *guest.Experiment\n")
+		cleanup := ""
+		for _, n := range w.Nodes {
+			if n.Block == "udp_probe_start" || n.Block == "tcp_responder_start" {
+				cleanup = "defer experiment.Close();"
+				break
+			}
+		}
 		// Retain the declared graph even if readiness fails before the first block.
-		fmt.Fprintf(&out, "func main(){if _,err:=fmt.Fprintln(os.Stdout,%q);err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)};var err error;experiment,err=guest.JoinExperiment(%q);if err==nil{err=func()error{defer experiment.Close();runtime.SetScheduleAnchor(experiment.StartTime());return run%d()}()};if err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)}}\n", string(manifest), experimentConfig, indexes[w.Entry])
+		fmt.Fprintf(&out, "func main(){if _,err:=fmt.Fprintln(os.Stdout,%q);err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)};var err error;experiment,err=guest.JoinExperiment(%q);if err==nil{err=func()error{%sruntime.SetScheduleAnchor(experiment.StartTime());return run%d()}()};if err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)}}\n", string(manifest), experimentConfig, cleanup, indexes[w.Entry])
 	}
 	for i, c := range w.CustomBlocks {
 		fmt.Fprintf(&out, "// Custom block %s\nfunc custom%d(inputs map[string]any)(map[string]any,error){\n%s\n}\n", c.ID, i, c.Code)
