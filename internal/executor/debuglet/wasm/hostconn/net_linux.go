@@ -7,44 +7,57 @@ package hostconn
 
 import (
 	"context"
-	"net"
 	"time"
 
 	"golang.org/x/sys/unix"
 )
 
-func (h *HostConn) Drain(ctx context.Context) {
-	tcpConn, ok := h.conn.(*net.TCPConn)
-	if !ok {
-		return
+// Drain keeps the legacy guest ABI; recoverable socket close reports failures.
+func (h *HostConn) Drain(ctx context.Context) { _ = h.DrainTCP(ctx) }
+
+// DrainTCP lets the kernel finish queued TCP writes before accounting is
+// detached. Kernel acknowledgements do not require the peer's application to
+// read, so peers can both send before receiving without a protocol deadlock.
+// Forced close and destination revocation bypass this bounded guest operation.
+func (h *HostConn) DrainTCP(ctx context.Context) error {
+	if h.tcp == nil {
+		return nil
 	}
-	rawConn, err := tcpConn.SyscallConn()
+	deadline := time.Now().Add(2 * time.Second)
+	h.deadlineMu.Lock()
+	if !h.writeDeadline.IsZero() && h.writeDeadline.Before(deadline) {
+		deadline = h.writeDeadline
+	}
+	h.deadlineMu.Unlock()
+	ctx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	raw, err := h.tcp.SyscallConn()
 	if err != nil {
-		return
+		return err
 	}
 	for {
-		var (
-			info *unix.TCPInfo
-			err  error
-		)
-		rawConn.Control(func(fd uintptr) {
-			info, err = unix.GetsockoptTCPInfo(int(fd), unix.IPPROTO_TCP, unix.TCP_INFO)
-		})
-
-		if err != nil || info == nil || info.Notsent_bytes == 0 {
-			return
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-
-		estDuration := 200 * time.Millisecond
-		if h.limit > 0 {
-			estDuration = time.Duration(float64(info.Notsent_bytes) / float64(h.limit) * float64(time.Second))
+		var info *unix.TCPInfo
+		var infoErr error
+		if err := raw.Control(func(fd uintptr) {
+			info, infoErr = unix.GetsockoptTCPInfo(int(fd), unix.IPPROTO_TCP, unix.TCP_INFO)
+		}); err != nil {
+			return err
 		}
-		waitFor := max(min(time.Second, estDuration/2), 10*time.Millisecond)
-
+		if infoErr != nil {
+			return infoErr
+		}
+		if info.Notsent_bytes == 0 && info.Unacked == 0 {
+			return nil
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
 		select {
-		case <-time.After(waitFor):
+		case <-timer.C:
 		case <-ctx.Done():
-			return
+			timer.Stop()
+			return ctx.Err()
 		}
 	}
 }

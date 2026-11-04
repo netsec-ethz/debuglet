@@ -26,11 +26,14 @@ type HostConn struct {
 	id    uuid.UUID
 	limit bitrate.Bitrate
 
-	conn       net.Conn
-	connCtx    context.Context
-	socketID   uint32
-	socketType socket.SocketType
-	tlsState   *tls.ConnectionState
+	conn          net.Conn
+	tcp           *net.TCPConn // Retained before accounting/policy wrappers hide it.
+	deadlineMu    sync.Mutex
+	writeDeadline time.Time
+	connCtx       context.Context
+	socketID      uint32
+	socketType    socket.SocketType
+	tlsState      *tls.ConnectionState
 
 	closeOnce sync.Once
 	closeErr  error
@@ -75,11 +78,14 @@ func NewConnection(ctx context.Context, pc ratelimit.PacketCount, id uuid.UUID, 
 		return nil, fmt.Errorf("failed to set limit: %w", err)
 	}
 	var state *tls.ConnectionState
+	transport := conn
 	if secured, ok := conn.(*tls.Conn); ok {
 		value := secured.ConnectionState()
 		state = &value
+		transport = secured.NetConn()
 	}
-	return &HostConn{pc: pc, id: id, limit: opts.MaximumBandwidth, connCtx: ctx, socketType: opts.SocketType, tlsState: state, conn: opts.Egress.Wrap(attached)}, nil
+	tcp, _ := transport.(*net.TCPConn)
+	return &HostConn{tcp: tcp, pc: pc, id: id, limit: opts.MaximumBandwidth, connCtx: ctx, socketType: opts.SocketType, tlsState: state, conn: opts.Egress.Wrap(attached)}, nil
 }
 
 // TLSState returns the connection state captured before accounting
@@ -119,5 +125,13 @@ func (h *HostConn) Addr() string {
 
 func (h *HostConn) RemoteAddr() string { return h.conn.RemoteAddr().String() }
 
-func (h *HostConn) SetReadDeadline(t time.Time) error  { return h.conn.SetReadDeadline(t) }
-func (h *HostConn) SetWriteDeadline(t time.Time) error { return h.conn.SetWriteDeadline(t) }
+func (h *HostConn) SetReadDeadline(t time.Time) error { return h.conn.SetReadDeadline(t) }
+func (h *HostConn) SetWriteDeadline(t time.Time) error {
+	if err := h.conn.SetWriteDeadline(t); err != nil {
+		return err
+	}
+	h.deadlineMu.Lock()
+	h.writeDeadline = t
+	h.deadlineMu.Unlock()
+	return nil
+}

@@ -8,3 +8,5 @@ package hostconn
 import "context"
 
 func (h *HostConn) Drain(ctx context.Context) {}
+
+func (h *HostConn) DrainTCP(ctx context.Context) error { return nil }

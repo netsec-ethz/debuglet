@@ -171,11 +171,17 @@ func hostIOWrite(env *WasmEnv) func(context.Context, Memory, int32, uint32, uint
 }
 
 func HostIOClose(env *WasmEnv) func(context.Context, int32) uint64 {
-	return func(_ context.Context, handle int32) uint64 {
-		if _, err := ioSocket(env, handle); err != nil {
+	return func(ctx context.Context, handle int32) uint64 {
+		sock, err := ioSocket(env, handle)
+		if err != nil {
 			return ioResult(0, err)
 		}
-		return ioResult(0, env.Registry.Close(handle))
+		var drainErr error
+		if tcp, ok := sock.(interface{ DrainTCP(context.Context) error }); ok {
+			drainErr = tcp.DrainTCP(ctx)
+		}
+		// Even a timed-out drain must release the handle and its rate entry.
+		return ioResult(0, errors.Join(drainErr, env.Registry.Close(handle)))
 	}
 }
 
