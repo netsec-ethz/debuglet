@@ -172,6 +172,18 @@ using fixed sample data, with no network access needed.
 
 ### Live graphs
 
+Use **Log event** in **Results** to mark meaningful steps such as “Fault detected”,
+“Peers triggered” and “Diagnosis ready”. Connect its control input and `next`
+to the actions it describes: it emits only when execution reaches the block.
+Provide a short `message` and optionally wire selected JSON fields into `details`.
+The console shows these events in Activity and live results with their participant
+and guest timestamp. Executor clocks need not agree, so timestamps alone do not
+prove the order of events across machines. Do not put credentials in event details.
+
+Messages allow 1–1,024 UTF-8 bytes and details at most 8 KiB of JSON. Events survive
+Every's diagnostic trace suppression and share the same total output budget as
+other reports. Retained run output contains each event for later viewing or export.
+
 Drag **Plot sample** from **Results** onto the canvas, connect a numeric output
 to `value`, and connect the action's control path through the block. Set `name`
 and an optional `unit`; use `series` to distinguish peers or directions. Each

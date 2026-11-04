@@ -83,7 +83,7 @@ func (r *Runtime) event(node, block, status string, outputs map[string]any, mess
 	}
 	// Periodic workflows keep explicit results, not a trace of every probe and
 	// arithmetic operation. Values still update even when tracing is exhausted.
-	trace := r.schedule.used && status == "completed" && block != "emit" &&
+	trace := r.schedule.used && status == "completed" && block != "emit" && block != "log_event" &&
 		block != "report_metric" && block != "report_table" && block != "report_text" && block != "report_chart"
 	if trace && (r.schedule.traceEvents >= 64 || r.schedule.traceBytes >= 64*1024) {
 		return nil

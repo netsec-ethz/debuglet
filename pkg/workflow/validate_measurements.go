@@ -26,6 +26,10 @@ func validateMeasurementInputs(n Node, add func(string, string, string)) {
 	}
 	validateSCIONInputs(n, add)
 	switch n.Block {
+	case "log_event":
+		if value, ok := n.Inputs["message"].(string); ok && (!utf8.ValidString(value) || strings.TrimSpace(value) == "" || len(value) > 1024) {
+			add(n.ID, "message", "must contain 1–1024 UTF-8 bytes and not be blank")
+		}
 	case "plot_sample":
 		for _, field := range []struct {
 			name     string

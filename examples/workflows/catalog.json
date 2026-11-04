@@ -1719,6 +1719,42 @@
     ]
   },
   {
+    "id": "log_event",
+    "label": "Log event",
+    "category": "Results",
+    "description": "Record a short message and optional JSON details when this action executes. Appears in run activity and live results, stamped with this executor's clock. Message: 1–1024 UTF-8 bytes; details: at most 8 KiB. Uses the workflow's output limits.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "message",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "details",
+        "type": "any",
+        "default": {}
+      }
+    ],
+    "outputs": [
+      {
+        "name": "message",
+        "type": "string"
+      },
+      {
+        "name": "details",
+        "type": "any"
+      },
+      {
+        "name": "timestamp_ms",
+        "type": "number"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
     "id": "plot_sample",
     "label": "Plot sample",
     "category": "Results",
