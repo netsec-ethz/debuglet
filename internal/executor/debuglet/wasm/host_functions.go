@@ -702,6 +702,9 @@ func hostReceiveSCIONServerUDPPacket(env *WasmEnv) func(ctx context.Context, mod
 			panic(fmt.Errorf("receive_scion_server_udp_packet: %w", err))
 		}
 		defer env.scionListenerMu.Unlock()
+		if env.scionQUICOwnsListener() {
+			panic(netpolicy.ErrDenied)
+		}
 		if err := ctx.Err(); err != nil {
 			panic(fmt.Errorf("receive_scion_server_udp_packet: %w", context.Cause(ctx)))
 		}
@@ -782,6 +785,9 @@ func hostAnswerSCIONUDPPacket(env *WasmEnv, addresses []string) func(ctx context
 			panic(fmt.Errorf("answer_scion_udp_packet: %w", err))
 		}
 		defer env.scionListenerMu.Unlock()
+		if env.scionQUICOwnsListener() {
+			panic(netpolicy.ErrDenied)
+		}
 		if err := ctx.Err(); err != nil {
 			panic(fmt.Errorf("answer_scion_udp_packet: %w", context.Cause(ctx)))
 		}

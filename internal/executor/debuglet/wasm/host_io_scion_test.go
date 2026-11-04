@@ -121,3 +121,23 @@ func TestSCIONSameASRequiresExplicitLocalPath(t *testing.T) {
 		t.Fatalf("local silently accepted other path: %v", err)
 	}
 }
+
+func TestSCIONQUICClaimExcludesRawListenerOperations(t *testing.T) {
+	spec := localSpec()
+	spec.SCION = true
+	env := policyEnv(t, spec, netpolicy.Run{Addresses: []string{"127.0.0.1"}, ListenSCION: true})
+	env.scionQUICUsed = true
+	for _, op := range []string{guestio.SCIONReceive, guestio.SCIONReply} {
+		_, err := runSCION(t.Context(), env, op, guestio.SCIONRequest{Address: "1-ff00:0:110,127.0.0.1:1", MaxBytes: 1})
+		if !errors.Is(err, netpolicy.ErrDenied) {
+			t.Fatalf("%s claim: %v", op, err)
+		}
+	}
+	// Stop is idempotent without restoring raw access to the claimed listener.
+	if err := env.stopSCIONQUICEcho(); err != nil {
+		t.Fatal(err)
+	}
+	if !env.scionQUICOwnsListener() {
+		t.Fatal("stop restored raw listener access")
+	}
+}

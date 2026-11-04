@@ -1,0 +1,321 @@
+{
+  "version": 1,
+  "name": "SCION QUIC echo responder \u2014 three minutes",
+  "entry": "start",
+  "nodes": [
+    {
+      "id": "start",
+      "block": "scion_quic_echo_start",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "inputs": {
+        "timeout_ms": 2000
+      }
+    },
+    {
+      "id": "started",
+      "block": "if",
+      "position": {
+        "x": 0,
+        "y": 240
+      }
+    },
+    {
+      "id": "start_error",
+      "block": "report_text",
+      "position": {
+        "x": -360,
+        "y": 480
+      },
+      "inputs": {
+        "title": "SCION QUIC responder did not start"
+      }
+    },
+    {
+      "id": "address",
+      "block": "report_text",
+      "position": {
+        "x": 0,
+        "y": 480
+      },
+      "inputs": {
+        "title": "SCION QUIC endpoint"
+      }
+    },
+    {
+      "id": "pin",
+      "block": "report_text",
+      "position": {
+        "x": 0,
+        "y": 720
+      },
+      "inputs": {
+        "title": "Expected certificate SHA-256"
+      }
+    },
+    {
+      "id": "instructions",
+      "block": "report_text",
+      "position": {
+        "x": 0,
+        "y": 960
+      },
+      "inputs": {
+        "title": "Connect using the SCION QUIC client",
+        "text": "Copy this endpoint and certificate SHA-256 from these trusted run results into the SCION QUIC client template. Do not trust a certificate pin received only through a plaintext experiment message. The responder stays available for three minutes, then stops; allow a run duration longer than three minutes."
+      }
+    },
+    {
+      "id": "hold",
+      "block": "repeat",
+      "position": {
+        "x": 0,
+        "y": 1200
+      },
+      "inputs": {
+        "count": 3
+      }
+    },
+    {
+      "id": "wait",
+      "block": "wait",
+      "position": {
+        "x": 0,
+        "y": 1450
+      },
+      "inputs": {
+        "duration_ms": 60000
+      }
+    },
+    {
+      "id": "stop",
+      "block": "scion_quic_echo_stop",
+      "position": {
+        "x": 380,
+        "y": 1450
+      }
+    },
+    {
+      "id": "stopped",
+      "block": "if",
+      "position": {
+        "x": 380,
+        "y": 1690
+      }
+    },
+    {
+      "id": "done",
+      "block": "report_text",
+      "position": {
+        "x": 380,
+        "y": 1930
+      },
+      "inputs": {
+        "title": "SCION QUIC responder stopped",
+        "text": "The three-minute listening period has ended."
+      }
+    },
+    {
+      "id": "stop_error",
+      "block": "report_text",
+      "position": {
+        "x": -20,
+        "y": 1930
+      },
+      "inputs": {
+        "title": "SCION QUIC stop reported an error"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "kind": "data",
+      "from": {
+        "node": "start",
+        "port": "ok"
+      },
+      "to": {
+        "node": "started",
+        "port": "condition"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "start",
+        "port": "next"
+      },
+      "to": {
+        "node": "started",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "start",
+        "port": "error"
+      },
+      "to": {
+        "node": "start_error",
+        "port": "text"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "started",
+        "port": "false"
+      },
+      "to": {
+        "node": "start_error",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "start",
+        "port": "address"
+      },
+      "to": {
+        "node": "address",
+        "port": "text"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "started",
+        "port": "true"
+      },
+      "to": {
+        "node": "address",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "start",
+        "port": "certificate_sha256"
+      },
+      "to": {
+        "node": "pin",
+        "port": "text"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "address",
+        "port": "next"
+      },
+      "to": {
+        "node": "pin",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "pin",
+        "port": "next"
+      },
+      "to": {
+        "node": "instructions",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "instructions",
+        "port": "next"
+      },
+      "to": {
+        "node": "hold",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "hold",
+        "port": "body"
+      },
+      "to": {
+        "node": "wait",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "hold",
+        "port": "done"
+      },
+      "to": {
+        "node": "stop",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "stop",
+        "port": "ok"
+      },
+      "to": {
+        "node": "stopped",
+        "port": "condition"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "stop",
+        "port": "next"
+      },
+      "to": {
+        "node": "stopped",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "stopped",
+        "port": "true"
+      },
+      "to": {
+        "node": "done",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "stop",
+        "port": "error"
+      },
+      "to": {
+        "node": "stop_error",
+        "port": "text"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "stopped",
+        "port": "false"
+      },
+      "to": {
+        "node": "stop_error",
+        "port": "in"
+      }
+    }
+  ]
+}

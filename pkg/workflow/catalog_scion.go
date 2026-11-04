@@ -8,6 +8,14 @@ func scionCatalog() []Block {
 		return append([]Port{output("ok", "boolean"), output("error", "string")}, ports...)
 	}
 	return []Block{
+		{"scion_quic_echo_start", "Start SCION QUIC echo", "Network", "Start a bounded reliable echo service on this run's SCION listener. Reports its endpoint and SHA256 of the DER leaf certificate. Distribute the pin through a trusted channel; plaintext experiment messages do not establish identity. Owns the listener until stopped or the run ends; cannot share it with raw SCION receive/reply.", false,
+			[]Port{optional("timeout_ms", "number", float64(2000))},
+			status(output("address", "string"), output("certificate_sha256", "string")), []string{"next"}},
+		{"scion_quic_echo_stop", "Stop SCION QUIC echo", "Network", "Stop this run's reliable SCION echo service and release its sockets. Repeated stop is safe; the service cannot be restarted within the same run.", false,
+			[]Port{}, status(), []string{"next"}},
+		{"scion_quic_exchange", "SCION QUIC exchange", "Network", "Send up to 4096 bytes and receive a reliable echo over QUIC/TLS on an exact SCION path, with a timeout of at most 10 seconds. Requires a trusted expected SHA256 DER leaf certificate pin. Reports verified only after checking the actual peer certificate. This is a fixed echo protocol, not HTTP/3 or TCP; path_id describes the outgoing path only.", false,
+			[]Port{input("address", "string"), input("path_id", "string"), input("certificate_sha256", "string"), optional("payload", "string", ""), optional("encoding", "string", "text"), optional("timeout_ms", "number", float64(5000))},
+			status(output("response", "string"), output("response_base64", "string"), output("sender", "string"), output("path_id", "string"), output("handshake_ms", "number"), output("duration_ms", "number"), output("verified", "boolean")), []string{"next"}},
 		{"scion_paths", "Discover SCION paths", "Network", "Discover paths from this executor to a SCION UDP endpoint (ISD-AS,IP:port). Each path has an opaque id, interfaces, hop_count, mtu and expires_ms. Discovery is not proof of delivery. Use ordinary list, field and filter blocks to inspect paths.", false,
 			[]Port{input("address", "string"), optional("timeout_ms", "number", float64(2000))},
 			status(output("paths", "any")), []string{"next"}},
@@ -31,6 +39,7 @@ func scionCatalog() []Block {
 func scionHostFunction(block string) string {
 	return map[string]string{
 		"scion_paths": "scion_paths", "scion_select_path": "scion_select_path",
+		"scion_quic_echo_start": "scion_quic_echo_start", "scion_quic_echo_stop": "scion_quic_echo_stop", "scion_quic_exchange": "scion_quic_exchange",
 		"scion_udp_exchange": "scion_exchange", "scion_listener_address": "scion_listener_address",
 		"scion_receive": "scion_receive", "scion_reply": "scion_reply",
 	}[block]

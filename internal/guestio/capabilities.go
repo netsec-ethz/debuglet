@@ -15,6 +15,9 @@ const (
 	SCIONListenerAddressFunction = "scion_listener_address"
 	SCIONReceive                 = "scion_receive"
 	SCIONReply                   = "scion_reply"
+	SCIONQUICEchoStart           = "scion_quic_echo_start"
+	SCIONQUICEchoStop            = "scion_quic_echo_stop"
+	SCIONQUICExchangeFunction    = "scion_quic_exchange"
 	MeshStartFunction            = "mesh_start"
 	MeshSnapshotFunction         = "mesh_snapshot"
 	MeshStopFunction             = "mesh_stop"
@@ -36,6 +39,9 @@ func SupportedHostFunctions() []string {
 		Module + "." + SCIONExchangeFunction,
 		Module + "." + SCIONListenerAddressFunction,
 		Module + "." + SCIONPaths,
+		Module + "." + SCIONQUICEchoStart,
+		Module + "." + SCIONQUICEchoStop,
+		Module + "." + SCIONQUICExchangeFunction,
 		Module + "." + SCIONReceive,
 		Module + "." + SCIONReply,
 		Module + "." + SCIONSelectPath,

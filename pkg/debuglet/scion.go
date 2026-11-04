@@ -4,6 +4,7 @@
 package debuglet
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -95,11 +96,20 @@ func scionCall(operation string, invoke func([]byte) ([]byte, error), req guesti
 			return result, fmt.Errorf("debuglet: invalid SCION receive size")
 		}
 	}
-	if operation != guestio.SCIONReceive && operation != guestio.SCIONListenerAddressFunction && req.Address == "" {
+	if operation != guestio.SCIONReceive && operation != guestio.SCIONListenerAddressFunction && operation != guestio.SCIONQUICEchoStart && operation != guestio.SCIONQUICEchoStop && req.Address == "" {
 		return result, fmt.Errorf("debuglet: SCION address is required")
 	}
-	if (operation == guestio.SCIONSelectPath || operation == guestio.SCIONExchangeFunction) && req.PathID == "" {
+	if (operation == guestio.SCIONSelectPath || operation == guestio.SCIONExchangeFunction || operation == guestio.SCIONQUICExchangeFunction) && req.PathID == "" {
 		return result, fmt.Errorf("debuglet: an exact SCION path ID is required")
+	}
+	if operation == guestio.SCIONQUICExchangeFunction {
+		if req.TimeoutNS > int64(10*time.Second) {
+			return result, fmt.Errorf("debuglet: SCION QUIC exchange timeout exceeds 10 seconds")
+		}
+		pin, err := hex.DecodeString(req.CertificateSHA256)
+		if err != nil || len(pin) != 32 {
+			return result, fmt.Errorf("debuglet: a SHA256 certificate pin is required")
+		}
 	}
 	data, err := json.Marshal(req)
 	if err != nil {

@@ -242,8 +242,8 @@ func generate(w Workflow, experimentConfig string) (Program, error) {
 				out.WriteString("values,err:=runtime.ResetCollection(in)\n")
 			case "dns_query":
 				out.WriteString("values,err:=guest.DNSQuery(in)\n")
-			case "scion_paths", "scion_select_path", "scion_udp_exchange", "scion_listener_address", "scion_receive", "scion_reply":
-				function := map[string]string{"scion_paths": "SCIONPaths", "scion_select_path": "SCIONSelectPath", "scion_udp_exchange": "SCIONUDPExchange", "scion_listener_address": "SCIONListenerAddress", "scion_receive": "SCIONReceive", "scion_reply": "SCIONReply"}[n.Block]
+			case "scion_paths", "scion_select_path", "scion_udp_exchange", "scion_listener_address", "scion_receive", "scion_reply", "scion_quic_echo_start", "scion_quic_echo_stop", "scion_quic_exchange":
+				function := map[string]string{"scion_paths": "SCIONPaths", "scion_select_path": "SCIONSelectPath", "scion_udp_exchange": "SCIONUDPExchange", "scion_listener_address": "SCIONListenerAddress", "scion_receive": "SCIONReceive", "scion_reply": "SCIONReply", "scion_quic_echo_start": "SCIONQUICEchoStart", "scion_quic_echo_stop": "SCIONQUICEchoStop", "scion_quic_exchange": "SCIONQUICExchange"}[n.Block]
 				fmt.Fprintf(&out, "values,err:=guest.%s(in)\n", function)
 			case "udp_exchange":
 				out.WriteString("values,err:=guest.UDPExchange(in)\n")
@@ -287,7 +287,7 @@ func generate(w Workflow, experimentConfig string) (Program, error) {
 	for _, n := range w.Nodes {
 		if function := scionHostFunction(n.Block); function != "" {
 			program.RequireSCION = true
-			if n.Block == "scion_listener_address" || n.Block == "scion_receive" || n.Block == "scion_reply" {
+			if n.Block == "scion_listener_address" || n.Block == "scion_receive" || n.Block == "scion_reply" || n.Block == "scion_quic_echo_start" || n.Block == "scion_quic_echo_stop" {
 				program.RequireSCIONListener = true
 			}
 			name := "debuglet_io_v1." + function

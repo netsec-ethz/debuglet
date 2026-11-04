@@ -262,13 +262,14 @@ func Validate(w Workflow) []Diagnostic {
 		}
 	}
 	periodic := 0
-	hasTCPReceiver, hasUDPService := false, false
+	hasTCPReceiver, hasUDPService, hasSCIONQUICEcho := false, false, false
 	for _, n := range w.Nodes {
 		if n.Block == "every" {
 			periodic++
 		}
 		hasTCPReceiver = hasTCPReceiver || n.Block == "tcp_responder_start"
 		hasUDPService = hasUDPService || n.Block == "udp_probe_start"
+		hasSCIONQUICEcho = hasSCIONQUICEcho || n.Block == "scion_quic_echo_start"
 	}
 	if periodic > 1 {
 		add("", "", "a workflow may contain only one Every schedule")
@@ -276,6 +277,9 @@ func Validate(w Workflow) []Diagnostic {
 	for _, n := range w.Nodes {
 		if hasTCPReceiver && (n.Block == "send_message" || n.Block == "await_message" || n.Block == "phase_barrier") {
 			add(n.ID, "", "TCP receiver owns the listener; message channels and phase barriers cannot share it")
+		}
+		if hasSCIONQUICEcho && (n.Block == "scion_receive" || n.Block == "scion_reply") {
+			add(n.ID, "", "SCION QUIC echo owns the listener; raw SCION receive and reply cannot share it")
 		}
 		if hasUDPService && (n.Block == "udp_receive" || n.Block == "udp_reply") {
 			add(n.ID, "", "UDP probes own the listener; receive and reply blocks cannot share it")

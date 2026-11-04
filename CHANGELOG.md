@@ -27,6 +27,8 @@ documentation contain operational details.
   validate.
 
 ### Added
+- SCION QUIC echo measurements with certificate pinning, separate handshake and
+  exchange timing, and visual client/responder templates for dedicated executors.
 - SCION path discovery, exact path selection and UDP exchange/listener workflow
   blocks for dedicated SCION-enabled executors, with explicit runtime requirements
   in compiled bundles (API 1.30).

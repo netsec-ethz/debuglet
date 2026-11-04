@@ -137,6 +137,9 @@ func Functions(env *WasmEnv) []Function {
 		function(guestio.Module, guestio.SCIONListenerAddressFunction, hostSCION(env, guestio.SCIONListenerAddressFunction)),
 		function(guestio.Module, guestio.SCIONReceive, hostSCION(env, guestio.SCIONReceive)),
 		function(guestio.Module, guestio.SCIONReply, hostSCION(env, guestio.SCIONReply)),
+		function(guestio.Module, guestio.SCIONQUICEchoStart, hostSCION(env, guestio.SCIONQUICEchoStart)),
+		function(guestio.Module, guestio.SCIONQUICEchoStop, hostSCION(env, guestio.SCIONQUICEchoStop)),
+		function(guestio.Module, guestio.SCIONQUICExchangeFunction, hostSCION(env, guestio.SCIONQUICExchangeFunction)),
 		function(ExperimentModule, "ready", hostExperimentReady(env)),
 	}
 }

@@ -77,7 +77,16 @@ func hostSCION(env *WasmEnv, operation string) func(context.Context, Memory, uin
 		if _, ok := opCtx.Deadline(); !ok {
 			return ioResult(0, fmt.Errorf("SCION operation requires a deadline"))
 		}
-		result, operationErr := runSCION(opCtx, env, operation, req)
+		var result guestio.SCIONResponse
+		var operationErr error
+		if operation == guestio.SCIONQUICEchoStart || operation == guestio.SCIONQUICEchoStop || operation == guestio.SCIONQUICExchangeFunction {
+			result, operationErr = runSCIONQUIC(ctx, opCtx, env, operation, req)
+		} else {
+			result, operationErr = runSCION(opCtx, env, operation, req)
+		}
+		if errors.Is(operationErr, socket.ErrSCIONQUICCertificate) {
+			result.Error = "SCION QUIC certificate did not match the required pin"
+		}
 		if errors.Is(operationErr, socket.ErrSCIONPathUnavailable) {
 			result.Error = "SCION path is unavailable or expired; discover paths again"
 		}
@@ -155,6 +164,9 @@ func runSCION(ctx context.Context, env *WasmEnv, operation string, req guestio.S
 		defer env.scionListenerMu.Unlock()
 		if err := ctx.Err(); err != nil {
 			return result, context.Cause(ctx)
+		}
+		if env.scionQUICOwnsListener() {
+			return result, netpolicy.ErrDenied
 		}
 		listener := env.ScionServer
 		if listener == nil {

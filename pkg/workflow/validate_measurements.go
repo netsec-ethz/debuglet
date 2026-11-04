@@ -47,7 +47,7 @@ func validateMeasurementInputs(n Node, add func(string, string, string)) {
 	case "scion_udp_exchange", "scion_receive":
 		enum("encoding", "text", "base64")
 		integer("max_bytes", 4096)
-	case "scion_reply":
+	case "scion_reply", "scion_quic_exchange":
 		enum("encoding", "text", "base64")
 	case "udp_exchange":
 		enum("encoding", "text", "base64")

@@ -4,6 +4,7 @@
 package workflow
 
 import (
+	"encoding/hex"
 	"fmt"
 	"net"
 	"strconv"
@@ -36,6 +37,16 @@ func validateSCIONInputs(n Node, add func(string, string, string)) {
 	if address, ok := n.Inputs["address"].(string); ok {
 		if _, err := scionDestinationHost(address); err != nil {
 			add(n.ID, "address", err.Error())
+		}
+	}
+	if n.Block == "scion_quic_exchange" {
+		if timeout, ok := asNumber(n.Inputs["timeout_ms"]); ok && timeout > 10000 {
+			add(n.ID, "timeout_ms", "SCION QUIC exchange timeout must not exceed 10000 ms")
+		}
+	}
+	if pin, ok := n.Inputs["certificate_sha256"].(string); ok {
+		if _, err := hex.DecodeString(pin); err != nil || len(pin) != 64 || strings.ToLower(pin) != pin {
+			add(n.ID, "certificate_sha256", "enter the trusted certificate's SHA256 DER leaf pin as 64 lowercase hexadecimal characters")
 		}
 	}
 	if id, ok := n.Inputs["path_id"].(string); ok && strings.TrimSpace(id) == "" {
