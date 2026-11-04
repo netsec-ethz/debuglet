@@ -341,7 +341,7 @@ func (d *Debuglet) StartServers(ctx context.Context, req StartServersReq) error 
 		if err != nil {
 			return fmt.Errorf("startServers: SCION listener: %w", err)
 		}
-		scionServer, err := pan.ListenUDP(ctx, netip.AddrPortFrom(scionAddr.IP, 0), nil)
+		scionServer, err := pan.ListenUDP(ctx, netip.AddrPortFrom(scionAddr.IP, 0), socket.NewBoundedSCIONReplySelector())
 		if err != nil {
 			reservation.Release()
 			return fmt.Errorf("startServers: failed to start SCION UDP listener: %w", err)

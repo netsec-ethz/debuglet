@@ -11,3 +11,7 @@ func invokeSCIONExchange([]byte) ([]byte, error)        { panic(offTarget) }
 func invokeSCIONListenerAddress([]byte) ([]byte, error) { panic(offTarget) }
 func invokeSCIONReceive([]byte) ([]byte, error)         { panic(offTarget) }
 func invokeSCIONReply([]byte) ([]byte, error)           { panic(offTarget) }
+
+func invokeSCIONQUICEchoStart([]byte) ([]byte, error) { panic(offTarget) }
+func invokeSCIONQUICEchoStop([]byte) ([]byte, error)  { panic(offTarget) }
+func invokeSCIONQUICExchange([]byte) ([]byte, error)  { panic(offTarget) }

@@ -41,3 +41,19 @@ func TestSCIONResponsePreservesPartialEvidenceAndSafeReason(t *testing.T) {
 		t.Fatalf("path reason lost: %+v %v", r, err)
 	}
 }
+
+func TestSCIONQUICRequiresExplicitCertificatePin(t *testing.T) {
+	for _, pin := range []string{"", "not-a-pin", strings.Repeat("a", 62), strings.Repeat("g", 64)} {
+		_, err := scionCall(guestio.SCIONQUICExchangeFunction, func([]byte) ([]byte, error) { t.Fatal("invalid pin reached host"); return nil, nil }, guestio.SCIONRequest{Address: "peer", PathID: "path", CertificateSHA256: pin})
+		if err == nil {
+			t.Fatalf("accepted pin %q", pin)
+		}
+	}
+}
+
+func TestSCIONQUICRejectsTimeoutBeyondBound(t *testing.T) {
+	_, err := scionCall(guestio.SCIONQUICExchangeFunction, func([]byte) ([]byte, error) { t.Fatal("excessive timeout reached host"); return nil, nil }, guestio.SCIONRequest{Address: "peer", PathID: "path", CertificateSHA256: strings.Repeat("a", 64), TimeoutNS: int64(11 * time.Second)})
+	if err == nil {
+		t.Fatal("accepted timeout beyond 10 seconds")
+	}
+}

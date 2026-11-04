@@ -43,21 +43,42 @@ type SCIONDatagram struct {
 	Truncated    bool   `json:"truncated"`
 }
 
-// SCIONRequest is a bounded request shared by the six optional SCION imports.
+// SCIONRequest is a bounded request shared by the optional SCION imports.
 type SCIONRequest struct {
-	Address   string `json:"address,omitempty"`
-	PathID    string `json:"path_id,omitempty"`
-	Payload   []byte `json:"payload,omitempty"`
-	MaxBytes  int    `json:"max_bytes,omitempty"`
-	TimeoutNS int64  `json:"timeout_ns,omitempty"`
+	Address           string `json:"address,omitempty"`
+	PathID            string `json:"path_id,omitempty"`
+	Payload           []byte `json:"payload,omitempty"`
+	MaxBytes          int    `json:"max_bytes,omitempty"`
+	TimeoutNS         int64  `json:"timeout_ns,omitempty"`
+	CertificateSHA256 string `json:"certificate_sha256,omitempty"`
 }
 
 type SCIONResponse struct {
-	Error    string         `json:"error,omitempty"`
-	Paths    []SCIONPath    `json:"paths,omitempty"`
-	Path     *SCIONPath     `json:"path,omitempty"`
-	Exchange *SCIONExchange `json:"exchange,omitempty"`
-	Datagram *SCIONDatagram `json:"datagram,omitempty"`
-	Address  string         `json:"address,omitempty"`
-	Bytes    int            `json:"bytes,omitempty"`
+	Error        string             `json:"error,omitempty"`
+	QUICListener *SCIONQUICListener `json:"quic_listener,omitempty"`
+	QUICExchange *SCIONQUICExchange `json:"quic_exchange,omitempty"`
+	Paths        []SCIONPath        `json:"paths,omitempty"`
+	Path         *SCIONPath         `json:"path,omitempty"`
+	Exchange     *SCIONExchange     `json:"exchange,omitempty"`
+	Datagram     *SCIONDatagram     `json:"datagram,omitempty"`
+	Address      string             `json:"address,omitempty"`
+	Bytes        int                `json:"bytes,omitempty"`
+}
+
+// SCIONQUICListener is a per-run, fixed-protocol echo endpoint. Its certificate
+// pin must reach clients through a trusted configuration channel.
+type SCIONQUICListener struct {
+	Address           string `json:"address"`
+	CertificateSHA256 string `json:"certificate_sha256"`
+}
+
+// SCIONQUICExchange describes one reliable echo. PathID names only the outbound
+// path; Verified means the peer's DER leaf certificate matched the supplied pin.
+type SCIONQUICExchange struct {
+	Data        []byte  `json:"data"`
+	PathID      string  `json:"path_id"`
+	Sender      string  `json:"sender"`
+	HandshakeMS float64 `json:"handshake_ms"`
+	DurationMS  float64 `json:"duration_ms"`
+	Verified    bool    `json:"verified"`
 }

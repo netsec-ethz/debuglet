@@ -39,6 +39,24 @@ func invokeSCIONListenerAddress(data []byte) ([]byte, error) {
 func invokeSCIONReceive(data []byte) ([]byte, error) { return scionResponse(data, hostSCIONReceive) }
 func invokeSCIONReply(data []byte) ([]byte, error)   { return scionResponse(data, hostSCIONReply) }
 
+//go:wasmimport debuglet_io_v1 scion_quic_echo_start
+func hostSCIONQUICEchoStart(ptr, size, out, capacity uint32) uint64
+
+//go:wasmimport debuglet_io_v1 scion_quic_echo_stop
+func hostSCIONQUICEchoStop(ptr, size, out, capacity uint32) uint64
+
+//go:wasmimport debuglet_io_v1 scion_quic_exchange
+func hostSCIONQUICExchange(ptr, size, out, capacity uint32) uint64
+func invokeSCIONQUICEchoStart(data []byte) ([]byte, error) {
+	return scionResponse(data, hostSCIONQUICEchoStart)
+}
+func invokeSCIONQUICEchoStop(data []byte) ([]byte, error) {
+	return scionResponse(data, hostSCIONQUICEchoStop)
+}
+func invokeSCIONQUICExchange(data []byte) ([]byte, error) {
+	return scionResponse(data, hostSCIONQUICExchange)
+}
+
 func scionResponse(data []byte, invoke func(uint32, uint32, uint32, uint32) uint64) ([]byte, error) {
 	out := make([]byte, guestio.SCIONBufferSize)
 	count, err := ioOutcome(invoke(bytePtr(data), uint32(len(data)), bytePtr(out), uint32(len(out))))

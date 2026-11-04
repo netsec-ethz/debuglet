@@ -170,8 +170,27 @@ Bundles declare `require_scion`, `require_scion_listener` and the precise host
 functions needed. Static SCION endpoints contribute their host IP to destination
 hints; dynamic endpoints still need permitted host IPs at submission. SCION
 permissions are host-scoped, not an ISD-AS allowlist. The current implementation
-supports UDP only, requires the supported trusted execution profile, and adds no
-TESLA attribution tags. Discovery metadata alone does not prove delivery.
+supports datagrams and a bounded QUIC/TLS echo over SCION UDP, requires the
+supported trusted execution profile, and adds no TESLA attribution tags.
+Discovery metadata alone does not prove delivery.
+
+For reliable delivery, use **Start SCION QUIC echo**, **SCION QUIC exchange** and
+**Stop SCION QUIC echo**. The exchange pins both the outgoing path and the peer's
+SHA256 DER leaf certificate. Copy the expected certificate pin from a trusted
+source, such as the responder's run output through your authenticated console;
+a pin received in a plaintext experiment message is not proof of identity.
+The responder owns its SCION listener until stopped or the run ends, so do not
+combine it with raw SCION receive/reply blocks.
+
+Start `examples/workflows/scion-quic-responder.json`, then configure
+`examples/workflows/scion-quic-client.json` with its reported endpoint and trusted
+certificate pin. Permit the client's host IP in the responder's submission
+policy and the responder's host IP in the client's policy. The zero-filled
+example pin must be replaced; it grants no
+implicit trust. The client reports handshake and complete exchange time and
+preserves failures. Each exchange has a timeout of at most 10 seconds. This is
+a bounded 4096-byte reliable echo protocol, not TCP,
+HTTP/3 or a throughput test.
 
 For a coordinated experiment, add programs in the editor or use these commands:
 

@@ -76,6 +76,9 @@ type WasmEnv struct {
 	ScionServer     pan.ListenConn
 	scionListenerMu scionOperationLock
 	scionReplyPeer  string
+	scionQUICMu     sync.Mutex
+	scionQUICEcho   *socket.SCIONQUICEcho
+	scionQUICUsed   bool
 
 	Budget                                           *socket.Budget
 	tcpReservation, udpReservation, scionReservation *socket.Reservation
@@ -198,8 +201,9 @@ func (e *WasmEnv) Close() error {
 		tcp, tcpPort := e.TcpServer, e.TcpServerPort
 		udp, udpPort := e.UdpServer, e.UdpServerPort
 		scion := e.ScionServer
+		scionClaimed := e.scionQUICUsed
 		e.mu.Unlock()
-		e.closeErr = errors.Join(e.closeErr, e.closeMesh())
+		e.closeErr = errors.Join(e.closeErr, e.closeMesh(), e.stopSCIONQUICEcho())
 		if tcp != nil {
 			e.closeErr = errors.Join(e.closeErr, tcp.Close())
 			e.tcpReservation.Release()
@@ -215,7 +219,9 @@ func (e *WasmEnv) Close() error {
 			}
 		}
 		if scion != nil {
-			e.closeErr = errors.Join(e.closeErr, scion.Close())
+			if !scionClaimed {
+				e.closeErr = errors.Join(e.closeErr, scion.Close())
+			}
 			e.scionReservation.Release()
 		}
 		if e.Registry != nil {

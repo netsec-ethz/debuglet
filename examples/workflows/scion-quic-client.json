@@ -1,0 +1,540 @@
+{
+  "version": 1,
+  "name": "SCION QUIC \u2014 verify a pinned responder",
+  "entry": "discover",
+  "nodes": [
+    {
+      "id": "target",
+      "block": "constant",
+      "position": {
+        "x": -380,
+        "y": 0
+      },
+      "inputs": {
+        "value": "1-ff00:0:110,192.0.2.1:4000"
+      }
+    },
+    {
+      "id": "certificate_pin",
+      "block": "constant",
+      "position": {
+        "x": -380,
+        "y": 240
+      },
+      "inputs": {
+        "value": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "id": "discover",
+      "block": "scion_paths",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "inputs": {
+        "timeout_ms": 2000
+      }
+    },
+    {
+      "id": "discovered",
+      "block": "if",
+      "position": {
+        "x": 0,
+        "y": 240
+      }
+    },
+    {
+      "id": "discovery_error",
+      "block": "report_text",
+      "position": {
+        "x": 380,
+        "y": 480
+      },
+      "inputs": {
+        "title": "SCION path discovery failed"
+      }
+    },
+    {
+      "id": "count_paths",
+      "block": "count",
+      "position": {
+        "x": -380,
+        "y": 480
+      }
+    },
+    {
+      "id": "has_paths",
+      "block": "greater_than",
+      "position": {
+        "x": -380,
+        "y": 680
+      },
+      "inputs": {
+        "b": 0
+      }
+    },
+    {
+      "id": "path_available",
+      "block": "if",
+      "position": {
+        "x": 0,
+        "y": 480
+      }
+    },
+    {
+      "id": "no_path",
+      "block": "report_text",
+      "position": {
+        "x": 380,
+        "y": 720
+      },
+      "inputs": {
+        "title": "No SCION path available",
+        "text": "No QUIC request was sent. Check the destination and SCION path availability."
+      }
+    },
+    {
+      "id": "first_path",
+      "block": "list_item",
+      "position": {
+        "x": -380,
+        "y": 880
+      },
+      "inputs": {
+        "index": 0
+      }
+    },
+    {
+      "id": "path_id",
+      "block": "field",
+      "position": {
+        "x": -380,
+        "y": 1080
+      },
+      "inputs": {
+        "name": "id"
+      }
+    },
+    {
+      "id": "exchange",
+      "block": "scion_quic_exchange",
+      "position": {
+        "x": 0,
+        "y": 720
+      },
+      "inputs": {
+        "payload": "Debuglet SCION QUIC echo",
+        "timeout_ms": 5000
+      }
+    },
+    {
+      "id": "exchanged",
+      "block": "if",
+      "position": {
+        "x": 0,
+        "y": 960
+      }
+    },
+    {
+      "id": "exchange_error",
+      "block": "report_text",
+      "position": {
+        "x": 380,
+        "y": 1200
+      },
+      "inputs": {
+        "title": "SCION QUIC exchange failed"
+      }
+    },
+    {
+      "id": "verified",
+      "block": "emit",
+      "position": {
+        "x": 0,
+        "y": 1200
+      },
+      "inputs": {
+        "name": "Expected peer certificate verified"
+      }
+    },
+    {
+      "id": "actual_path",
+      "block": "report_text",
+      "position": {
+        "x": 0,
+        "y": 1440
+      },
+      "inputs": {
+        "title": "Actual outbound path identity"
+      }
+    },
+    {
+      "id": "handshake",
+      "block": "report_metric",
+      "position": {
+        "x": 0,
+        "y": 1680
+      },
+      "inputs": {
+        "title": "QUIC TLS handshake",
+        "unit": "ms"
+      }
+    },
+    {
+      "id": "duration",
+      "block": "report_metric",
+      "position": {
+        "x": 0,
+        "y": 1920
+      },
+      "inputs": {
+        "title": "Complete QUIC exchange",
+        "unit": "ms"
+      }
+    },
+    {
+      "id": "response",
+      "block": "report_text",
+      "position": {
+        "x": 0,
+        "y": 2160
+      },
+      "inputs": {
+        "title": "Echoed response"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "kind": "data",
+      "from": {
+        "node": "target",
+        "port": "value"
+      },
+      "to": {
+        "node": "discover",
+        "port": "address"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "discover",
+        "port": "ok"
+      },
+      "to": {
+        "node": "discovered",
+        "port": "condition"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "discover",
+        "port": "next"
+      },
+      "to": {
+        "node": "discovered",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "discover",
+        "port": "error"
+      },
+      "to": {
+        "node": "discovery_error",
+        "port": "text"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "discovered",
+        "port": "false"
+      },
+      "to": {
+        "node": "discovery_error",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "discover",
+        "port": "paths"
+      },
+      "to": {
+        "node": "count_paths",
+        "port": "values"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "count_paths",
+        "port": "value"
+      },
+      "to": {
+        "node": "has_paths",
+        "port": "a"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "has_paths",
+        "port": "value"
+      },
+      "to": {
+        "node": "path_available",
+        "port": "condition"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "discovered",
+        "port": "true"
+      },
+      "to": {
+        "node": "path_available",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "path_available",
+        "port": "false"
+      },
+      "to": {
+        "node": "no_path",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "discover",
+        "port": "paths"
+      },
+      "to": {
+        "node": "first_path",
+        "port": "values"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "first_path",
+        "port": "value"
+      },
+      "to": {
+        "node": "path_id",
+        "port": "object"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "target",
+        "port": "value"
+      },
+      "to": {
+        "node": "exchange",
+        "port": "address"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "certificate_pin",
+        "port": "value"
+      },
+      "to": {
+        "node": "exchange",
+        "port": "certificate_sha256"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "path_id",
+        "port": "value"
+      },
+      "to": {
+        "node": "exchange",
+        "port": "path_id"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "path_available",
+        "port": "true"
+      },
+      "to": {
+        "node": "exchange",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "exchange",
+        "port": "ok"
+      },
+      "to": {
+        "node": "exchanged",
+        "port": "condition"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "exchange",
+        "port": "next"
+      },
+      "to": {
+        "node": "exchanged",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "exchange",
+        "port": "error"
+      },
+      "to": {
+        "node": "exchange_error",
+        "port": "text"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "exchanged",
+        "port": "false"
+      },
+      "to": {
+        "node": "exchange_error",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "exchange",
+        "port": "verified"
+      },
+      "to": {
+        "node": "verified",
+        "port": "value"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "exchanged",
+        "port": "true"
+      },
+      "to": {
+        "node": "verified",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "exchange",
+        "port": "path_id"
+      },
+      "to": {
+        "node": "actual_path",
+        "port": "text"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "verified",
+        "port": "next"
+      },
+      "to": {
+        "node": "actual_path",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "exchange",
+        "port": "handshake_ms"
+      },
+      "to": {
+        "node": "handshake",
+        "port": "value"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "actual_path",
+        "port": "next"
+      },
+      "to": {
+        "node": "handshake",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "exchange",
+        "port": "duration_ms"
+      },
+      "to": {
+        "node": "duration",
+        "port": "value"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "handshake",
+        "port": "next"
+      },
+      "to": {
+        "node": "duration",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "exchange",
+        "port": "response"
+      },
+      "to": {
+        "node": "response",
+        "port": "text"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "duration",
+        "port": "next"
+      },
+      "to": {
+        "node": "response",
+        "port": "in"
+      }
+    }
+  ]
+}

@@ -1928,6 +1928,142 @@
     ]
   },
   {
+    "id": "scion_quic_echo_start",
+    "label": "Start SCION QUIC echo",
+    "category": "Network",
+    "description": "Start a bounded reliable echo service on this run's SCION listener. Reports its endpoint and SHA256 of the DER leaf certificate. Distribute the pin through a trusted channel; plaintext experiment messages do not establish identity. Owns the listener until stopped or the run ends; cannot share it with raw SCION receive/reply.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "timeout_ms",
+        "type": "number",
+        "default": 2000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      },
+      {
+        "name": "address",
+        "type": "string"
+      },
+      {
+        "name": "certificate_sha256",
+        "type": "string"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "scion_quic_echo_stop",
+    "label": "Stop SCION QUIC echo",
+    "category": "Network",
+    "description": "Stop this run's reliable SCION echo service and release its sockets. Repeated stop is safe; the service cannot be restarted within the same run.",
+    "pure": false,
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "scion_quic_exchange",
+    "label": "SCION QUIC exchange",
+    "category": "Network",
+    "description": "Send up to 4096 bytes and receive a reliable echo over QUIC/TLS on an exact SCION path, with a timeout of at most 10 seconds. Requires a trusted expected SHA256 DER leaf certificate pin. Reports verified only after checking the actual peer certificate. This is a fixed echo protocol, not HTTP/3 or TCP; path_id describes the outgoing path only.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "address",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "path_id",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "certificate_sha256",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "payload",
+        "type": "string",
+        "default": ""
+      },
+      {
+        "name": "encoding",
+        "type": "string",
+        "default": "text"
+      },
+      {
+        "name": "timeout_ms",
+        "type": "number",
+        "default": 5000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      },
+      {
+        "name": "response",
+        "type": "string"
+      },
+      {
+        "name": "response_base64",
+        "type": "string"
+      },
+      {
+        "name": "sender",
+        "type": "string"
+      },
+      {
+        "name": "path_id",
+        "type": "string"
+      },
+      {
+        "name": "handshake_ms",
+        "type": "number"
+      },
+      {
+        "name": "duration_ms",
+        "type": "number"
+      },
+      {
+        "name": "verified",
+        "type": "boolean"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
     "id": "scion_paths",
     "label": "Discover SCION paths",
     "category": "Network",

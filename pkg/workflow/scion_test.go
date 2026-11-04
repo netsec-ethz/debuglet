@@ -81,7 +81,25 @@ func TestSCIONGeneratedGuestRequirements(t *testing.T) {
 	if testing.Short() {
 		t.Skip("generated guest compilation")
 	}
-	w := Workflow{Version: 1, Name: "SCION discovery", Entry: "paths", Nodes: []Node{{ID: "paths", Block: "scion_paths", Inputs: map[string]any{"address": "1-ff00:0:110,192.0.2.1:4000"}}}}
+	discovery := Workflow{Version: 1, Name: "SCION discovery", Entry: "paths", Nodes: []Node{{ID: "paths", Block: "scion_paths", Inputs: map[string]any{"address": "1-ff00:0:110,192.0.2.1:4000"}}}}
+	t.Run("discovery", func(t *testing.T) { checkSCIONGeneratedImports(t, discovery) })
+	for _, name := range []string{"scion-quic-client", "scion-quic-responder"} {
+		t.Run(name, func(t *testing.T) {
+			raw, err := os.ReadFile("../../examples/workflows/" + name + ".json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var w Workflow
+			if err = json.Unmarshal(raw, &w); err != nil {
+				t.Fatal(err)
+			}
+			checkSCIONGeneratedImports(t, w)
+		})
+	}
+}
+
+func checkSCIONGeneratedImports(t *testing.T, w Workflow) {
+	t.Helper()
 	p, err := Generate(w)
 	if err != nil {
 		t.Fatal(err)
