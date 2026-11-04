@@ -22,6 +22,25 @@ func testEgressGrant() *pb.EgressGrant {
 		AttemptsPerSecond: 1, AttemptBurst: 4, Attempts: 4, Addresses: []string{"127.0.0.1"}, NotBeforeUnix: now - 60, ExpiresUnix: now + 3600}
 }
 
+func TestSCIONCannotBypassAggregateGrant(t *testing.T) {
+	spec := localProfile()
+	spec.SCION = true
+	op := mustParse(t, spec)
+	run := Run{Addresses: []string{"127.0.0.1"}, ListenSCION: true}
+	peer := netip.MustParseAddrPort("127.0.0.1:30041")
+	if _, err := New(op, run).AdmitAddr(t.Context(), SCION, peer); err != nil {
+		t.Fatal("dedicated SCION destination refused:", err)
+	}
+	run.Egress = NewEgress(testEgressGrant())
+	policy := New(op, run)
+	if _, err := policy.AdmitAddr(t.Context(), SCION, peer); !errors.Is(err, ErrTransportUnavailable) {
+		t.Fatalf("SCION escaped aggregate grant: %v", err)
+	}
+	if err := policy.AvailableListener(SCION); !errors.Is(err, ErrTransportUnavailable) {
+		t.Fatalf("SCION listener escaped aggregate grant: %v", err)
+	}
+}
+
 func TestEgressSharedConcurrentSockets(t *testing.T) {
 	grant := testEgressGrant()
 	e := NewEgress(grant)

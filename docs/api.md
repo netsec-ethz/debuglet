@@ -26,6 +26,14 @@ curl -s https://dispatcher.example/version
 
 Clients may send `Debuglet-API-Version: major.minor`. Within one API major version, clients must ignore unknown response fields and unknown values in open string fields. Breaking wire changes require a new API major version.
 
+## SCION workflow requirements (API 1.30)
+
+Compiled Studio bundles may set `require_scion` and
+`require_scion_listener`; absent values mean false. Check these alongside
+`required_host_functions` when choosing an executor. SCION availability describes
+the executor's local setup; discover destination paths during the run. A SCION
+listener also requires `listen_scion` in the submitted run policy.
+
 ## Experiment assistance (API 1.29)
 
 `GET /studio/assistant` returns `{"enabled": false}` until a model provider is

@@ -42,6 +42,8 @@ type metadata struct {
 	Destinations          []string `json:"destinations"`
 	RequireICMP           bool     `json:"require_icmp"`
 	RequireUDPListener    bool     `json:"require_udp_listener,omitempty"`
+	RequireSCION          bool     `json:"require_scion,omitempty"`
+	RequireSCIONListener  bool     `json:"require_scion_listener,omitempty"`
 	RequiredHostFunctions []string `json:"required_host_functions,omitempty"`
 }
 type store struct {
@@ -138,7 +140,7 @@ func MCPServer(builder *Builder, directory string) (*mcp.Server, func(), error) 
 		if err := files.write(filename, encoded); err != nil {
 			return nil, metadata{}, err
 		}
-		meta := metadata{ArtifactID: id, BundlePath: filepath.Join(directory, filename), WorkflowSHA256: bundle.WorkflowSHA256, WasmSHA256: bundle.WasmSHA256, BundleSHA256: digest(encoded), Destinations: bundle.Destinations, RequireICMP: bundle.RequireICMP, RequireUDPListener: bundle.RequireUDPListener, RequiredHostFunctions: bundle.RequiredHostFunctions}
+		meta := metadata{ArtifactID: id, BundlePath: filepath.Join(directory, filename), WorkflowSHA256: bundle.WorkflowSHA256, WasmSHA256: bundle.WasmSHA256, BundleSHA256: digest(encoded), Destinations: bundle.Destinations, RequireICMP: bundle.RequireICMP, RequireUDPListener: bundle.RequireUDPListener, RequireSCION: bundle.RequireSCION, RequireSCIONListener: bundle.RequireSCIONListener, RequiredHostFunctions: bundle.RequiredHostFunctions}
 		files.artifacts[id] = meta
 		return nil, meta, nil
 	})

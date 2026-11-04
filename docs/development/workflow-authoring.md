@@ -145,6 +145,34 @@ needed. The console checks these against fresh executor reports; editing or
 importing a graph does not upgrade the executor. An incompatible node remains
 visible in its operator's inventory with update guidance.
 
+### Measure SCION paths
+
+The **Network → SCION** blocks discover paths, pin an opaque path ID, exchange a
+UDP datagram, and receive or reply on a run's SCION listener. Addresses have the
+form `1-ff00:0:110,192.0.2.1:4000` (bracket IPv6 hosts). Discovery requires a full
+endpoint, not only an ISD-AS. An empty path list is a valid discovery result;
+check it before selecting a list item. Inspect `interfaces`, `hop_count`, `mtu`
+and `expires_ms` with the ordinary data blocks.
+
+Start with `examples/workflows/experiments/scion-path-comparison.json`. Its
+receiver announces its allocated listener address over an ordinary TCP control
+channel and echoes exact bytes. The sender measures up to six discovered paths,
+keeps failures in the table, and charts only successful, correlated responses.
+Choose two SCION-capable executors with mutual TCP control connectivity and
+SCION UDP reachability. The template does not assume an external echo service.
+
+A selected path never falls back silently. The exchange's `path_id` identifies
+the outgoing path actually used; it does not describe the reply path. A path can
+expire between discovery and use, so branch on `ok` and preserve `error`.
+Exchange duration is a local request/reply measurement, not one-way latency.
+
+Bundles declare `require_scion`, `require_scion_listener` and the precise host
+functions needed. Static SCION endpoints contribute their host IP to destination
+hints; dynamic endpoints still need permitted host IPs at submission. SCION
+permissions are host-scoped, not an ISD-AS allowlist. The current implementation
+supports UDP only, requires the supported trusted execution profile, and adds no
+TESLA attribution tags. Discovery metadata alone does not prove delivery.
+
 For a coordinated experiment, add programs in the editor or use these commands:
 
 ```sh

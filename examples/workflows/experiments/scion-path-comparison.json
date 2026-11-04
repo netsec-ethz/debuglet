@@ -1,0 +1,1862 @@
+{
+  "version": 1,
+  "kind": "experiment",
+  "name": "Compare SCION paths",
+  "participants": [
+    {
+      "id": "probe",
+      "label": "Path comparison",
+      "workflow": {
+        "version": 1,
+        "name": "Discover, pin and compare up to six SCION paths",
+        "entry": "await_endpoint",
+        "nodes": [
+          {
+            "id": "await_endpoint",
+            "block": "await_message",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "inputs": {
+              "source": "receiver",
+              "channel": "endpoint",
+              "timeout_ms": 10000
+            }
+          },
+          {
+            "id": "endpoint_ready",
+            "block": "if",
+            "position": {
+              "x": 0,
+              "y": 200
+            }
+          },
+          {
+            "id": "endpoint_error",
+            "block": "report_text",
+            "position": {
+              "x": -320,
+              "y": 420
+            },
+            "inputs": {
+              "title": "SCION endpoint unavailable"
+            }
+          },
+          {
+            "id": "discover",
+            "block": "scion_paths",
+            "position": {
+              "x": 0,
+              "y": 420
+            },
+            "inputs": {
+              "timeout_ms": 2000
+            }
+          },
+          {
+            "id": "path_count",
+            "block": "count",
+            "position": {
+              "x": 380,
+              "y": 420
+            }
+          },
+          {
+            "id": "bounded_counts",
+            "block": "append",
+            "position": {
+              "x": 380,
+              "y": 570
+            },
+            "inputs": {
+              "values": [
+                6
+              ]
+            }
+          },
+          {
+            "id": "probe_count",
+            "block": "min",
+            "position": {
+              "x": 380,
+              "y": 720
+            }
+          },
+          {
+            "id": "announce_count",
+            "block": "send_message",
+            "position": {
+              "x": 0,
+              "y": 650
+            },
+            "inputs": {
+              "destination": "receiver",
+              "channel": "probe_count",
+              "timeout_ms": 2000
+            }
+          },
+          {
+            "id": "count_sent",
+            "block": "if",
+            "position": {
+              "x": 0,
+              "y": 850
+            }
+          },
+          {
+            "id": "send_error",
+            "block": "report_text",
+            "position": {
+              "x": -320,
+              "y": 1080
+            },
+            "inputs": {
+              "title": "Could not coordinate SCION probes"
+            }
+          },
+          {
+            "id": "has_paths",
+            "block": "greater_than",
+            "position": {
+              "x": 380,
+              "y": 870
+            },
+            "inputs": {
+              "b": 0
+            }
+          },
+          {
+            "id": "paths_ready",
+            "block": "if",
+            "position": {
+              "x": 0,
+              "y": 1080
+            }
+          },
+          {
+            "id": "no_paths",
+            "block": "report_text",
+            "position": {
+              "x": -320,
+              "y": 1300
+            },
+            "inputs": {
+              "title": "No SCION path was available",
+              "text": "No probes were sent. Inspect Discover SCION paths for its error, or check the destination and local SCION daemon. An empty path list is not packet loss."
+            }
+          },
+          {
+            "id": "results",
+            "block": "create_collection",
+            "position": {
+              "x": 0,
+              "y": 1300
+            }
+          },
+          {
+            "id": "paths",
+            "block": "repeat",
+            "position": {
+              "x": 0,
+              "y": 1500
+            }
+          },
+          {
+            "id": "path_index",
+            "block": "subtract",
+            "position": {
+              "x": -350,
+              "y": 1700
+            },
+            "inputs": {
+              "b": 1
+            }
+          },
+          {
+            "id": "path_item",
+            "block": "list_item",
+            "position": {
+              "x": -350,
+              "y": 1880
+            }
+          },
+          {
+            "id": "path_id",
+            "block": "field",
+            "position": {
+              "x": -350,
+              "y": 2060
+            },
+            "inputs": {
+              "name": "id"
+            }
+          },
+          {
+            "id": "select",
+            "block": "scion_select_path",
+            "position": {
+              "x": 0,
+              "y": 1740
+            },
+            "inputs": {
+              "timeout_ms": 2000
+            }
+          },
+          {
+            "id": "payload",
+            "block": "concat",
+            "position": {
+              "x": -350,
+              "y": 2250
+            },
+            "inputs": {
+              "a": "debuglet-scion-path:"
+            }
+          },
+          {
+            "id": "exchange",
+            "block": "scion_udp_exchange",
+            "position": {
+              "x": 0,
+              "y": 1980
+            },
+            "inputs": {
+              "timeout_ms": 2000,
+              "max_bytes": 256
+            }
+          },
+          {
+            "id": "echo_matches",
+            "block": "equals",
+            "position": {
+              "x": 400,
+              "y": 1960
+            }
+          },
+          {
+            "id": "path_ok",
+            "block": "and",
+            "position": {
+              "x": 400,
+              "y": 2120
+            }
+          },
+          {
+            "id": "valid_reply",
+            "block": "and",
+            "position": {
+              "x": 400,
+              "y": 2280
+            }
+          },
+          {
+            "id": "row_path_number",
+            "block": "set_field",
+            "position": {
+              "x": 800,
+              "y": 1740
+            },
+            "inputs": {
+              "name": "path_number",
+              "object": {}
+            }
+          },
+          {
+            "id": "row_requested_path",
+            "block": "set_field",
+            "position": {
+              "x": 800,
+              "y": 1890
+            },
+            "inputs": {
+              "name": "requested_path"
+            }
+          },
+          {
+            "id": "row_actual_path",
+            "block": "set_field",
+            "position": {
+              "x": 800,
+              "y": 2040
+            },
+            "inputs": {
+              "name": "actual_path"
+            }
+          },
+          {
+            "id": "row_ok",
+            "block": "set_field",
+            "position": {
+              "x": 800,
+              "y": 2190
+            },
+            "inputs": {
+              "name": "ok"
+            }
+          },
+          {
+            "id": "row_echo_matches",
+            "block": "set_field",
+            "position": {
+              "x": 800,
+              "y": 2340
+            },
+            "inputs": {
+              "name": "echo_matches"
+            }
+          },
+          {
+            "id": "row_selection_error",
+            "block": "set_field",
+            "position": {
+              "x": 800,
+              "y": 2490
+            },
+            "inputs": {
+              "name": "selection_error"
+            }
+          },
+          {
+            "id": "row_exchange_error",
+            "block": "set_field",
+            "position": {
+              "x": 800,
+              "y": 2640
+            },
+            "inputs": {
+              "name": "exchange_error"
+            }
+          },
+          {
+            "id": "row_duration_ms",
+            "block": "set_field",
+            "position": {
+              "x": 800,
+              "y": 2790
+            },
+            "inputs": {
+              "name": "duration_ms"
+            }
+          },
+          {
+            "id": "collect",
+            "block": "collect",
+            "position": {
+              "x": 0,
+              "y": 2250
+            }
+          },
+          {
+            "id": "read_results",
+            "block": "read_collection",
+            "position": {
+              "x": 0,
+              "y": 2600
+            }
+          },
+          {
+            "id": "all_paths",
+            "block": "report_table",
+            "position": {
+              "x": 0,
+              "y": 2800
+            },
+            "inputs": {
+              "title": "Every attempted SCION path",
+              "columns": [
+                "path_number",
+                "requested_path",
+                "actual_path",
+                "ok",
+                "echo_matches",
+                "selection_error",
+                "exchange_error",
+                "duration_ms"
+              ]
+            }
+          },
+          {
+            "id": "successful",
+            "block": "filter_rows",
+            "position": {
+              "x": 400,
+              "y": 2600
+            },
+            "inputs": {
+              "field": "ok",
+              "value": true
+            }
+          },
+          {
+            "id": "successful_count",
+            "block": "count",
+            "position": {
+              "x": 400,
+              "y": 2800
+            }
+          },
+          {
+            "id": "has_success",
+            "block": "greater_than",
+            "position": {
+              "x": 400,
+              "y": 2980
+            },
+            "inputs": {
+              "b": 0
+            }
+          },
+          {
+            "id": "chart_ready",
+            "block": "if",
+            "position": {
+              "x": 0,
+              "y": 3010
+            }
+          },
+          {
+            "id": "rtt_chart",
+            "block": "report_chart",
+            "position": {
+              "x": 0,
+              "y": 3240
+            },
+            "inputs": {
+              "title": "Successful SCION request\u2013reply time by path",
+              "x": "path_number",
+              "y": "duration_ms",
+              "kind": "bar",
+              "x_label": "Path number (see table for stable identity)",
+              "y_label": "Request\u2013reply time (ms)"
+            }
+          },
+          {
+            "id": "no_success",
+            "block": "report_text",
+            "position": {
+              "x": -350,
+              "y": 3240
+            },
+            "inputs": {
+              "title": "No valid SCION reply",
+              "text": "Every failed attempt remains in the table. Timeouts and mismatched echoes are excluded from the latency chart; they are not zero-latency measurements."
+            }
+          },
+          {
+            "id": "interpretation",
+            "block": "report_text",
+            "position": {
+              "x": 0,
+              "y": 3500
+            },
+            "inputs": {
+              "title": "What this comparison measures",
+              "text": "One correlated UDP request and reply per path, up to six discovered paths. A path id identifies the outbound path, not the return path. These samples are not one-way delay or a statistical loss estimate. Repeat the experiment to study variation. Endpoint exchange and coordination use ordinary TCP; probes use SCION UDP."
+            }
+          }
+        ],
+        "edges": [
+          {
+            "kind": "data",
+            "from": {
+              "node": "await_endpoint",
+              "port": "ok"
+            },
+            "to": {
+              "node": "endpoint_ready",
+              "port": "condition"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "await_endpoint",
+              "port": "next"
+            },
+            "to": {
+              "node": "endpoint_ready",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "await_endpoint",
+              "port": "error"
+            },
+            "to": {
+              "node": "endpoint_error",
+              "port": "text"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "endpoint_ready",
+              "port": "false"
+            },
+            "to": {
+              "node": "endpoint_error",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "await_endpoint",
+              "port": "value"
+            },
+            "to": {
+              "node": "discover",
+              "port": "address"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "endpoint_ready",
+              "port": "true"
+            },
+            "to": {
+              "node": "discover",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "discover",
+              "port": "paths"
+            },
+            "to": {
+              "node": "path_count",
+              "port": "values"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "path_count",
+              "port": "value"
+            },
+            "to": {
+              "node": "bounded_counts",
+              "port": "value"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "bounded_counts",
+              "port": "value"
+            },
+            "to": {
+              "node": "probe_count",
+              "port": "values"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "probe_count",
+              "port": "value"
+            },
+            "to": {
+              "node": "announce_count",
+              "port": "value"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "discover",
+              "port": "next"
+            },
+            "to": {
+              "node": "announce_count",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "announce_count",
+              "port": "ok"
+            },
+            "to": {
+              "node": "count_sent",
+              "port": "condition"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "announce_count",
+              "port": "next"
+            },
+            "to": {
+              "node": "count_sent",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "announce_count",
+              "port": "error"
+            },
+            "to": {
+              "node": "send_error",
+              "port": "text"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "count_sent",
+              "port": "false"
+            },
+            "to": {
+              "node": "send_error",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "probe_count",
+              "port": "value"
+            },
+            "to": {
+              "node": "has_paths",
+              "port": "a"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "has_paths",
+              "port": "value"
+            },
+            "to": {
+              "node": "paths_ready",
+              "port": "condition"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "count_sent",
+              "port": "true"
+            },
+            "to": {
+              "node": "paths_ready",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "paths_ready",
+              "port": "false"
+            },
+            "to": {
+              "node": "no_paths",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "paths_ready",
+              "port": "true"
+            },
+            "to": {
+              "node": "results",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "probe_count",
+              "port": "value"
+            },
+            "to": {
+              "node": "paths",
+              "port": "count"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "results",
+              "port": "next"
+            },
+            "to": {
+              "node": "paths",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "paths",
+              "port": "iteration"
+            },
+            "to": {
+              "node": "path_index",
+              "port": "a"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "discover",
+              "port": "paths"
+            },
+            "to": {
+              "node": "path_item",
+              "port": "values"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "path_index",
+              "port": "value"
+            },
+            "to": {
+              "node": "path_item",
+              "port": "index"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "path_item",
+              "port": "value"
+            },
+            "to": {
+              "node": "path_id",
+              "port": "object"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "await_endpoint",
+              "port": "value"
+            },
+            "to": {
+              "node": "select",
+              "port": "address"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "path_id",
+              "port": "value"
+            },
+            "to": {
+              "node": "select",
+              "port": "path_id"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "paths",
+              "port": "body"
+            },
+            "to": {
+              "node": "select",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "path_id",
+              "port": "value"
+            },
+            "to": {
+              "node": "payload",
+              "port": "b"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "await_endpoint",
+              "port": "value"
+            },
+            "to": {
+              "node": "exchange",
+              "port": "address"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "path_id",
+              "port": "value"
+            },
+            "to": {
+              "node": "exchange",
+              "port": "path_id"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "payload",
+              "port": "value"
+            },
+            "to": {
+              "node": "exchange",
+              "port": "payload"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "select",
+              "port": "next"
+            },
+            "to": {
+              "node": "exchange",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "payload",
+              "port": "value"
+            },
+            "to": {
+              "node": "echo_matches",
+              "port": "a"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "exchange",
+              "port": "response"
+            },
+            "to": {
+              "node": "echo_matches",
+              "port": "b"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "select",
+              "port": "ok"
+            },
+            "to": {
+              "node": "path_ok",
+              "port": "a"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "exchange",
+              "port": "ok"
+            },
+            "to": {
+              "node": "path_ok",
+              "port": "b"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "path_ok",
+              "port": "value"
+            },
+            "to": {
+              "node": "valid_reply",
+              "port": "a"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "echo_matches",
+              "port": "value"
+            },
+            "to": {
+              "node": "valid_reply",
+              "port": "b"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "paths",
+              "port": "iteration"
+            },
+            "to": {
+              "node": "row_path_number",
+              "port": "value"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "row_path_number",
+              "port": "value"
+            },
+            "to": {
+              "node": "row_requested_path",
+              "port": "object"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "path_id",
+              "port": "value"
+            },
+            "to": {
+              "node": "row_requested_path",
+              "port": "value"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "row_requested_path",
+              "port": "value"
+            },
+            "to": {
+              "node": "row_actual_path",
+              "port": "object"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "exchange",
+              "port": "path_id"
+            },
+            "to": {
+              "node": "row_actual_path",
+              "port": "value"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "row_actual_path",
+              "port": "value"
+            },
+            "to": {
+              "node": "row_ok",
+              "port": "object"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "valid_reply",
+              "port": "value"
+            },
+            "to": {
+              "node": "row_ok",
+              "port": "value"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "row_ok",
+              "port": "value"
+            },
+            "to": {
+              "node": "row_echo_matches",
+              "port": "object"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "echo_matches",
+              "port": "value"
+            },
+            "to": {
+              "node": "row_echo_matches",
+              "port": "value"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "row_echo_matches",
+              "port": "value"
+            },
+            "to": {
+              "node": "row_selection_error",
+              "port": "object"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "select",
+              "port": "error"
+            },
+            "to": {
+              "node": "row_selection_error",
+              "port": "value"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "row_selection_error",
+              "port": "value"
+            },
+            "to": {
+              "node": "row_exchange_error",
+              "port": "object"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "exchange",
+              "port": "error"
+            },
+            "to": {
+              "node": "row_exchange_error",
+              "port": "value"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "row_exchange_error",
+              "port": "value"
+            },
+            "to": {
+              "node": "row_duration_ms",
+              "port": "object"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "exchange",
+              "port": "duration_ms"
+            },
+            "to": {
+              "node": "row_duration_ms",
+              "port": "value"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "results",
+              "port": "collection"
+            },
+            "to": {
+              "node": "collect",
+              "port": "collection"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "row_duration_ms",
+              "port": "value"
+            },
+            "to": {
+              "node": "collect",
+              "port": "value"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "exchange",
+              "port": "next"
+            },
+            "to": {
+              "node": "collect",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "results",
+              "port": "collection"
+            },
+            "to": {
+              "node": "read_results",
+              "port": "collection"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "paths",
+              "port": "done"
+            },
+            "to": {
+              "node": "read_results",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "read_results",
+              "port": "values"
+            },
+            "to": {
+              "node": "all_paths",
+              "port": "rows"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "read_results",
+              "port": "next"
+            },
+            "to": {
+              "node": "all_paths",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "read_results",
+              "port": "values"
+            },
+            "to": {
+              "node": "successful",
+              "port": "rows"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "successful",
+              "port": "rows"
+            },
+            "to": {
+              "node": "successful_count",
+              "port": "values"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "successful_count",
+              "port": "value"
+            },
+            "to": {
+              "node": "has_success",
+              "port": "a"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "has_success",
+              "port": "value"
+            },
+            "to": {
+              "node": "chart_ready",
+              "port": "condition"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "all_paths",
+              "port": "next"
+            },
+            "to": {
+              "node": "chart_ready",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "successful",
+              "port": "rows"
+            },
+            "to": {
+              "node": "rtt_chart",
+              "port": "rows"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "chart_ready",
+              "port": "true"
+            },
+            "to": {
+              "node": "rtt_chart",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "chart_ready",
+              "port": "false"
+            },
+            "to": {
+              "node": "no_success",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "rtt_chart",
+              "port": "next"
+            },
+            "to": {
+              "node": "interpretation",
+              "port": "in"
+            }
+          }
+        ],
+        "groups": [
+          {
+            "id": "limit_group",
+            "label": "Choose up to six discovered paths",
+            "node_ids": [
+              "path_count",
+              "bounded_counts",
+              "probe_count",
+              "has_paths"
+            ],
+            "position": {
+              "x": 380,
+              "y": 500
+            }
+          },
+          {
+            "id": "identity_group",
+            "label": "Select a stable path and unique payload",
+            "node_ids": [
+              "path_index",
+              "path_item",
+              "path_id",
+              "payload"
+            ],
+            "position": {
+              "x": -350,
+              "y": 1800
+            }
+          },
+          {
+            "id": "correlation_group",
+            "label": "Check selection, delivery and echoed payload",
+            "node_ids": [
+              "echo_matches",
+              "path_ok",
+              "valid_reply"
+            ],
+            "position": {
+              "x": 400,
+              "y": 2150
+            }
+          },
+          {
+            "id": "row_group",
+            "label": "Preserve every attempt and its actual path",
+            "node_ids": [
+              "row_path_number",
+              "row_requested_path",
+              "row_actual_path",
+              "row_ok",
+              "row_echo_matches",
+              "row_selection_error",
+              "row_exchange_error",
+              "row_duration_ms"
+            ],
+            "position": {
+              "x": 800,
+              "y": 2250
+            }
+          },
+          {
+            "id": "success_group",
+            "label": "Chart successful replies only",
+            "node_ids": [
+              "successful",
+              "successful_count",
+              "has_success"
+            ],
+            "position": {
+              "x": 400,
+              "y": 2780
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "receiver",
+      "label": "SCION echo receiver",
+      "workflow": {
+        "version": 1,
+        "name": "Advertise the SCION listener and echo admitted probes",
+        "entry": "listener",
+        "nodes": [
+          {
+            "id": "listener",
+            "block": "scion_listener_address",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "id": "listener_ready",
+            "block": "if",
+            "position": {
+              "x": 0,
+              "y": 220
+            }
+          },
+          {
+            "id": "listener_error",
+            "block": "report_text",
+            "position": {
+              "x": -350,
+              "y": 450
+            },
+            "inputs": {
+              "title": "SCION listener unavailable"
+            }
+          },
+          {
+            "id": "publish_endpoint",
+            "block": "send_message",
+            "position": {
+              "x": 0,
+              "y": 450
+            },
+            "inputs": {
+              "destination": "probe",
+              "channel": "endpoint",
+              "timeout_ms": 2000
+            }
+          },
+          {
+            "id": "endpoint_sent",
+            "block": "if",
+            "position": {
+              "x": 0,
+              "y": 680
+            }
+          },
+          {
+            "id": "publish_error",
+            "block": "report_text",
+            "position": {
+              "x": -350,
+              "y": 900
+            },
+            "inputs": {
+              "title": "Could not publish SCION endpoint"
+            }
+          },
+          {
+            "id": "await_count",
+            "block": "await_message",
+            "position": {
+              "x": 0,
+              "y": 900
+            },
+            "inputs": {
+              "source": "probe",
+              "channel": "probe_count",
+              "timeout_ms": 10000
+            }
+          },
+          {
+            "id": "count_received",
+            "block": "if",
+            "position": {
+              "x": 0,
+              "y": 1140
+            }
+          },
+          {
+            "id": "count_error",
+            "block": "report_text",
+            "position": {
+              "x": -350,
+              "y": 1360
+            },
+            "inputs": {
+              "title": "Probe coordination did not arrive"
+            }
+          },
+          {
+            "id": "has_probes",
+            "block": "greater_than",
+            "position": {
+              "x": 350,
+              "y": 1340
+            },
+            "inputs": {
+              "b": 0
+            }
+          },
+          {
+            "id": "probes_expected",
+            "block": "if",
+            "position": {
+              "x": 0,
+              "y": 1360
+            }
+          },
+          {
+            "id": "receive_loop",
+            "block": "repeat",
+            "position": {
+              "x": 0,
+              "y": 1600
+            }
+          },
+          {
+            "id": "receive",
+            "block": "scion_receive",
+            "position": {
+              "x": 0,
+              "y": 1840
+            },
+            "inputs": {
+              "max_bytes": 256,
+              "encoding": "base64",
+              "timeout_ms": 5000
+            }
+          },
+          {
+            "id": "received",
+            "block": "if",
+            "position": {
+              "x": 0,
+              "y": 2060
+            }
+          },
+          {
+            "id": "receive_error",
+            "block": "report_text",
+            "position": {
+              "x": -350,
+              "y": 2300
+            },
+            "inputs": {
+              "title": "SCION receive failed"
+            }
+          },
+          {
+            "id": "reply",
+            "block": "scion_reply",
+            "position": {
+              "x": 0,
+              "y": 2300
+            },
+            "inputs": {
+              "encoding": "base64",
+              "timeout_ms": 2000
+            }
+          },
+          {
+            "id": "finished",
+            "block": "report_text",
+            "position": {
+              "x": 350,
+              "y": 1840
+            },
+            "inputs": {
+              "title": "SCION receiver finished",
+              "text": "The bounded receive loop has ended. Reply and timeout outcomes remain in the program output."
+            }
+          },
+          {
+            "id": "no_probes",
+            "block": "report_text",
+            "position": {
+              "x": -350,
+              "y": 1600
+            },
+            "inputs": {
+              "title": "No SCION probes requested",
+              "text": "The probing executor did not discover any usable paths."
+            }
+          }
+        ],
+        "edges": [
+          {
+            "kind": "data",
+            "from": {
+              "node": "listener",
+              "port": "ok"
+            },
+            "to": {
+              "node": "listener_ready",
+              "port": "condition"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "listener",
+              "port": "next"
+            },
+            "to": {
+              "node": "listener_ready",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "listener",
+              "port": "error"
+            },
+            "to": {
+              "node": "listener_error",
+              "port": "text"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "listener_ready",
+              "port": "false"
+            },
+            "to": {
+              "node": "listener_error",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "listener",
+              "port": "address"
+            },
+            "to": {
+              "node": "publish_endpoint",
+              "port": "value"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "listener_ready",
+              "port": "true"
+            },
+            "to": {
+              "node": "publish_endpoint",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "publish_endpoint",
+              "port": "ok"
+            },
+            "to": {
+              "node": "endpoint_sent",
+              "port": "condition"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "publish_endpoint",
+              "port": "next"
+            },
+            "to": {
+              "node": "endpoint_sent",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "publish_endpoint",
+              "port": "error"
+            },
+            "to": {
+              "node": "publish_error",
+              "port": "text"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "endpoint_sent",
+              "port": "false"
+            },
+            "to": {
+              "node": "publish_error",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "endpoint_sent",
+              "port": "true"
+            },
+            "to": {
+              "node": "await_count",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "await_count",
+              "port": "ok"
+            },
+            "to": {
+              "node": "count_received",
+              "port": "condition"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "await_count",
+              "port": "next"
+            },
+            "to": {
+              "node": "count_received",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "await_count",
+              "port": "error"
+            },
+            "to": {
+              "node": "count_error",
+              "port": "text"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "count_received",
+              "port": "false"
+            },
+            "to": {
+              "node": "count_error",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "await_count",
+              "port": "value"
+            },
+            "to": {
+              "node": "has_probes",
+              "port": "a"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "has_probes",
+              "port": "value"
+            },
+            "to": {
+              "node": "probes_expected",
+              "port": "condition"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "count_received",
+              "port": "true"
+            },
+            "to": {
+              "node": "probes_expected",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "await_count",
+              "port": "value"
+            },
+            "to": {
+              "node": "receive_loop",
+              "port": "count"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "probes_expected",
+              "port": "true"
+            },
+            "to": {
+              "node": "receive_loop",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "receive_loop",
+              "port": "body"
+            },
+            "to": {
+              "node": "receive",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "receive",
+              "port": "ok"
+            },
+            "to": {
+              "node": "received",
+              "port": "condition"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "receive",
+              "port": "next"
+            },
+            "to": {
+              "node": "received",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "receive",
+              "port": "error"
+            },
+            "to": {
+              "node": "receive_error",
+              "port": "text"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "received",
+              "port": "false"
+            },
+            "to": {
+              "node": "receive_error",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "receive",
+              "port": "sender"
+            },
+            "to": {
+              "node": "reply",
+              "port": "sender"
+            }
+          },
+          {
+            "kind": "data",
+            "from": {
+              "node": "receive",
+              "port": "payload_base64"
+            },
+            "to": {
+              "node": "reply",
+              "port": "payload"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "received",
+              "port": "true"
+            },
+            "to": {
+              "node": "reply",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "receive_loop",
+              "port": "done"
+            },
+            "to": {
+              "node": "finished",
+              "port": "in"
+            }
+          },
+          {
+            "kind": "control",
+            "from": {
+              "node": "probes_expected",
+              "port": "false"
+            },
+            "to": {
+              "node": "no_probes",
+              "port": "in"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "channels": [
+    {
+      "id": "endpoint",
+      "from": "receiver",
+      "to": "probe",
+      "type": "string"
+    },
+    {
+      "id": "probe_count",
+      "from": "probe",
+      "to": "receiver",
+      "type": "number"
+    }
+  ]
+}

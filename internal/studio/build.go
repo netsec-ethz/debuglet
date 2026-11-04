@@ -41,6 +41,8 @@ type Bundle struct {
 	Destinations          []string          `json:"destinations"`
 	RequireICMP           bool              `json:"require_icmp"`
 	RequireUDPListener    bool              `json:"require_udp_listener,omitempty"`
+	RequireSCION          bool              `json:"require_scion,omitempty"`
+	RequireSCIONListener  bool              `json:"require_scion_listener,omitempty"`
 	RequiredHostFunctions []string          `json:"required_host_functions,omitempty"`
 }
 
@@ -173,7 +175,7 @@ func (b *Builder) buildProgram(ctx context.Context, wf workflow.Workflow, raw []
 	if len(wasm) > maxWasmBytes {
 		return nil, errors.New("compiled workflow exceeds the 16 MiB module limit")
 	}
-	bundle := &Bundle{Version: 1, Workflow: wf, WorkflowJSON: string(raw), Source: program.Source, WorkflowSHA256: program.WorkflowSHA256, WasmSHA256: digest(wasm), Wasm: wasm, Destinations: program.Destinations, RequireICMP: program.RequireICMP, RequireUDPListener: program.RequireUDPListener, RequiredHostFunctions: program.RequiredHostFunctions}
+	bundle := &Bundle{Version: 1, Workflow: wf, WorkflowJSON: string(raw), Source: program.Source, WorkflowSHA256: program.WorkflowSHA256, WasmSHA256: digest(wasm), Wasm: wasm, Destinations: program.Destinations, RequireICMP: program.RequireICMP, RequireUDPListener: program.RequireUDPListener, RequireSCION: program.RequireSCION, RequireSCIONListener: program.RequireSCIONListener, RequiredHostFunctions: program.RequiredHostFunctions}
 	encoded, err := json.Marshal(bundle)
 	if err != nil {
 		return nil, err

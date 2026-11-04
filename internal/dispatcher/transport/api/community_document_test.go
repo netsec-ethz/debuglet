@@ -41,6 +41,7 @@ func communityTestBundle(t *testing.T, wf workflow.Workflow, program workflow.Pr
 		Wasm: wasm, WasmSHA256: communityDocumentDigest(wasm),
 		Destinations: program.Destinations, RequireICMP: program.RequireICMP,
 		RequireUDPListener: program.RequireUDPListener, RequiredHostFunctions: program.RequiredHostFunctions,
+		RequireSCION: program.RequireSCION, RequireSCIONListener: program.RequireSCIONListener,
 	}
 }
 
@@ -104,6 +105,8 @@ func TestCommunityWorkflowBundleRejectsMismatchedFields(t *testing.T) {
 		"destination":    func(b *studio.Bundle) { b.Destinations = []string{"other.test"} },
 		"icmp":           func(b *studio.Bundle) { b.RequireICMP = true },
 		"UDP listener":   func(b *studio.Bundle) { b.RequireUDPListener = true },
+		"SCION":          func(b *studio.Bundle) { b.RequireSCION = true },
+		"SCION listener": func(b *studio.Bundle) { b.RequireSCIONListener = true },
 		"host functions": func(b *studio.Bundle) { b.RequiredHostFunctions = []string{"debuglet_io_v1.hop_probe"} },
 		"wasm hash":      func(b *studio.Bundle) { b.WasmSHA256 = strings.Repeat("0", 64) },
 		"wasm magic":     func(b *studio.Bundle) { b.Wasm[0] = 1; b.WasmSHA256 = communityDocumentDigest(b.Wasm) },

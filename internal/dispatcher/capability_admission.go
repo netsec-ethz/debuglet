@@ -53,6 +53,14 @@ func validateExecutorCapabilities(spec *models.DebugletSpec, exec *executorEntry
 			return refuse("require_icmp", "unsupported", "executor does not currently support ICMP")
 		}
 	}
+	if spec.Policy.ListenSCION && exec.Capabilities != nil {
+		if vantageExpired(exec.capabilityObserved, now) {
+			return refuse("listen_scion", "stale_observation", "SCION capability observation has expired")
+		}
+		if !slices.Contains(exec.Capabilities.Protocols, "scion") {
+			return refuse("listen_scion", "unsupported", "executor has no current SCION daemon and local-address readiness")
+		}
+	}
 	if (spec.Policy.ListenTCP || spec.Policy.ListenUDP) && exec.PublicHost() == "" {
 		field := "listen_tcp"
 		if !spec.Policy.ListenTCP {

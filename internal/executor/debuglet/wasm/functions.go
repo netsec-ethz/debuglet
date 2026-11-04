@@ -131,6 +131,12 @@ func Functions(env *WasmEnv) []Function {
 		function(guestio.Module, guestio.HopProbe, hostHopProbe(env)),
 		function(guestio.Module, guestio.ReceiveUDP, HostIOReceiveUDP(env)),
 		function(guestio.Module, guestio.ReplyUDP, HostIOReplyUDP(env)),
+		function(guestio.Module, guestio.SCIONPaths, hostSCION(env, guestio.SCIONPaths)),
+		function(guestio.Module, guestio.SCIONSelectPath, hostSCION(env, guestio.SCIONSelectPath)),
+		function(guestio.Module, guestio.SCIONExchangeFunction, hostSCION(env, guestio.SCIONExchangeFunction)),
+		function(guestio.Module, guestio.SCIONListenerAddressFunction, hostSCION(env, guestio.SCIONListenerAddressFunction)),
+		function(guestio.Module, guestio.SCIONReceive, hostSCION(env, guestio.SCIONReceive)),
+		function(guestio.Module, guestio.SCIONReply, hostSCION(env, guestio.SCIONReply)),
 		function(ExperimentModule, "ready", hostExperimentReady(env)),
 	}
 }

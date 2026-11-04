@@ -30,6 +30,7 @@ use the [deployment guide](../deploy/README.md).
 
 - [Configuration](operations/configuration.md) and [managed services](operations/services.md).
 - [Authentication](operations/authentication.md) and [hosted editor/compiler](operations/hosted-studio.md).
+- [SCION experiments](operations/scion.md): dedicated executors, path discovery and selected-path measurements.
 - [Debian updates](operations/debian.md), [signed releases](operations/releases.md) and [backup/restore](operations/backup-restore.md).
 - [Data retention](operations/data-retention.md), [payments](operations/payments.md) and [abuse response](operations/abuse-response.md).
 - [Troubleshooting](operations/troubleshooting.md), [executor recovery](operations/executor-recovery.md) and [monitoring](operations/monitoring.md).
