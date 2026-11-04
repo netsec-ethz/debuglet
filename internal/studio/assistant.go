@@ -147,6 +147,18 @@ func DecodeAssistantRequest(r io.Reader) (AssistantRequest, error) {
 	if err != nil || len(bytes.TrimSpace(request.Document)) == 0 || bytes.Equal(bytes.TrimSpace(request.Document), []byte("null")) {
 		return request, errors.New("assistant document must use the existing editable graph format")
 	}
+	switch doc := document.(type) {
+	case workflow.Workflow:
+		if doc.GoCode != nil {
+			return request, errors.New("restore blocks before asking the assistant to edit this program; manual Go code is preserved")
+		}
+	case workflow.Experiment:
+		for _, participant := range doc.Participants {
+			if participant.Workflow.GoCode != nil {
+				return request, errors.New("restore blocks for programs with manual Go code before asking the assistant to edit this experiment")
+			}
+		}
+	}
 	request.Document, err = json.Marshal(document)
 	return request, err
 }

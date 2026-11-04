@@ -14,6 +14,9 @@ type Workflow struct {
 	Edges        []Edge             `json:"edges"`
 	CustomBlocks []CustomBlock      `json:"custom_blocks,omitempty"`
 	Groups       []Group            `json:"groups,omitempty"`
+	// GoCode overrides generated functions while retaining the visual graph.
+	// A present but empty value is invalid, rather than a return to visual mode.
+	GoCode *string `json:"go_code,omitempty"`
 }
 
 // Group folds ordinary nodes in the editor without changing their execution.
@@ -77,6 +80,7 @@ type Diagnostic struct {
 }
 type Program struct {
 	Source                string   `json:"source"`
+	GoCode                string   `json:"go_code"`
 	WorkflowSHA256        string   `json:"workflow_sha256"`
 	Destinations          []string `json:"destinations"`
 	RequireICMP           bool     `json:"require_icmp"`

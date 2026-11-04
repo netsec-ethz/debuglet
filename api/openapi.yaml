@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.30"
+  version: "1.31"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Run reads require ownership, operator authority or explicit community sharing to a current member; payment orders and run mutations remain owner-scoped. A hidden resource answers 404. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -15832,6 +15832,9 @@ components:
           "type": "array"
           "items":
             "$ref": "#/components/schemas/StudioCustomBlock"
+        "go_code":
+          "type": "string"
+          "description": "Added in API 1.31. Presence selects manually edited Go functions; the visual graph is retained for explicit restoration, not treated as the executed program. Startup and experiment coordination remain generated. Empty or invalid code produces diagnostics. Maximum 262144 bytes."
         "groups":
           "type": "array"
           "items":
@@ -15915,6 +15918,8 @@ components:
           "type": "array"
           "items":
             "$ref": "#/components/schemas/StudioDiagnostic"
+        "program":
+          "$ref": "#/components/schemas/StudioProgram"
     "StudioExperimentValidation":
       "type": "object"
       "additionalProperties": false
@@ -15925,6 +15930,48 @@ components:
           "type": "array"
           "items":
             "$ref": "#/components/schemas/StudioExperimentDiagnostic"
+        "programs":
+          "type": "array"
+          "description": "Generated previews for all participants, present only when validation succeeds."
+          "items":
+            "type": "object"
+            "additionalProperties": false
+            "required": ["id", "program"]
+            "properties":
+              "id":
+                "type": "string"
+              "program":
+                "$ref": "#/components/schemas/StudioProgram"
+    "StudioProgram":
+      "type": "object"
+      "additionalProperties": false
+      "description": "Added in API 1.31. Go source preview from the same generator used for compilation. This does not run the compiler or execute code. Permission metadata are static hints from the retained graph; manual Go edits require reviewing permissions again."
+      "required": ["source", "go_code", "workflow_sha256", "destinations", "require_icmp"]
+      "properties":
+        "source":
+          "type": "string"
+          "description": "Complete generated Go file, including protected startup and coordination."
+        "go_code":
+          "type": "string"
+          "description": "Editable function declarations. Copy this into workflow.go_code to select manual code mode."
+        "workflow_sha256":
+          "type": "string"
+        "destinations":
+          "type": "array"
+          "items":
+            "type": "string"
+        "require_icmp":
+          "type": "boolean"
+        "require_udp_listener":
+          "type": "boolean"
+        "require_scion":
+          "type": "boolean"
+        "require_scion_listener":
+          "type": "boolean"
+        "required_host_functions":
+          "type": "array"
+          "items":
+            "type": "string"
     "StudioError":
       "type": "object"
       "additionalProperties": false

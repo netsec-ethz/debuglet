@@ -89,6 +89,11 @@ limited to 1 MiB, experiment requests to 4 MiB, and responses to 32 MiB. Paths
 accept no query parameters. Validation returns diagnostics; builds return the
 portable bundle used by local Studio. Building does not submit or execute a run.
 
+Studio validation responses include generated Go previews in API 1.31. A workflow
+may retain explicit manual function declarations in `go_code`; omitting that
+field restores generation from blocks. See [Go editing](development/workflow-authoring.md#inspect-and-edit-go)
+for the distinction between the saved visual graph and the executed code.
+
 The dispatcher forwards these operations to its configured local Unix socket
 worker. Disabled or unreachable workers return 503. Each account may have one
 Studio request in progress, with four requests globally and one compiler build

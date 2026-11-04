@@ -44,6 +44,29 @@ If you use the hosted editor, start with the [first measurement walkthrough](../
 no local build is needed. The sections below cover [local setup](#run-the-editor-locally),
 [command-line compilation](#build-and-review-a-bundle) and [MCP setup](#connect-an-mcp-client).
 
+## Inspect and edit Go
+
+Choose **Go** in the builder to see the functions generated from the current
+blocks. Adding a block or changing a connection updates the preview without a
+WASM build. In a coordinated experiment, the preview belongs to the selected
+program and includes its experiment context.
+
+Choose **Edit Go** to change these functions directly. The original block diagram
+is kept, but arbitrary Go edits cannot be converted back into blocks. The editor
+warns when code and diagram diverge. **Restore blocks** explicitly discards the
+manual functions and resumes visual editing; saving a draft, template or bundle
+preserves manual edits. The AI assistant edits blocks, so restore blocks before
+using it on a program with manual Go.
+
+The code editor accepts function declarations, including the generated entry
+function. Imports, `main`, runtime identity and coordinated readiness stay
+generated. Available package names are `guest`, `debuglet`, `json`, `fmt`, `os`,
+`time`, `strings` and `math`; optional packages are imported when referenced.
+Compilation reports Go type errors. This is the same WASI execution and network
+policy as visual programs. Destination and capability hints still come from the
+retained graph, so review the actual code's destinations and permissions before
+running it. For small additions that should remain visual, use a custom block.
+
 ## Run the editor locally
 
 On Linux, install Go 1.26.10, clone this version of Debuglet, and build the

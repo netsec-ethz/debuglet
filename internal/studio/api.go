@@ -44,11 +44,7 @@ func authoringRoutes(mux *http.ServeMux, compiler authoringCompiler, prefix stri
 				var e workflow.Experiment
 				e, err = DecodeExperiment(r.Body)
 				if err == nil && !build {
-					diagnostics := workflow.ValidateExperiment(e)
-					if diagnostics == nil {
-						diagnostics = []workflow.ExperimentDiagnostic{}
-					}
-					result = map[string]any{"diagnostics": diagnostics}
+					result = experimentPreview(e)
 				} else if err == nil && compiler != nil {
 					result, err = compiler.BuildExperiment(r.Context(), e)
 					writeBuildResult(w, result, err)
@@ -58,11 +54,7 @@ func authoringRoutes(mux *http.ServeMux, compiler authoringCompiler, prefix stri
 				var wf workflow.Workflow
 				wf, err = DecodeWorkflow(r.Body)
 				if err == nil && !build {
-					diagnostics := workflow.Validate(wf)
-					if diagnostics == nil {
-						diagnostics = []workflow.Diagnostic{}
-					}
-					result = map[string]any{"diagnostics": diagnostics}
+					result = workflowPreview(wf)
 				} else if err == nil && compiler != nil {
 					result, err = compiler.Build(r.Context(), wf)
 					writeBuildResult(w, result, err)
@@ -97,4 +89,47 @@ func writeBuildResult(w http.ResponseWriter, result any, err error) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// Preview uses the same generator as compilation, without invoking the toolchain.
+func workflowPreview(wf workflow.Workflow) map[string]any {
+	diagnostics := workflow.Validate(wf)
+	result := map[string]any{}
+	if len(diagnostics) == 0 {
+		program, err := workflow.Generate(wf)
+		if err != nil {
+			diagnostics = append(diagnostics, workflow.Diagnostic{Message: err.Error()})
+		} else {
+			result["program"] = program
+		}
+	}
+	if diagnostics == nil {
+		diagnostics = []workflow.Diagnostic{}
+	}
+	result["diagnostics"] = diagnostics
+	return result
+}
+
+func experimentPreview(e workflow.Experiment) map[string]any {
+	diagnostics := workflow.ValidateExperiment(e)
+	result := map[string]any{}
+	if len(diagnostics) == 0 {
+		programs := make([]map[string]any, 0, len(e.Participants))
+		for _, participant := range e.Participants {
+			_, program, err := workflow.GenerateParticipant(e, participant.ID)
+			if err != nil {
+				diagnostics = append(diagnostics, workflow.ExperimentDiagnostic{Participant: participant.ID, Diagnostic: workflow.Diagnostic{Message: err.Error()}})
+			} else {
+				programs = append(programs, map[string]any{"id": participant.ID, "program": program})
+			}
+		}
+		if len(diagnostics) == 0 {
+			result["programs"] = programs
+		}
+	}
+	if diagnostics == nil {
+		diagnostics = []workflow.ExperimentDiagnostic{}
+	}
+	result["diagnostics"] = diagnostics
+	return result
 }

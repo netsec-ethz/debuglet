@@ -22,6 +22,11 @@ var valueTypes = []string{"string", "number", "boolean", "numbers", "strings", "
 func Validate(w Workflow) []Diagnostic {
 	var ds []Diagnostic
 	add := func(node, port, msg string) { ds = append(ds, Diagnostic{node, port, msg}) }
+	if w.GoCode != nil {
+		if err := validateGoCode(w); err != nil {
+			add("", "", "Go code: "+err.Error())
+		}
+	}
 	if w.Version != 1 {
 		add("", "", "workflow version must be 1")
 	}
