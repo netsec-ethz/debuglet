@@ -24,6 +24,7 @@ func validateMeasurementInputs(n Node, add func(string, string, string)) {
 			add(n.ID, field, fmt.Sprintf("must be an integer from 1 to %d", max))
 		}
 	}
+	validateSCIONInputs(n, add)
 	switch n.Block {
 	case "plot_sample":
 		for _, field := range []struct {
@@ -43,6 +44,11 @@ func validateMeasurementInputs(n Node, add func(string, string, string)) {
 				add(n.ID, "resolver", "enter a resolver IP and port, such as 192.0.2.53:53")
 			}
 		}
+	case "scion_udp_exchange", "scion_receive":
+		enum("encoding", "text", "base64")
+		integer("max_bytes", 4096)
+	case "scion_reply":
+		enum("encoding", "text", "base64")
 	case "udp_exchange":
 		enum("encoding", "text", "base64")
 		integer("max_bytes", 8191)

@@ -27,6 +27,9 @@ documentation contain operational details.
   validate.
 
 ### Added
+- SCION path discovery, exact path selection and UDP exchange/listener workflow
+  blocks for dedicated SCION-enabled executors, with explicit runtime requirements
+  in compiled bundles (API 1.30).
 - Live graph samples through the **Plot sample** workflow block and the Go SDK's
   `WriteSample` emitter, using ordinary run output and existing execution limits.
 - Hosted visual and AI-assisted authoring, reusable personal and community

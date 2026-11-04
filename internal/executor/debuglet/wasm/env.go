@@ -73,7 +73,9 @@ type WasmEnv struct {
 	udpReplyPeer  netip.AddrPort   // last admitted receive; protected by mu
 	udpPending    *pendingDatagram // one received packet awaiting delivery; protected by mu
 
-	ScionServer pan.ListenConn
+	ScionServer     pan.ListenConn
+	scionListenerMu scionOperationLock
+	scionReplyPeer  string
 
 	Budget                                           *socket.Budget
 	tcpReservation, udpReservation, scionReservation *socket.Reservation

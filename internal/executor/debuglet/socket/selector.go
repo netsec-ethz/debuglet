@@ -4,9 +4,17 @@
 package socket
 
 import (
+	"encoding/hex"
+	"errors"
 	"sync"
+	"time"
 
 	"github.com/netsec-ethz/scion-apps/pkg/pan"
+)
+
+var (
+	ErrSCIONPathInvalid     = errors.New("invalid SCION path identifier")
+	ErrSCIONPathUnavailable = errors.New("SCION path is unavailable or expired")
 )
 
 // PathSelector implements pan.Selector and provides the WASM module with
@@ -26,6 +34,34 @@ func NewPathSelector() *PathSelector {
 	return &PathSelector{}
 }
 
+// SCIONPathID is an opaque, stable identifier within a destination's path set.
+// Encoding the fingerprint keeps its representation out of the guest contract.
+func SCIONPathID(path *pan.Path) string {
+	if path == nil {
+		return ""
+	}
+	return hex.EncodeToString([]byte(path.Fingerprint))
+}
+
+// SelectPathID pins an exact path, independent of enumeration order. A missing
+// or expired pin blocks selection rather than silently choosing another path.
+// A later refresh can restore the same fingerprint, but never a different one.
+func (s *PathSelector) SelectPathID(id string) (*pan.Path, error) {
+	fingerprint, err := hex.DecodeString(id)
+	if err != nil || len(fingerprint) == 0 || len(fingerprint) > 4096 {
+		return nil, ErrSCIONPathInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.forcedPath = &pan.Path{Fingerprint: pan.PathFingerprint(fingerprint)}
+	s.refresh(s.paths)
+	if s.current == nil || s.current.Expiry.IsZero() {
+		s.current = nil
+		return nil, ErrSCIONPathUnavailable
+	}
+	return s.current, nil
+}
+
 // ForcePath pins the selector to the path at index i. An invalid index clears
 // the pin and resumes automatic selection.
 func (s *PathSelector) ForcePath(i int) {
@@ -43,6 +79,7 @@ func (s *PathSelector) Path() *pan.Path {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.refresh(s.paths)
 	return s.current
 }
 
@@ -50,6 +87,7 @@ func (s *PathSelector) Path() *pan.Path {
 func (s *PathSelector) Paths() []*pan.Path {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.refresh(s.paths)
 	snapshot := make([]*pan.Path, len(s.paths))
 	copy(snapshot, s.paths)
 	return snapshot
@@ -77,16 +115,25 @@ func (s *PathSelector) refresh(paths []*pan.Path) {
 	if s.forcedPath != nil {
 		wanted = s.forcedPath
 	}
-	s.paths = paths
-	s.current = nil
+	// Expiry is checked on reads as well as daemon refresh, so a stale daemon
+	// observation cannot keep an expired pin usable indefinitely. Zero expiry
+	// represents unspecified metadata (including legacy fixtures).
+	now := time.Now()
+	s.paths = make([]*pan.Path, 0, len(paths))
 	for _, p := range paths {
+		if p != nil && (p.Expiry.IsZero() || p.Expiry.After(now)) {
+			s.paths = append(s.paths, p)
+		}
+	}
+	s.current = nil
+	for _, p := range s.paths {
 		if wanted != nil && p.Fingerprint == wanted.Fingerprint {
 			s.current = p
 			return
 		}
 	}
-	if s.forcedPath == nil && len(paths) > 0 {
-		s.current = paths[0]
+	if s.forcedPath == nil && len(s.paths) > 0 {
+		s.current = s.paths[0]
 	}
 }
 

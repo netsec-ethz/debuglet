@@ -81,5 +81,7 @@ type Program struct {
 	Destinations          []string `json:"destinations"`
 	RequireICMP           bool     `json:"require_icmp"`
 	RequireUDPListener    bool     `json:"require_udp_listener,omitempty"`
+	RequireSCION          bool     `json:"require_scion,omitempty"`
+	RequireSCIONListener  bool     `json:"require_scion_listener,omitempty"`
 	RequiredHostFunctions []string `json:"required_host_functions,omitempty"`
 }

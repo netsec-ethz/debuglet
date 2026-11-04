@@ -252,8 +252,30 @@ var unmarkedSCION sync.Once
 // SCIONConn wraps a SCION/UDP connection and its associated PathSelector.
 // It replaces the former ScionDialWrapper.
 type SCIONConn struct {
-	Conn     *pan.Conn
-	Selector *PathSelector
+	Conn          *pan.Conn
+	Selector      *PathSelector
+	operationOnce sync.Once
+	operation     chan struct{}
+}
+
+// WithLock serializes each connected socket's request/reply operation and
+// deadline changes. Waiting for an occupied socket respects the caller's
+// cancellation; registry shutdown still closes the socket to interrupt I/O.
+func (c *SCIONConn) WithLock(ctx context.Context, fn func(pan.Conn, *PathSelector) error) error {
+	c.operationOnce.Do(func() { c.operation = make(chan struct{}, 1) })
+	select {
+	case c.operation <- struct{}{}:
+		defer func() { <-c.operation }()
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
+	if err := ctx.Err(); err != nil {
+		return context.Cause(ctx)
+	}
+	if c.Conn == nil || *c.Conn == nil || c.Selector == nil {
+		return net.ErrClosed
+	}
+	return fn(*c.Conn, c.Selector)
 }
 
 // SCIONConnRegistry manages lazily-dialled SCION connections keyed by

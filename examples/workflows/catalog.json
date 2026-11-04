@@ -1928,6 +1928,303 @@
     ]
   },
   {
+    "id": "scion_paths",
+    "label": "Discover SCION paths",
+    "category": "Network",
+    "description": "Discover paths from this executor to a SCION UDP endpoint (ISD-AS,IP:port). Each path has an opaque id, interfaces, hop_count, mtu and expires_ms. Discovery is not proof of delivery. Use ordinary list, field and filter blocks to inspect paths.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "address",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "timeout_ms",
+        "type": "number",
+        "default": 2000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      },
+      {
+        "name": "paths",
+        "type": "any"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "scion_select_path",
+    "label": "Select SCION path",
+    "category": "Network",
+    "description": "Pin a discovered path by its stable id for this endpoint. Returns the current path descriptor, or an error if it disappeared. Never silently substitutes another path. Pass path_id explicitly to SCION UDP exchange.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "address",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "path_id",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "timeout_ms",
+        "type": "number",
+        "default": 2000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      },
+      {
+        "name": "path",
+        "type": "object"
+      },
+      {
+        "name": "path_id",
+        "type": "string"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "scion_udp_exchange",
+    "label": "SCION UDP exchange",
+    "category": "Network",
+    "description": "Send one datagram on an explicitly chosen path and receive one reply. path_id is the actual outgoing path, not a claim about the return path. Duration covers the exchange; it is not one-way delay. No fallback, TCP or TESLA tagging. Requires a reachable SCION UDP responder.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "address",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "path_id",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "payload",
+        "type": "string",
+        "default": ""
+      },
+      {
+        "name": "encoding",
+        "type": "string",
+        "default": "text"
+      },
+      {
+        "name": "max_bytes",
+        "type": "number",
+        "default": 4096
+      },
+      {
+        "name": "timeout_ms",
+        "type": "number",
+        "default": 2000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      },
+      {
+        "name": "response",
+        "type": "string"
+      },
+      {
+        "name": "response_base64",
+        "type": "string"
+      },
+      {
+        "name": "sender",
+        "type": "string"
+      },
+      {
+        "name": "path_id",
+        "type": "string"
+      },
+      {
+        "name": "duration_ms",
+        "type": "number"
+      },
+      {
+        "name": "received_bytes",
+        "type": "number"
+      },
+      {
+        "name": "complete",
+        "type": "boolean"
+      },
+      {
+        "name": "truncated",
+        "type": "boolean"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "scion_listener_address",
+    "label": "SCION listener address",
+    "category": "Network",
+    "description": "Read this run's admitted SCION UDP endpoint. In a coordinated experiment, send this address to the probing participant using Send message. The control messages still use ordinary TCP.",
+    "pure": false,
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      },
+      {
+        "name": "address",
+        "type": "string"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "scion_receive",
+    "label": "Receive SCION UDP",
+    "category": "Network",
+    "description": "Wait for one admitted datagram on this run's SCION listener. Pass sender to Reply SCION UDP. payload_base64 preserves exact bytes; a truncated datagram is not a complete success. Requires a SCION listener.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "max_bytes",
+        "type": "number",
+        "default": 4096
+      },
+      {
+        "name": "encoding",
+        "type": "string",
+        "default": "text"
+      },
+      {
+        "name": "timeout_ms",
+        "type": "number",
+        "default": 2000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      },
+      {
+        "name": "payload",
+        "type": "string"
+      },
+      {
+        "name": "payload_base64",
+        "type": "string"
+      },
+      {
+        "name": "sender",
+        "type": "string"
+      },
+      {
+        "name": "received_at_ms",
+        "type": "number"
+      },
+      {
+        "name": "received_bytes",
+        "type": "number"
+      },
+      {
+        "name": "truncated",
+        "type": "boolean"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "scion_reply",
+    "label": "Reply SCION UDP",
+    "category": "Network",
+    "description": "Reply from this run's SCION listener to the exact sender of its most recently received admitted datagram. Wire sender from Receive SCION UDP. Payload encoding is text or base64, up to 4096 bytes.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "sender",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "payload",
+        "type": "string",
+        "default": ""
+      },
+      {
+        "name": "encoding",
+        "type": "string",
+        "default": "text"
+      },
+      {
+        "name": "timeout_ms",
+        "type": "number",
+        "default": 2000
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ok",
+        "type": "boolean"
+      },
+      {
+        "name": "error",
+        "type": "string"
+      },
+      {
+        "name": "bytes_sent",
+        "type": "number"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
     "id": "standard_deviation",
     "label": "Standard deviation",
     "category": "Analysis",

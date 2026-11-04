@@ -60,6 +60,8 @@ func experimentTools(server *mcp.Server, builder *Builder, files *store) {
 		for _, participant := range bundle.Participants {
 			meta.RequireUDPListener = meta.RequireUDPListener || participant.Bundle.RequireUDPListener
 			meta.RequireICMP = meta.RequireICMP || participant.Bundle.RequireICMP
+			meta.RequireSCION = meta.RequireSCION || participant.Bundle.RequireSCION
+			meta.RequireSCIONListener = meta.RequireSCIONListener || participant.Bundle.RequireSCIONListener
 			meta.RequiredHostFunctions = append(meta.RequiredHostFunctions, participant.Bundle.RequiredHostFunctions...)
 		}
 		slices.Sort(meta.RequiredHostFunctions)

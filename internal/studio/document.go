@@ -91,7 +91,7 @@ func validateWorkflowBundle(bundle Bundle, canonical []byte, program workflow.Pr
 		!bytes.Equal(embedded, canonical) || bundle.WorkflowJSON != string(canonical) ||
 		bundle.WorkflowSHA256 != program.WorkflowSHA256 ||
 		!slices.Equal(bundle.Destinations, program.Destinations) || bundle.RequireICMP != program.RequireICMP ||
-		bundle.RequireUDPListener != program.RequireUDPListener || !slices.Equal(bundle.RequiredHostFunctions, program.RequiredHostFunctions) ||
+		bundle.RequireUDPListener != program.RequireUDPListener || bundle.RequireSCION != program.RequireSCION || bundle.RequireSCIONListener != program.RequireSCIONListener || !slices.Equal(bundle.RequiredHostFunctions, program.RequiredHostFunctions) ||
 		len(bundle.Wasm) < 8 || len(bundle.Wasm) > 16<<20 ||
 		!bytes.Equal(bundle.Wasm[:8], []byte{0, 'a', 's', 'm', 1, 0, 0, 0}) ||
 		bundle.WasmSHA256 != DocumentDigest(bundle.Wasm) {

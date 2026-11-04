@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.29"
+  version: "1.30"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Run reads require ownership, operator authority or explicit community sharing to a current member; payment orders and run mutations remain owner-scoped. A hidden resource answers 404. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -15985,6 +15985,12 @@ components:
         "require_udp_listener":
           "type": "boolean"
           "description": "The generated guest requires an admitted UDP listener. Absent means false."
+        "require_scion":
+          "type": "boolean"
+          "description": "Added in API 1.30. The generated guest requires SCION transport on the selected executor. Absent means false. Daemon availability does not establish a usable path to the destination."
+        "require_scion_listener":
+          "type": "boolean"
+          "description": "Added in API 1.30. The generated guest requires an admitted SCION UDP listener. Absent means false."
         "required_host_functions":
           "type": "array"
           "items":

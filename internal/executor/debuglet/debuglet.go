@@ -336,17 +336,12 @@ func (d *Debuglet) StartServers(ctx context.Context, req StartServersReq) error 
 			return fmt.Errorf("startServers: failed to parse SCION address: %w", err)
 		}
 
-		var listen pan.IPPortValue
-		if err = listen.Set(scionAddr.IP.String() + ":0"); err != nil {
-			return fmt.Errorf("startServers: failed to set SCION listen addr: %w", err)
-		}
-
 		d.env.Logger.Debug("startServers: starting scion UDP listener")
 		reservation, err := d.env.Budget.ReserveListener()
 		if err != nil {
 			return fmt.Errorf("startServers: SCION listener: %w", err)
 		}
-		scionServer, err := pan.ListenUDP(ctx, listen.Get(), nil)
+		scionServer, err := pan.ListenUDP(ctx, netip.AddrPortFrom(scionAddr.IP, 0), nil)
 		if err != nil {
 			reservation.Release()
 			return fmt.Errorf("startServers: failed to start SCION UDP listener: %w", err)

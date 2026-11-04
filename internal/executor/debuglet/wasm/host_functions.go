@@ -641,22 +641,44 @@ func hostSendSCIONUDPPacket(env *WasmEnv) func(ctx context.Context, mod Memory, 
 			panic(fmt.Errorf("send_scion_udp_packet: failed to extract udp_send_buffer: %w", err))
 		}
 
-		deadline, ok := ctx.Deadline()
-		if !ok {
+		if _, ok := ctx.Deadline(); !ok {
 			panic(fmt.Errorf("send_scion_udp_packet: debuglet has no deadline"))
 		}
-		(*sc.Conn).SetDeadline(deadline)
-
-		if err := env.Accountant.Account(ctx, app.TransferOut, match.Key, len(data)); err != nil {
-			env.warnPrivate("hostSendSCIONUDPPacket: failed to account packet", err)
-			panic(fmt.Errorf("send_scion_udp_packet: %w", err))
-		}
-		if _, err = (*sc.Conn).Write(data); err != nil {
+		if err = writeLegacySCION(ctx, env, sc, match, data); err != nil {
 			env.warnPrivate("hostSendSCIONUDPPacket: write failed", err)
 			panic(fmt.Errorf("send_scion_udp_packet: write failed: %w", err))
 		}
 		return time.Now().UnixNano()
 	}
+}
+
+// Legacy and recoverable imports share the connection lock so selection and
+// deadline changes cannot race a request/reply on the same connected socket.
+func writeLegacySCION(ctx context.Context, env *WasmEnv, sc *socket.SCIONConn, match netpolicy.Match, data []byte) error {
+	return sc.WithLock(ctx, func(conn pan.Conn, selector *socket.PathSelector) error {
+		_, finish, err := datagramDeadline(ctx, 0, conn.SetWriteDeadline)
+		if err != nil {
+			return err
+		}
+		defer finish()
+		if err := env.Accountant.Account(ctx, app.TransferOut, match.Key, len(data)); err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return context.Cause(ctx)
+		}
+		path := selector.Path()
+		if _, local := scionLocalPath(conn); local {
+			path = nil
+		} else if path == nil || !path.Expiry.After(time.Now()) {
+			return errors.New("SCION path is unavailable or expired")
+		}
+		n, err := conn.WriteVia(path, data)
+		if err == nil && n != len(data) {
+			err = io.ErrShortWrite
+		}
+		return err
+	})
 }
 
 // HostReceiveSCIONServerUDPPacket reads one admitted packet from the SCION
@@ -676,16 +698,30 @@ func hostReceiveSCIONServerUDPPacket(env *WasmEnv) func(ctx context.Context, mod
 			env.warnPrivate("hostReceiveSCIONServerUDPPacket: failed to extract buffer", err)
 			panic(fmt.Errorf("receive_scion_server_udp_packet: failed to extract udp_receive_buffer: %w", err))
 		}
+		if err := env.scionListenerMu.Lock(ctx); err != nil {
+			panic(fmt.Errorf("receive_scion_server_udp_packet: %w", err))
+		}
+		defer env.scionListenerMu.Unlock()
+		if err := ctx.Err(); err != nil {
+			panic(fmt.Errorf("receive_scion_server_udp_packet: %w", context.Cause(ctx)))
+		}
+		if env.ScionServer == nil {
+			panic(fmt.Errorf("receive_scion_server_udp_packet: %w", net.ErrClosed))
+		}
 
 		deadline := time.Now().Add(time.Duration(timeout) * time.Millisecond)
 		if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
 			deadline = ctxDeadline
 		}
 
-		if err = env.ScionServer.SetReadDeadline(deadline); err != nil {
+		readCtx, cancel := context.WithDeadline(ctx, deadline)
+		defer cancel()
+		_, finish, err := datagramDeadline(readCtx, 0, env.ScionServer.SetReadDeadline)
+		if err != nil {
 			env.warnPrivate("hostReceiveSCIONServerUDPPacket: failed to set deadline", err)
 			panic(fmt.Errorf("receive_scion_server_udp_packet: failed to set read deadline: %w", err))
 		}
+		defer finish()
 
 		for {
 			n, from, err := env.ScionServer.ReadFrom(buf)
@@ -742,8 +778,18 @@ func hostAnswerSCIONUDPPacket(env *WasmEnv, addresses []string) func(ctx context
 			env.warnPrivate("hostAnswerSCIONUDPPacket: failed to extract buffer", err)
 			panic(fmt.Errorf("answer_scion_udp_packet: failed to extract buffer: %w", err))
 		}
+		if err := env.scionListenerMu.Lock(ctx); err != nil {
+			panic(fmt.Errorf("answer_scion_udp_packet: %w", err))
+		}
+		defer env.scionListenerMu.Unlock()
+		if err := ctx.Err(); err != nil {
+			panic(fmt.Errorf("answer_scion_udp_packet: %w", context.Cause(ctx)))
+		}
 
 		if env.LastReceived != nil {
+			if env.ScionServer == nil {
+				panic(fmt.Errorf("answer_scion_udp_packet: %w", net.ErrClosed))
+			}
 			lastReceivedAddr, ok := env.LastReceived.(pan.UDPAddr)
 			if !ok {
 				env.warnPrivate("hostAnswerSCIONUDPPacket: could not cast lastReceived to UDPAddr", fmt.Errorf("sender %v", env.LastReceived))
@@ -772,6 +818,11 @@ func hostAnswerSCIONUDPPacket(env *WasmEnv, addresses []string) func(ctx context
 				env.warnPrivate("hostAnswerSCIONUDPPacket: failed to account packet", err)
 				panic(fmt.Errorf("answer_scion_udp_packet: %w", err))
 			}
+			_, finish, err := datagramDeadline(ctx, 0, env.ScionServer.SetWriteDeadline)
+			if err != nil {
+				panic(fmt.Errorf("answer_scion_udp_packet: %w", err))
+			}
+			defer finish()
 
 			env.Logger.Debugw("hostAnswerSCIONUDPPacket: writing", "dst", lastReceivedAddr)
 			if _, err = env.ScionServer.WriteTo(data, lastReceivedAddr); err != nil {
@@ -789,11 +840,7 @@ func hostAnswerSCIONUDPPacket(env *WasmEnv, addresses []string) func(ctx context
 				env.warnPrivate("hostAnswerSCIONUDPPacket: destination refused", fmt.Errorf("address %s: %w", addr, err))
 				panic(fmt.Errorf("answer_scion_udp_packet: %w", err))
 			}
-			if err := env.Accountant.Account(ctx, app.TransferOut, match.Key, len(data)); err != nil {
-				env.warnPrivate("hostAnswerSCIONUDPPacket: failed to account packet", err)
-				panic(fmt.Errorf("answer_scion_udp_packet: %w", err))
-			}
-			if _, err = (*sc.Conn).Write(data); err != nil {
+			if err = writeLegacySCION(ctx, env, sc, match, data); err != nil {
 				env.warnPrivate("hostAnswerSCIONUDPPacket: write failed", err)
 				panic(fmt.Errorf("answer_scion_udp_packet: write failed: %w", err))
 			}
@@ -817,7 +864,14 @@ func hostSCIONAvailablePaths(env *WasmEnv) func(ctx context.Context, mod Memory,
 			panic(fmt.Errorf("scion_available_paths: %w", err))
 		}
 
-		return int32(len(sc.Selector.Paths()))
+		var count int32
+		if err := sc.WithLock(ctx, func(_ pan.Conn, selector *socket.PathSelector) error {
+			count = int32(len(selector.Paths()))
+			return nil
+		}); err != nil {
+			panic(fmt.Errorf("scion_available_paths: %w", err))
+		}
+		return count
 	}
 }
 
@@ -867,7 +921,14 @@ func hostSCIONPathLength(env *WasmEnv) func(ctx context.Context, mod Memory, add
 			panic(fmt.Errorf("scion_path_length: %w", err))
 		}
 
-		return pathHops(sc.Selector.Paths(), pathIdx)
+		var count int32
+		if err := sc.WithLock(ctx, func(_ pan.Conn, selector *socket.PathSelector) error {
+			count = pathHops(selector.Paths(), pathIdx)
+			return nil
+		}); err != nil {
+			panic(fmt.Errorf("scion_path_length: %w", err))
+		}
+		return count
 	}
 }
 
@@ -888,7 +949,14 @@ func hostSCIONGetInterfaceDetails(env *WasmEnv) func(ctx context.Context, mod Me
 		}
 
 		env.Logger.Debugw("hostSCIONGetInterfaceDetails", "path", pathIdx, "interface", ifIdx)
-		return pathInterface(sc.Selector.Paths(), pathIdx, ifIdx)
+		var ia, ifID int64
+		if err := sc.WithLock(ctx, func(_ pan.Conn, selector *socket.PathSelector) error {
+			ia, ifID = pathInterface(selector.Paths(), pathIdx, ifIdx)
+			return nil
+		}); err != nil {
+			panic(fmt.Errorf("scion_get_interface_details: %w", err))
+		}
+		return ia, ifID
 	}
 }
 
@@ -908,7 +976,12 @@ func hostSCIONSelectPath(env *WasmEnv) func(ctx context.Context, mod Memory, add
 		}
 
 		env.Logger.Debugw("hostSCIONSelectPath: forcing path", "index", pathIdx)
-		sc.Selector.ForcePath(int(pathIdx))
-		env.Logger.Debugw("hostSCIONSelectPath: path selected", "path", sc.Selector.Path())
+		if err := sc.WithLock(ctx, func(_ pan.Conn, selector *socket.PathSelector) error {
+			selector.ForcePath(int(pathIdx))
+			env.Logger.Debugw("hostSCIONSelectPath: path selected", "path", selector.Path())
+			return nil
+		}); err != nil {
+			panic(fmt.Errorf("scion_select_path: %w", err))
+		}
 	}
 }

@@ -242,6 +242,9 @@ func generate(w Workflow, experimentConfig string) (Program, error) {
 				out.WriteString("values,err:=runtime.ResetCollection(in)\n")
 			case "dns_query":
 				out.WriteString("values,err:=guest.DNSQuery(in)\n")
+			case "scion_paths", "scion_select_path", "scion_udp_exchange", "scion_listener_address", "scion_receive", "scion_reply":
+				function := map[string]string{"scion_paths": "SCIONPaths", "scion_select_path": "SCIONSelectPath", "scion_udp_exchange": "SCIONUDPExchange", "scion_listener_address": "SCIONListenerAddress", "scion_receive": "SCIONReceive", "scion_reply": "SCIONReply"}[n.Block]
+				fmt.Fprintf(&out, "values,err:=guest.%s(in)\n", function)
 			case "udp_exchange":
 				out.WriteString("values,err:=guest.UDPExchange(in)\n")
 			case "tcp_exchange":
@@ -282,6 +285,28 @@ func generate(w Workflow, experimentConfig string) (Program, error) {
 	}
 	program := Program{Source: string(source), WorkflowSHA256: digest, Destinations: []string{}}
 	for _, n := range w.Nodes {
+		if function := scionHostFunction(n.Block); function != "" {
+			program.RequireSCION = true
+			if n.Block == "scion_listener_address" || n.Block == "scion_receive" || n.Block == "scion_reply" {
+				program.RequireSCIONListener = true
+			}
+			name := "debuglet_io_v1." + function
+			if !slices.Contains(program.RequiredHostFunctions, name) {
+				program.RequiredHostFunctions = append(program.RequiredHostFunctions, name)
+			}
+			value := n.Inputs["address"]
+			if from, ok := data[Endpoint{n.ID, "address"}]; ok {
+				value = nil
+				if source := nodes[from.Node]; source.Block == "constant" {
+					value = source.Inputs["value"]
+				}
+			}
+			if address, ok := value.(string); ok {
+				if host, err := scionDestinationHost(address); err == nil && !slices.Contains(program.Destinations, host) {
+					program.Destinations = append(program.Destinations, host)
+				}
+			}
+		}
 		if n.Block == "udp_probe_start" {
 			program.RequireUDPListener = true
 		}
