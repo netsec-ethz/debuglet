@@ -61,7 +61,7 @@ func assistantDocumentSchema(kind string) map[string]any {
 		"name": nullableString(),
 		"workflows": array(assistantSchemaObject(map[string]any{
 			"participant": map[string]any{"type": "string", "description": "Existing participant ID for an experiment; empty string for a workflow."},
-			"name": nullableString(), "entry": nullableString(),
+			"name":        nullableString(), "entry": nullableString(),
 			"upsert_nodes": array(nodeSchema), "remove_nodes": array(str()),
 			"add_edges": array(edgeSchema), "remove_edges": array(edgeSchema),
 			"upsert_custom_blocks": array(customSchema),
@@ -94,11 +94,11 @@ type assistantWireWorkflow struct {
 }
 
 type assistantWireNode struct {
-	ID         string             `json:"id"`
-	Block      string             `json:"block,omitempty"`
-	CustomBlock string            `json:"custom_block,omitempty"`
-	InputsJSON string             `json:"inputs_json"`
-	Position   *workflow.Position `json:"position"`
+	ID          string             `json:"id"`
+	Block       string             `json:"block,omitempty"`
+	CustomBlock string             `json:"custom_block,omitempty"`
+	InputsJSON  string             `json:"inputs_json"`
+	Position    *workflow.Position `json:"position"`
 }
 
 func (n assistantWireNode) document() (workflow.Node, error) {
@@ -155,12 +155,16 @@ func (w assistantWireWorkflow) document() (workflow.Workflow, error) {
 	doc := workflow.Workflow{Version: w.Version, Name: w.Name, Entry: w.Entry, Edges: w.Edges, Nodes: []workflow.Node{}, Groups: w.Groups}
 	for _, n := range w.Nodes {
 		node, err := n.document()
-		if err != nil { return doc, err }
+		if err != nil {
+			return doc, err
+		}
 		doc.Nodes = append(doc.Nodes, node)
 	}
 	for _, block := range w.CustomBlocks {
 		custom, err := block.document()
-		if err != nil { return doc, err }
+		if err != nil {
+			return doc, err
+		}
 		doc.CustomBlocks = append(doc.CustomBlocks, custom)
 	}
 	return doc, nil
@@ -168,9 +172,13 @@ func (w assistantWireWorkflow) document() (workflow.Workflow, error) {
 
 func (b assistantWireBlock) document() (workflow.CustomBlock, error) {
 	inputs, err := assistantDecodePorts(b.Inputs)
-	if err != nil { return workflow.CustomBlock{}, err }
+	if err != nil {
+		return workflow.CustomBlock{}, err
+	}
 	outputs, err := assistantDecodePorts(b.Outputs)
-	if err != nil { return workflow.CustomBlock{}, err }
+	if err != nil {
+		return workflow.CustomBlock{}, err
+	}
 	return workflow.CustomBlock{ID: b.ID, Label: b.Label, Inputs: inputs, Outputs: outputs, Code: b.Code}, nil
 }
 

@@ -62,7 +62,7 @@ func TestAssistantEditsRewireAndRemoveGroupedNode(t *testing.T) {
 		t.Fatal(err)
 	}
 	doc, _ := DecodeWorkflow(bytes.NewReader(updated))
-	if len(doc.Nodes) != 2 || len(doc.Edges) != 2 || len(doc.Groups) != 1 || !reflect.DeepEqual(doc.Groups[0].NodeIDs, []string{"tcp"}) {
+	if len(doc.Nodes) != 2 || len(doc.Edges) != 2 || len(doc.Groups) != 0 {
 		t.Fatalf("node removal did not update incident edges/groups: %#v", doc)
 	}
 }

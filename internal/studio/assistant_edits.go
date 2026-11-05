@@ -153,13 +153,13 @@ func assistantEditWorkflow(doc *workflow.Workflow, edit assistantWorkflowEdits) 
 	doc.Edges = slices.DeleteFunc(doc.Edges, func(edge workflow.Edge) bool {
 		return removedEdges[edge] || remove[edge.From.Node] || remove[edge.To.Node]
 	})
-	emptyGroups := make(map[string]bool)
+	dissolvedGroups := make(map[string]bool)
 	for i := range doc.Groups {
 		before := len(doc.Groups[i].NodeIDs)
 		doc.Groups[i].NodeIDs = slices.DeleteFunc(doc.Groups[i].NodeIDs, func(id string) bool { return remove[id] })
-		emptyGroups[doc.Groups[i].ID] = before > 0 && len(doc.Groups[i].NodeIDs) == 0
+		dissolvedGroups[doc.Groups[i].ID] = len(doc.Groups[i].NodeIDs) < before && len(doc.Groups[i].NodeIDs) < 2
 	}
-	doc.Groups = slices.DeleteFunc(doc.Groups, func(group workflow.Group) bool { return emptyGroups[group.ID] })
+	doc.Groups = slices.DeleteFunc(doc.Groups, func(group workflow.Group) bool { return dissolvedGroups[group.ID] })
 	for _, edge := range edit.AddEdges {
 		if edges[edge] || removedEdges[edge] {
 			return errors.New("cannot add a duplicate or removed edge")
