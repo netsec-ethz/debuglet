@@ -366,7 +366,11 @@ func assistantValidateDocument(kind string, data json.RawMessage) (json.RawMessa
 		if err != nil {
 			return nil, err
 		}
-		if ds := workflow.Validate(document); len(ds) != 0 {
+		ds := workflow.Validate(document)
+		if len(ds) == 0 {
+			ds = workflow.ValidateOutputAvailability(document)
+		}
+		if len(ds) != 0 {
 			diagnostics := make([]workflow.ExperimentDiagnostic, len(ds))
 			for i, d := range ds {
 				diagnostics[i].Diagnostic = d
@@ -384,6 +388,15 @@ func assistantValidateDocument(kind string, data json.RawMessage) (json.RawMessa
 		}
 		if ds := workflow.ValidateExperiment(document); len(ds) != 0 {
 			return nil, assistantValidationError(ds)
+		}
+		var availability []workflow.ExperimentDiagnostic
+		for _, participant := range document.Participants {
+			for _, diagnostic := range workflow.ValidateOutputAvailability(participant.Workflow) {
+				availability = append(availability, workflow.ExperimentDiagnostic{Participant: participant.ID, Diagnostic: diagnostic})
+			}
+		}
+		if len(availability) != 0 {
+			return nil, assistantValidationError(availability)
 		}
 		for _, participant := range document.Participants {
 			if _, _, err := workflow.GenerateParticipant(document, participant.ID); err != nil {

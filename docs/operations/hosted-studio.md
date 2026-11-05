@@ -170,7 +170,9 @@ inside that scaffold, then are decoded into the ordinary editor format. Other
 compatible endpoints retain the ordinary document tool format. Strict output
 constrains the shape; it does not establish correct wiring or measurement
 semantics. Every proposed graph passes validation and Go source generation,
-including every participant in a coordinated experiment. Build still compiles
+including every participant in a coordinated experiment. Assistant proposals also
+check whether action outputs are available along supported loop-free control
+paths; loops and custom conditions still need review. Build still compiles
 the generated program separately. A rejected graph gets at most one correction
 within the same 90-second deadline; truncated output is rejected without another
 provider call. For small changes, the model can return only changed nodes and
