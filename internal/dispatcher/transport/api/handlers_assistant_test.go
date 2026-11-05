@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -155,6 +156,39 @@ func TestAssistantDistinguishesInvalidGraphAndProviderFailure(t *testing.T) {
 				t.Fatalf("provider calls %d, want %d", calls.Load(), test.calls)
 			}
 			oaCheckResponse(t, oaContract(t), "POST", "/studio/assistant", status, body)
+		})
+	}
+}
+
+func TestAssistantFailureReasonsRemainSafe(t *testing.T) {
+	for _, test := range []struct {
+		reason     string
+		contextErr error
+		wantReason string
+		status     int
+	}{
+		{"provider_auth", nil, "provider_auth", 502},
+		{"provider_rate_limit", nil, "provider_rate_limit", 502},
+		{"output_truncated", nil, "output_truncated", 422},
+		{"invalid_graph", nil, "invalid_graph", 422},
+		{"provider-secret", nil, "provider_unavailable", 502},
+		{"provider_unavailable", context.DeadlineExceeded, "deadline_exceeded", 504},
+		{"provider_unavailable", context.Canceled, "canceled", 504},
+	} {
+		t.Run(test.wantReason, func(t *testing.T) {
+			failure := assistantFailure(&studio.AssistantError{Code: test.reason, Message: "provider-secret"}, test.contextErr)
+			status, body, private := errorEnvelope(failure)
+			if status != test.status || body.Reason != test.wantReason {
+				t.Fatalf("status/reason = %d/%s, want %d/%s", status, body.Reason, test.status, test.wantReason)
+			}
+			if private != nil || strings.Contains(body.Message, "provider-secret") || !strings.Contains(body.Message, "draft is unchanged") {
+				t.Fatal("assistant failure leaked provider data or lost draft guidance")
+			}
+			data, err := json.Marshal(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			oaCheckResponse(t, oaContract(t), "POST", "/studio/assistant", status, data)
 		})
 	}
 }

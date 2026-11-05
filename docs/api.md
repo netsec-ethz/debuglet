@@ -68,8 +68,11 @@ admission and a global six requests/minute limit with burst four apply. Excess
 work returns `429` with `Retry-After`. Each request has a 90-second deadline,
 including at most one repair attempt; each provider call allows 16,384 output
 tokens and a 512 KiB response. Replies contain at most 8,192 message bytes and a
-256 KiB document. Disabled service returns `503`, upstream or invalid replies
-`502`, and timeout/cancellation `504`, using the normal API error envelope.
+256 KiB document. Disabled service returns `503`, provider failures `502`, invalid
+or incomplete proposals `422`, and timeout/cancellation `504`. The draft remains
+unchanged on failure. API 1.32 adds an optional `reason` to the normal error
+envelope, distinguishing provider credentials or usage limits, incomplete output,
+invalid graphs, and timeout/cancellation. No raw provider error is returned.
 
 See [operator configuration](operations/hosted-studio.md#optional-experiment-assistant)
 for provider setup and spending controls.

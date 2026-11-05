@@ -19,8 +19,10 @@ import (
 // parse. Internal diagnostics are never part of it; they stay in the
 // dispatcher's log. api/openapi.yaml lists the codes.
 type ErrorResponse struct {
-	Code        string            `json:"code"`
-	Message     string            `json:"message"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	// Reason optionally classifies an assistant failure without exposing provider details.
+	Reason      string            `json:"reason,omitempty"`
 	FieldErrors []wire.FieldError `json:"field_errors,omitempty"`
 	// AdmittedIDs appears only when submission failed after durable admission.
 	// IDs are in request order; inspect their state instead of replaying work.
