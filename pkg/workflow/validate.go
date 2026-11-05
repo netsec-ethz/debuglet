@@ -258,6 +258,7 @@ func Validate(w Workflow) []Diagnostic {
 			}
 		}
 		validateMeasurementInputs(n, add)
+		validateByteInputs(n, connected, add)
 		if n.Block == "for_each" {
 			if value, literal := n.Inputs["values"]; literal {
 				if items, ok := value.([]any); !ok || len(items) > 100 {

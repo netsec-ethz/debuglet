@@ -49,15 +49,16 @@ func validateMeasurementInputs(n Node, add func(string, string, string)) {
 			}
 		}
 	case "scion_udp_exchange", "scion_receive":
-		enum("encoding", "text", "base64")
+		enum("encoding", "text", "hex", "base64")
 		integer("max_bytes", 4096)
 	case "scion_reply":
-		enum("encoding", "text", "base64")
+		enum("encoding", "text", "hex", "base64")
 	case "udp_exchange":
-		enum("encoding", "text", "base64")
+		enum("encoding", "text", "hex", "base64")
 		integer("max_bytes", 8191)
 	case "tcp_exchange":
-		enum("encoding", "text", "base64")
+		enum("delimiter_encoding", "text", "hex", "base64")
+		enum("encoding", "text", "hex", "base64")
 		enum("read_until", "delimiter", "bytes", "eof")
 		integer("max_bytes", 8192)
 		if mode, _ := n.Inputs["read_until"].(string); mode == "" || mode == "delimiter" {
@@ -66,10 +67,10 @@ func validateMeasurementInputs(n Node, add func(string, string, string)) {
 			}
 		}
 	case "udp_receive":
-		enum("encoding", "text", "base64")
+		enum("encoding", "text", "hex", "base64")
 		integer("max_bytes", 8192)
 	case "udp_reply":
-		enum("encoding", "text", "base64")
+		enum("encoding", "text", "hex", "base64")
 	case "hop_probe":
 		integer("ttl", 255)
 	}

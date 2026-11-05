@@ -105,7 +105,7 @@ func TestMeasurementLiteralValidation(t *testing.T) {
 		{ID: "bad", Block: "dns_query", Inputs: map[string]any{"resolver": "192.0.2.53:53", "name": "example.test", "transport": "quic"}},
 		{ID: "bad", Block: "hop_probe", Inputs: map[string]any{"target": "192.0.2.1", "ttl": float64(256)}},
 		{ID: "bad", Block: "udp_exchange", Inputs: map[string]any{"target": "192.0.2.1:1234", "max_bytes": float64(8192)}},
-		{ID: "bad", Block: "udp_receive", Inputs: map[string]any{"encoding": "hex"}},
+		{ID: "bad", Block: "udp_receive", Inputs: map[string]any{"encoding": "unknown"}},
 		{ID: "bad", Block: "tcp_exchange", Inputs: map[string]any{"target": "192.0.2.1:1234", "delimiter": ""}},
 	} {
 		t.Run(n.Block, func(t *testing.T) {

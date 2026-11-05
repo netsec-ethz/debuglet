@@ -243,6 +243,8 @@ func Normalize(values map[string]any) (map[string]any, error) {
 func Pure(block string, in map[string]any) (map[string]any, error) {
 	var value any
 	switch block {
+	case "byte_payload":
+		return bytePayload(in)
 	case "distinct", "set_union", "set_intersection", "set_difference":
 		return setValues(block, in)
 	case "group_by":

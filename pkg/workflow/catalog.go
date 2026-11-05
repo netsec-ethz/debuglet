@@ -10,7 +10,7 @@ func output(name, kind string) Port              { return Port{Name: name, Type:
 // Catalog returns independent descriptions of the supported primitives.
 func Catalog() []Block {
 	blocks := append(append([]Block{
-		{"http", "HTTP request", "Network", "Send one HTTP request. ok describes transport completion; compare status to choose an HTTP success policy. Body is text; request headers are string values. Response headers use lowercase names and lists of values. Redirects are returned, not followed.", false, []Port{input("url", "string"), optional("method", "string", "GET"), optional("body", "string", ""), optional("headers", "object", map[string]any{}), optional("timeout_ms", "number", float64(2000))}, []Port{output("ok", "boolean"), output("error", "string"), output("status", "number"), output("body", "string"), output("headers", "object"), output("duration_ms", "number")}, []string{"next"}},
+		{"http", "HTTP request", "Network", "Send one HTTP request. ok describes transport completion; compare status to choose an HTTP success policy. Body encoding is text (UTF-8), hex, or base64; decoded body bytes are sent unchanged. Request headers are string values. Response headers use lowercase names and lists of values. Redirects are returned, not followed.", false, []Port{input("url", "string"), optional("method", "string", "GET"), optional("body", "string", ""), optional("encoding", "string", "text"), optional("headers", "object", map[string]any{}), optional("timeout_ms", "number", float64(2000))}, []Port{output("ok", "boolean"), output("error", "string"), output("status", "number"), output("body", "string"), output("headers", "object"), output("duration_ms", "number")}, []string{"next"}},
 		{"tcp_connect", "TCP connect", "Network", "Measure one TCP connection to host:port.", false, []Port{input("target", "string"), optional("timeout_ms", "number", float64(2000))}, []Port{output("ok", "boolean"), output("error", "string"), output("duration_ms", "number")}, []string{"next"}},
 		{"ping", "Ping", "Network", "Send up to ten ICMPv4 echo requests. rtts_ms contains successful replies; loss is a percentage.", false, []Port{input("target", "string"), optional("count", "number", float64(3)), optional("timeout_ms", "number", float64(2000))}, []Port{output("ok", "boolean"), output("error", "string"), output("rtts_ms", "numbers"), output("sent", "number"), output("received", "number"), output("loss", "number")}, []string{"next"}},
 		{"send_message", "Send message", "Experiment", "Send a bounded plaintext JSON message to a participant. Success means the socket write completed, not that the peer processed it. Requires an experiment.", false, []Port{input("destination", "string"), input("channel", "string"), input("value", "any"), optional("request_id", "string", ""), optional("timeout_ms", "number", float64(2000))}, []Port{output("ok", "boolean"), output("error", "string"), output("request_id", "string")}, []string{"next"}},
@@ -52,6 +52,7 @@ func Catalog() []Block {
 	blocks = append(blocks, analysisCatalog()...)
 	blocks = append(blocks, collectionCatalog()...)
 	blocks = append(blocks, meshCatalog()...)
+	blocks = append(blocks, byteCatalog()...)
 	return append(blocks, iterationCatalog()...)
 }
 

@@ -19,7 +19,7 @@ func TestExchangeInvalidInputsDoNotDial(t *testing.T) {
 		for _, patch := range []map[string]any{
 			{"target": "example.test:0"}, {"target": "https://example.test/"}, {"target": "bad host:443"},
 			{"payload": 1}, {"payload": strings.Repeat("x", debuglet.MaxIOBytes+1)},
-			{"encoding": "hex"}, {"encoding": "base64", "payload": "!!"},
+			{"encoding": "unknown"}, {"encoding": "base64", "payload": "!!"},
 			{"encoding": "base64", "payload": "AB=="}, // Nonzero unused padding bits.
 			{"max_bytes": float64(0)}, {"max_bytes": float64(debuglet.MaxIOBytes + 1)},
 			{"timeout_ms": float64(0)}, {"timeout_ms": 1.5},

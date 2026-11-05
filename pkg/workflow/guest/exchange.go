@@ -67,15 +67,20 @@ func networkExchangeConfig(inputs map[string]any, stream bool) (exchangeConfig, 
 	}
 	switch c.readUntil {
 	case "delimiter":
-		delimiter, exists := inputs["delimiter"]
-		if !exists {
-			delimiter = "\n"
+		delimiterInputs := inputs
+		if _, exists := inputs["delimiter"]; !exists {
+			delimiterInputs = map[string]any{"delimiter": "\n", "delimiter_encoding": "text"}
+			if encoding, exists := inputs["delimiter_encoding"]; exists {
+				delimiterInputs["delimiter_encoding"] = encoding
+			}
 		}
-		text, ok := delimiter.(string)
-		if !ok || len(text) == 0 || len(text) > 256 || len(text) > c.limit {
-			return c, fmt.Errorf("delimiter must contain 1–256 bytes and fit within max_bytes")
+		c.delimiter, err = inputBytes(delimiterInputs, "delimiter", "delimiter_encoding", 256)
+		if err != nil {
+			return c, err
 		}
-		c.delimiter = []byte(text)
+		if len(c.delimiter) == 0 || len(c.delimiter) > c.limit {
+			return c, fmt.Errorf("delimiter must contain 1–256 decoded bytes and fit within max_bytes")
+		}
 	case "bytes", "eof":
 	default:
 		return c, fmt.Errorf("read_until must be delimiter, bytes or eof")
@@ -84,37 +89,7 @@ func networkExchangeConfig(inputs map[string]any, stream bool) (exchangeConfig, 
 }
 
 func networkPayload(inputs map[string]any) ([]byte, error) {
-	value, exists := inputs["payload"]
-	if !exists {
-		value = ""
-	}
-	text, ok := value.(string)
-	if !ok {
-		return nil, fmt.Errorf("payload must be a string")
-	}
-	encoding, err := networkString(inputs, "encoding", "text")
-	if err != nil {
-		return nil, err
-	}
-	var payload []byte
-	switch encoding {
-	case "text":
-		payload = []byte(text)
-	case "base64":
-		if len(text) > base64.StdEncoding.EncodedLen(debuglet.MaxIOBytes) {
-			return nil, fmt.Errorf("payload exceeds 8 KiB")
-		}
-		payload, err = base64.StdEncoding.Strict().DecodeString(text)
-		if err != nil {
-			return nil, fmt.Errorf("payload must be valid padded base64: %w", err)
-		}
-	default:
-		return nil, fmt.Errorf("encoding must be text or base64")
-	}
-	if len(payload) > debuglet.MaxIOBytes {
-		return nil, fmt.Errorf("payload exceeds 8 KiB")
-	}
-	return payload, nil
+	return inputBytes(inputs, "payload", "encoding", debuglet.MaxIOBytes)
 }
 
 func networkExchange(inputs map[string]any, stream bool) (map[string]any, error) {

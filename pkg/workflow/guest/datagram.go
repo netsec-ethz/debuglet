@@ -5,6 +5,7 @@ package guest
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"net/netip"
 	"strings"
@@ -24,8 +25,8 @@ func UDPListener(map[string]any) (map[string]any, error) {
 
 func datagramEncoding(inputs map[string]any) (string, error) {
 	encoding, err := networkString(inputs, "encoding", "text")
-	if err != nil || (encoding != "text" && encoding != "base64") {
-		return "", fmt.Errorf("encoding must be text or base64")
+	if err != nil || (encoding != "text" && encoding != "base64" && encoding != "hex") {
+		return "", fmt.Errorf("encoding must be text, hex or base64")
 	}
 	return encoding, nil
 }
@@ -59,6 +60,8 @@ func UDPReceive(inputs map[string]any) (map[string]any, error) {
 	payload := strings.ToValidUTF8(string(buf), "?")
 	if encoding == "base64" {
 		payload = encoded
+	} else if encoding == "hex" {
+		payload = hex.EncodeToString(buf)
 	}
 	out["ok"], out["source"], out["payload"], out["payload_base64"] = true, packet.From, payload, encoded
 	out["bytes"], out["truncated"] = float64(packet.Size), packet.Truncated

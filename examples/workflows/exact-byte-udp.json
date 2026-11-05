@@ -1,0 +1,187 @@
+{
+  "version": 1,
+  "name": "Assemble and verify an exact UDP payload",
+  "entry": "exchange",
+  "nodes": [
+    {
+      "id": "pattern",
+      "block": "byte_payload",
+      "inputs": {
+        "value": "00ff",
+        "encoding": "hex",
+        "size_bytes": 8
+      },
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "fields",
+      "block": "concat",
+      "inputs": {
+        "a": "d06c0008"
+      },
+      "position": {
+        "x": 320,
+        "y": 0
+      }
+    },
+    {
+      "id": "packet",
+      "block": "byte_payload",
+      "inputs": {
+        "encoding": "hex"
+      },
+      "position": {
+        "x": 640,
+        "y": 0
+      }
+    },
+    {
+      "id": "exchange",
+      "block": "udp_exchange",
+      "inputs": {
+        "target": "127.0.0.1:19871",
+        "encoding": "base64",
+        "max_bytes": 64,
+        "timeout_ms": 2000
+      },
+      "position": {
+        "x": 960,
+        "y": 0
+      }
+    },
+    {
+      "id": "same",
+      "block": "equals",
+      "position": {
+        "x": 0,
+        "y": 300
+      }
+    },
+    {
+      "id": "result",
+      "block": "emit",
+      "inputs": {
+        "name": "exact_reply"
+      },
+      "position": {
+        "x": 320,
+        "y": 300
+      }
+    },
+    {
+      "id": "count",
+      "block": "emit",
+      "inputs": {
+        "name": "sent_bytes"
+      },
+      "position": {
+        "x": 640,
+        "y": 300
+      }
+    }
+  ],
+  "edges": [
+    {
+      "kind": "data",
+      "from": {
+        "node": "pattern",
+        "port": "hex"
+      },
+      "to": {
+        "node": "fields",
+        "port": "b"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "fields",
+        "port": "value"
+      },
+      "to": {
+        "node": "packet",
+        "port": "value"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "packet",
+        "port": "base64"
+      },
+      "to": {
+        "node": "exchange",
+        "port": "payload"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "packet",
+        "port": "base64"
+      },
+      "to": {
+        "node": "same",
+        "port": "a"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "exchange",
+        "port": "response_base64"
+      },
+      "to": {
+        "node": "same",
+        "port": "b"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "same",
+        "port": "value"
+      },
+      "to": {
+        "node": "result",
+        "port": "value"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "exchange",
+        "port": "next"
+      },
+      "to": {
+        "node": "result",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "control",
+      "from": {
+        "node": "result",
+        "port": "next"
+      },
+      "to": {
+        "node": "count",
+        "port": "in"
+      }
+    },
+    {
+      "kind": "data",
+      "from": {
+        "node": "exchange",
+        "port": "sent_bytes"
+      },
+      "to": {
+        "node": "count",
+        "port": "value"
+      }
+    }
+  ]
+}

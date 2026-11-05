@@ -66,7 +66,7 @@ func TestSCIONLiteralValidation(t *testing.T) {
 			t.Fatalf("accepted %q", address)
 		}
 	}
-	for _, input := range []map[string]any{{"path_id": ""}, {"max_bytes": float64(4097)}, {"encoding": "hex"}} {
+	for _, input := range []map[string]any{{"path_id": ""}, {"max_bytes": float64(4097)}, {"encoding": "unknown"}} {
 		values := map[string]any{"address": "1-ff00:0:110,192.0.2.1:4000", "path_id": "path-a"}
 		for k, v := range input {
 			values[k] = v

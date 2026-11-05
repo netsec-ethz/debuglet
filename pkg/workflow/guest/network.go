@@ -88,14 +88,11 @@ func networkHTTPRequest(inputs map[string]any) (*http.Request, time.Duration, er
 	if err != nil {
 		return nil, 0, err
 	}
-	body, ok := inputs["body"].(string)
-	if _, exists := inputs["body"]; exists && !ok {
-		return nil, 0, fmt.Errorf("body must be a string")
+	body, err := inputBytes(inputs, "body", "encoding", networkBodyLimit)
+	if err != nil {
+		return nil, 0, err
 	}
-	if len(body) > networkBodyLimit {
-		return nil, 0, fmt.Errorf("HTTP request body exceeds 16 KiB")
-	}
-	req, err := http.NewRequest(method, u.String(), strings.NewReader(body))
+	req, err := http.NewRequest(method, u.String(), bytes.NewReader(body))
 	if err != nil {
 		return nil, 0, fmt.Errorf("HTTP request: %w", err)
 	}
