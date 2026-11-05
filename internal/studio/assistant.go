@@ -197,6 +197,7 @@ func (a *Assistant) Reply(ctx context.Context, request AssistantRequest) (Assist
 	}
 	input, _ := json.Marshal(map[string]any{"kind": request.Kind, "document": request.Document, "request": request.Message})
 	messages = append(messages, assistantModelMessage{Role: "user", Content: string(input)})
+	editBase := request.Document
 	for attempt := 0; attempt < 2; attempt++ {
 		answer, err := a.complete(ctx, messages, request.Kind)
 		if err != nil {
@@ -221,7 +222,10 @@ func (a *Assistant) Reply(ctx context.Context, request AssistantRequest) (Assist
 			}
 			arguments = []byte(text)
 		}
-		var proposed AssistantResponse
+		var proposed struct {
+			AssistantResponse
+			Edits *assistantEdits `json:"edits,omitempty"`
+		}
 		failureCode := "invalid_response"
 		err = assistantDecode(arguments, &proposed)
 		if a.strictSchema && bytes.Equal(bytes.TrimSpace(proposed.Document), []byte("null")) {
@@ -230,20 +234,32 @@ func (a *Assistant) Reply(ctx context.Context, request AssistantRequest) (Assist
 		if err == nil && (strings.TrimSpace(proposed.Message) == "" || len(proposed.Message) > assistantTextLimit) {
 			err = errors.New("proposal needs a short explanation")
 		}
-		if err == nil && proposed.Action != "" && (proposed.Action != "coordinate" || request.Kind != "workflow" || len(proposed.Document) != 0) {
+		if err == nil && proposed.Edits != nil && (!a.strictSchema || len(proposed.Document) != 0) {
+			err = errors.New("return either edits or a document, not both; edits require the strict provider schema")
+		}
+		if err == nil && proposed.Action != "" && (proposed.Action != "coordinate" || request.Kind != "workflow" || len(proposed.Document) != 0 || proposed.Edits != nil) {
 			err = errors.New("action must be coordinate, for a workflow, without a document; ask the user before converting")
+		}
+		baseDescription := "Edits still target the current document in the user request."
+		if err == nil && proposed.Edits != nil {
+			failureCode = "invalid_graph"
+			proposed.Document, err = assistantApplyEdits(request.Kind, editBase, *proposed.Edits)
 		}
 		if err == nil && len(proposed.Document) > 0 {
 			failureCode = "invalid_graph"
-			if a.strictSchema {
+			if a.strictSchema && proposed.Edits == nil {
 				proposed.Document, err = assistantDecodeWireDocument(request.Kind, proposed.Document)
 			}
 			if err == nil {
+				// Retain the proposed source even when semantic validation fails, so
+				// a correction only needs to replace the failing nodes/connections.
+				editBase = proposed.Document
+				baseDescription = "Edits now target the rejected proposal above, including its earlier edits, not the original user document."
 				proposed.Document, err = assistantValidateDocument(request.Kind, proposed.Document)
 			}
 		}
 		if err == nil {
-			return proposed, nil
+			return proposed.AssistantResponse, nil
 		}
 		if attempt == 1 {
 			return AssistantResponse{}, assistantError(failureCode, 0)
@@ -253,8 +269,12 @@ func (a *Assistant) Reply(ctx context.Context, request AssistantRequest) (Assist
 		call.Function.Arguments, _ = json.Marshal(string(arguments))
 		answer.Role = "assistant"
 		answer.Content = ""
+		instruction := "Return a corrected complete document."
+		if a.strictSchema {
+			instruction = baseDescription + " Return edits for the failing parts, or a corrected complete document."
+		}
 		messages = append(messages, answer, assistantModelMessage{Role: "tool", ToolCallID: call.ID,
-			Content: "The edit was not applied. Return a corrected complete document: " + assistantFeedback(err)})
+			Content: "The edit was not applied. " + instruction + " Diagnostics: " + assistantFeedback(err)})
 	}
 	return AssistantResponse{}, assistantError("invalid_response", 0)
 }

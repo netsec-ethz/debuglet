@@ -38,7 +38,13 @@ func assistantWireFixture(t *testing.T, wf workflow.Workflow) assistantWireWorkf
 			inputs = map[string]any{}
 		}
 		literal, _ := json.Marshal(inputs)
-		wire.Nodes = append(wire.Nodes, assistantWireNode{ID: n.ID, Block: n.Block, InputsJSON: string(literal), Position: n.Position})
+		node := assistantWireNode{ID: n.ID, Block: n.Block, InputsJSON: string(literal), Position: n.Position}
+		for _, block := range wf.CustomBlocks {
+			if block.ID == n.Block {
+				node.Block, node.CustomBlock = "", n.Block
+			}
+		}
+		wire.Nodes = append(wire.Nodes, node)
 	}
 	return wire
 }
