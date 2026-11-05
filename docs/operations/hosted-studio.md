@@ -177,8 +177,10 @@ provider call. For small changes, the model can return only changed nodes and
 connections. The dispatcher applies these edits to the supplied snapshot and
 validates the complete result before returning ordinary editor JSON. Corrections
 can edit the rejected proposal without generating the entire graph again.
-Participant/channel topology and visual group structure still use complete
-document proposals. See [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling).
+Edits can replace experiment channels and update their sending/receiving nodes
+atomically, including when correcting channel identifiers or directions.
+Participant membership and visual group structure still use complete document
+proposals. See [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling).
 
 The assistant uses catalog defaults for optional settings and explains choices
 such as a single IPv4 address and TCP port 443 for an unspecified web connection.

@@ -31,7 +31,7 @@ func assistantDocumentSchema(kind string) map[string]any {
 	node := func(custom bool) map[string]any {
 		properties := map[string]any{"id": str(), "inputs_json": map[string]any{"type": "string", "description": "A JSON object containing literal input values only; use {} when all inputs are wired."}, "position": position}
 		if custom {
-			properties["custom_block"] = map[string]any{"type": "string", "description": "ID of a custom_blocks definition in this workflow. It must exist; define a new helper in custom_blocks before referencing it. Every custom block is an action: execute it through control in/next before using its outputs, even when it only processes data."}
+			properties["custom_block"] = map[string]any{"type": "string", "description": "ID of a custom_blocks definition in this participant's workflow. Definitions are not shared between participants: include the definition in every workflow using it. Every custom block is an action: execute it through control in/next before using its outputs, even when it only processes data."}
 		} else {
 			properties["block"] = map[string]any{"type": "string", "enum": blocks}
 		}
@@ -47,21 +47,25 @@ func assistantDocumentSchema(kind string) map[string]any {
 		"groups":        array(assistantSchemaObject(map[string]any{"id": str(), "label": str(), "node_ids": array(str()), "position": position})),
 	})
 	document := graph
+	channel := assistantSchemaObject(map[string]any{
+		"id":   map[string]any{"type": "string", "description": "Unique across the experiment. Opposite one-way directions need distinct IDs, for example a_to_b and b_to_a."},
+		"from": str(), "to": str(), "type": valueType,
+		"response_type": map[string]any{"type": "string", "enum": append([]string{""}, valueTypes...), "description": "Empty for a one-way channel; otherwise the reverse direction carries replies of this type."},
+	})
 	if kind == "experiment" {
 		document = assistantSchemaObject(map[string]any{
 			"version": map[string]any{"type": "integer", "enum": []int{1}},
 			"kind":    map[string]any{"type": "string", "enum": []string{"experiment"}}, "name": str(),
 			"participants": array(assistantSchemaObject(map[string]any{"id": str(), "label": str(), "workflow": graph})),
-			"channels": array(assistantSchemaObject(map[string]any{
-				"id": str(), "from": str(), "to": str(), "type": valueType,
-				"response_type": map[string]any{"type": "string", "enum": append([]string{""}, valueTypes...)},
-			})),
+			"channels":     array(channel),
 		})
 	}
 	document["type"] = []string{"object", "null"}
 	nullableString := func() map[string]any { return map[string]any{"type": []string{"string", "null"}} }
 	edits := assistantSchemaObject(map[string]any{
 		"name": nullableString(),
+		"channels": map[string]any{"type": []string{"array", "null"}, "items": channel,
+			"description": "Experiment only: null preserves channels; an array replaces the complete channel list. Update affected send/await nodes in workflows in this same edit. Must be null for a workflow."},
 		"workflows": array(assistantSchemaObject(map[string]any{
 			"participant": map[string]any{"type": "string", "description": "Existing participant ID for an experiment; empty string for a workflow."},
 			"name":        nullableString(), "entry": nullableString(),
@@ -223,4 +227,4 @@ func assistantDecodeWireDocument(kind string, raw json.RawMessage) (json.RawMess
 }
 
 const assistantStrictInstructions = `
-The propose_document schema uses a transport encoding: replace each node's inputs object with inputs_json, a JSON-encoded object string. A built-in node uses block from the exact catalog enum. A custom node uses custom_block instead, referring to an explicitly defined custom_blocks ID in its workflow. Never reference an undeclared helper. Custom port defaults use default_json, a JSON-encoded value string ("null" when absent). Use empty arrays for absent custom_blocks and groups; do not copy catalog-only fields such as category or pure into custom definitions. Everything else keeps the described graph semantics. Use null position for new nodes (the editor lays them out); preserve existing positions. Use an empty action string for ordinary edits. Return exactly one non-null document or edits; both are null only for clarification or a coordinate offer. Prefer edits for changes to an existing graph and for corrections. edits.name renames the top-level document; each edits.workflows item targets an existing participant (empty participant for a workflow). Null name/entry preserve them. upsert_nodes replaces the complete listed node, preserving its position when null; include all its current literal inputs, not just changed ones. remove_nodes deletes those nodes, their incident edges and group membership. remove_edges removes exact existing connections; add_edges adds only new connections. upsert_custom_blocks replaces a complete helper definition. Use empty arrays for unchanged collections; do not resend unaffected nodes or edges. Never edit the same participant twice. Use document for creating participants, channels or group structure. Edits initially target the current user document; a correction tool message explicitly names its new base. Example: changing only node tcp target means edits.workflows=[{participant:"",name:null,entry:null,upsert_nodes:[{id:"tcp",block:"tcp_connect",inputs_json:"{\"target\":\"1.1.1.1:443\",\"timeout_ms\":2000}",position:null}],remove_nodes:[],add_edges:[],remove_edges:[],upsert_custom_blocks:[]}], with edits.name=null and document=null. Return only the tool call, with a brief explanation of any defaults. The server decodes these JSON strings and validates the full graph; a schema-valid response can still have invalid graph semantics.`
+The propose_document schema uses a transport encoding: replace each node's inputs object with inputs_json, a JSON-encoded object string. A built-in node uses block from the exact catalog enum. A custom node uses custom_block instead, referring to an explicitly defined custom_blocks ID in its workflow. Never reference an undeclared helper. Custom port defaults use default_json, a JSON-encoded value string ("null" when absent). Use empty arrays for absent custom_blocks and groups; do not copy catalog-only fields such as category or pure into custom definitions. Everything else keeps the described graph semantics. Use null position for new nodes (the editor lays them out); preserve existing positions. Use an empty action string for ordinary edits. Return exactly one non-null document or edits; both are null only for clarification or a coordinate offer. Prefer edits for changes to an existing graph and for corrections. edits.name renames the top-level document; each edits.workflows item targets an existing participant (empty participant for a workflow). Null name/entry preserve them. upsert_nodes replaces the complete listed node, preserving its position when null; include all its current literal inputs, not just changed ones. remove_nodes deletes those nodes, their incident edges and group membership. remove_edges removes exact existing connections; add_edges adds only new connections. upsert_custom_blocks replaces a complete helper definition. Use empty arrays for unchanged collections; do not resend unaffected nodes or edges. Never edit the same participant twice. edits.channels=null preserves channels; an array replaces the complete experiment channel list, including removal with []. Correct channel IDs or directions together with affected send_message/await_message nodes in the same edit. A workflow requires channels=null. Use document for creating participants or group structure. Edits initially target the current user document; a correction tool message explicitly names its new base. Example: changing only node tcp target means edits.workflows=[{participant:"",name:null,entry:null,upsert_nodes:[{id:"tcp",block:"tcp_connect",inputs_json:"{\"target\":\"1.1.1.1:443\",\"timeout_ms\":2000}",position:null}],remove_nodes:[],add_edges:[],remove_edges:[],upsert_custom_blocks:[]}], with edits.name=null, edits.channels=null and document=null. Return only the tool call, with a brief explanation of any defaults. The server decodes these JSON strings and validates the full graph; a schema-valid response can still have invalid graph semantics.`

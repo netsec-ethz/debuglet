@@ -15,6 +15,7 @@ import (
 
 type assistantEdits struct {
 	Name      *string                  `json:"name"`
+	Channels  *[]workflow.Channel      `json:"channels"`
 	Workflows []assistantWorkflowEdits `json:"workflows"`
 }
 
@@ -33,6 +34,9 @@ type assistantWorkflowEdits struct {
 // result before returning it to the editor; failed edits never change its draft.
 func assistantApplyEdits(kind string, raw json.RawMessage, edits assistantEdits) (json.RawMessage, error) {
 	operations := len(edits.Workflows)
+	if edits.Channels != nil {
+		operations += len(*edits.Channels)
+	}
 	seen := make(map[string]bool)
 	for _, edit := range edits.Workflows {
 		operations += len(edit.UpsertNodes) + len(edit.RemoveNodes) + len(edit.AddEdges) + len(edit.RemoveEdges) + len(edit.UpsertCustomBlocks)
@@ -45,6 +49,9 @@ func assistantApplyEdits(kind string, raw json.RawMessage, edits assistantEdits)
 		return nil, errors.New("edit contains more than 512 operations")
 	}
 	if kind == "workflow" {
+		if edits.Channels != nil {
+			return nil, errors.New("channel edits require an experiment")
+		}
 		doc, err := DecodeWorkflow(bytes.NewReader(raw))
 		if err != nil {
 			return nil, err
@@ -74,6 +81,9 @@ func assistantApplyEdits(kind string, raw json.RawMessage, edits assistantEdits)
 	}
 	if edits.Name != nil {
 		doc.Name = *edits.Name
+	}
+	if edits.Channels != nil {
+		doc.Channels = slices.Clone(*edits.Channels)
 	}
 	for _, edit := range edits.Workflows {
 		index := -1
