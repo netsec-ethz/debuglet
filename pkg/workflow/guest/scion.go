@@ -5,6 +5,7 @@ package guest
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -133,6 +134,8 @@ func scionReceive(in map[string]any, receive func(int, time.Duration) (debuglet.
 	payload := strings.ToValidUTF8(string(result.Data), "�")
 	if encoding == "base64" {
 		payload = encoded
+	} else if encoding == "hex" {
+		payload = hex.EncodeToString(result.Data)
 	}
 	out["payload"], out["payload_base64"], out["sender"] = payload, encoded, result.Sender
 	out["received_at_ms"], out["received_bytes"], out["truncated"] = float64(result.ReceivedAtMS), float64(result.Size), result.Truncated

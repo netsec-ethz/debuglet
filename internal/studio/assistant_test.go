@@ -133,7 +133,11 @@ func TestAssistantTokenLimitMatchesEndpoint(t *testing.T) {
 				if string(body[test.field]) != "16384" || body[other] != nil || string(body["reasoning_effort"]) != `"none"` {
 					t.Error("incorrect provider token limit or reasoning effort")
 				}
-				assistantProposal(w, sampleWorkflow())
+				if client.strictSchema {
+					assistantToolReply(w, map[string]any{"message": "Ready", "action": "", "document": assistantWireFixture(t, sampleWorkflow())})
+				} else {
+					assistantProposal(w, sampleWorkflow())
+				}
 			})
 			// Keep the configuration selected by the real endpoint while sending
 			// the request only to the local provider fixture.
@@ -454,7 +458,8 @@ func TestAssistantCancelsProviderRequest(t *testing.T) {
 	cancel()
 	select {
 	case err := <-done:
-		if !errors.Is(err, ErrAssistantTimeout) {
+		var classified *AssistantError
+		if !errors.Is(err, ErrAssistantTimeout) || !errors.As(err, &classified) || classified.Code != "canceled" {
 			t.Fatal(err)
 		}
 	case <-time.After(5 * time.Second):

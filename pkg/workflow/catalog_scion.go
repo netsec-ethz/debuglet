@@ -22,7 +22,7 @@ func scionCatalog() []Block {
 		{"scion_receive", "Receive SCION UDP", "Network", "Wait for one admitted datagram on this run's SCION listener. Pass sender to Reply SCION UDP. payload_base64 preserves exact bytes; a truncated datagram is not a complete success. Requires a SCION listener.", false,
 			[]Port{optional("max_bytes", "number", float64(4096)), optional("encoding", "string", "text"), optional("timeout_ms", "number", float64(2000))},
 			status(output("payload", "string"), output("payload_base64", "string"), output("sender", "string"), output("received_at_ms", "number"), output("received_bytes", "number"), output("truncated", "boolean")), []string{"next"}},
-		{"scion_reply", "Reply SCION UDP", "Network", "Reply from this run's SCION listener to the exact sender of its most recently received admitted datagram. Wire sender from Receive SCION UDP. Payload encoding is text or base64, up to 4096 bytes.", false,
+		{"scion_reply", "Reply SCION UDP", "Network", "Reply from this run's SCION listener to the exact sender of its most recently received admitted datagram. Wire sender from Receive SCION UDP. Payload encoding is text (UTF-8), hex, or base64, up to 4096 bytes.", false,
 			[]Port{input("sender", "string"), optional("payload", "string", ""), optional("encoding", "string", "text"), optional("timeout_ms", "number", float64(2000))},
 			status(output("bytes_sent", "number")), []string{"next"}},
 	}

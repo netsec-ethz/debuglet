@@ -259,44 +259,48 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 	}
 
 	if err := g.Wait(); err != nil {
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		reason := "failed to batch upload all debuglets"
+		var cleanup errgroup.Group
 		for i, id := range debugletIDS {
-			// The original mutation stays live even when a sibling's failure or a
-			// retirement canceled its execution context, so cleanup uses its own
-			// bounded context and the client this upload captured. A run whose
-			// cancellation is not confirmed, because the executor refused it,
-			// the call failed in transport or no client was captured, keeps
-			// its reservation and is marked unreconciled; nothing is retried.
-			// Its executor's later report supersedes the mark, and a run still
-			// unfinished when its window ends has its allocation reclaimed
-			// without changing the outcome, see sweepEndedWindows.
-			err := d.abortCaptured(cleanupCtx, selected[i].mutation, selected[i].client, id, reason)
-			if err == nil {
-				continue
-			}
-			// An executor that refused the run's own upload and does not know
-			// it at the cancellation holds no such run: it takes the terminal
-			// path of an acknowledged cancellation.
-			if errors.Is(err, ErrAbortRefused) && status.Code(err) == codes.NotFound && uploadRefused(selected[i].uploadErr) {
-				if _, err := d.OnDebugletExit(cleanupCtx, selected[i].mutation, &pb.DebugletExitRequest{DebugletId: id.String(), ExitCode: -1, ErrorMessage: &reason}); err != nil {
-					d.logger.Error("Batch cleanup cancellation was not recorded", append(daemonlog.RunFields(cleanupCtx, id, selected[i].owner.ExecutorID(), selected[i].owner.Binding()), zap.String("grpc_code", status.Code(err).String()), zap.Bool("recording_failed", true), zap.String("cleanup_outcome", "unknown"))...)
-				} else if err := d.finishRefusedOutput(cleanupCtx, selected[i].mutation, id); err != nil {
-					d.logger.Error("Failed to finalize refused debuglet output", zap.String("debugletID", id.String()))
-					d.logger.Debug("Private runtime diagnostic", zap.String("debugletID", id.String()), zap.String("operation", "Failed to finalize refused debuglet output"), zap.String("error", daemonlog.Diagnostic(err)))
-				}
-				continue
-			}
-			d.logger.Error("Batch cleanup cancellation unconfirmed", append(daemonlog.RunFields(cleanupCtx, id, selected[i].owner.ExecutorID(), selected[i].owner.Binding()), zap.String("grpc_code", status.Code(err).String()), zap.Bool("recording_failed", errors.Is(err, ErrCancellationNotRecorded)), zap.String("cleanup_outcome", "unknown"))...)
-			d.markUnreconciled(cleanupCtx, selected[i].owner, id)
+			cleanup.Go(func() error {
+				d.cleanupFailedUpload(ctx, selected[i], id)
+				return nil
+			})
 		}
+		_ = cleanup.Wait()
 		// Admission committed before upload began. Keep the receipt and marker
 		// so inspection and the single admitted-batch refund remain distinct.
 		return debugletIDS, fmt.Errorf("%w: failed to upload debuglets: %w", ErrAdmissionCommitted, err)
 	}
 
 	return debugletIDS, nil
+}
+
+// cleanupFailedUpload keeps remote delivery and local recording on separate
+// budgets. One slow executor must not consume the cleanup budget of its siblings
+// or prevent the dispatcher from recording an unconfirmed cancellation.
+func (d *Dispatcher) cleanupFailedUpload(ctx context.Context, selected *submissionOwner, id uuid.UUID) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	reason := "failed to batch upload all debuglets"
+	err := d.abortCaptured(cleanupCtx, selected.mutation, selected.client, id, reason)
+	cancel()
+	if err == nil {
+		return
+	}
+	writeCtx, endWrite := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer endWrite()
+	// A refused upload followed by NotFound proves this executor accepted no
+	// run. A transport failure alone cannot establish that fact.
+	if errors.Is(err, ErrAbortRefused) && status.Code(err) == codes.NotFound && uploadRefused(selected.uploadErr) {
+		if _, err := d.OnDebugletExit(writeCtx, selected.mutation, &pb.DebugletExitRequest{DebugletId: id.String(), ExitCode: -1, ErrorMessage: &reason}); err != nil {
+			d.logger.Error("Batch cleanup cancellation was not recorded", append(daemonlog.RunFields(writeCtx, id, selected.owner.ExecutorID(), selected.owner.Binding()), zap.String("grpc_code", status.Code(err).String()), zap.Bool("recording_failed", true), zap.String("cleanup_outcome", "unknown"))...)
+		} else if err := d.finishRefusedOutput(writeCtx, selected.mutation, id); err != nil {
+			d.logger.Error("Failed to finalize refused debuglet output", zap.String("debugletID", id.String()))
+			d.logger.Debug("Private runtime diagnostic", zap.String("debugletID", id.String()), zap.String("operation", "Failed to finalize refused debuglet output"), zap.String("error", daemonlog.Diagnostic(err)))
+		}
+		return
+	}
+	d.logger.Error("Batch cleanup cancellation unconfirmed", append(daemonlog.RunFields(writeCtx, id, selected.owner.ExecutorID(), selected.owner.Binding()), zap.String("grpc_code", status.Code(err).String()), zap.Bool("recording_failed", errors.Is(err, ErrCancellationNotRecorded)), zap.String("cleanup_outcome", "unknown"))...)
+	d.markUnreconciled(writeCtx, selected.owner, id)
 }
 
 // ErrAdmissionCommitted identifies an upload failure from the call that
@@ -744,7 +748,13 @@ func (d *Dispatcher) abortCaptured(ctx context.Context, mutation *rpc.Mutation, 
 		if err := q.AttemptCancellation(ctx, database.AttemptCancellationParams{DebugletID: run.ID, AttemptedAt: sql.NullInt64{Int64: d.now().UTC().UnixNano(), Valid: true}}); err != nil {
 			return status.Errorf(codes.Internal, "failed to record cancellation attempt: %v", err)
 		}
-		if _, err := client.Abort(ctx, &pb.AbortRequest{DebugletId: id.String(), Reason: reason}); err != nil {
+		_, abortErr := client.Abort(ctx, &pb.AbortRequest{DebugletId: id.String(), Reason: reason})
+		// A caller may time out while the executor is still joining cleanup.
+		// Record what the call learned even when its delivery context expired.
+		writeCtx, endWrite := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer endWrite()
+		ctx = writeCtx
+		if err := abortErr; err != nil {
 			failure := "executor_refused"
 			switch status.Code(err) {
 			case codes.Unavailable, codes.DeadlineExceeded, codes.Canceled:

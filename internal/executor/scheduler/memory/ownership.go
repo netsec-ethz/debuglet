@@ -335,6 +335,23 @@ func (m *MemoryStorage) requestCancel(ctx context.Context, id uuid.UUID, cause e
 }
 
 func (m *MemoryStorage) deleteQueued(o *owner, a *finalizationAttempt) {
+	m.mu.RLock()
+	failed := m.onFailedCb
+	m.mu.RUnlock()
+	if failed != nil {
+		// A queued cancellation has no runtime, but still needs the same
+		// durable terminal report as active cancellation. Its owner outlives
+		// the Abort caller, so a late persistence result can reconcile even
+		// when the caller never receives its acknowledgement.
+		completion := failed(o.ctx, o.spec, o.cause)
+		m.mu.Lock()
+		o.completion = completion
+		o.phase = finalizing
+		close(o.callbackDone)
+		m.mu.Unlock()
+		m.finalizeOwner(o, a)
+		return
+	}
 	err := m.callFinalizer(o)
 	m.mu.Lock()
 	a.err, a.finalErr = err, err

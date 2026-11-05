@@ -6,7 +6,7 @@ package guest
 import "testing"
 
 func TestDatagramBlocksRejectInvalidInputsBeforeIO(t *testing.T) {
-	for _, inputs := range []map[string]any{{"max_bytes": float64(0)}, {"max_bytes": float64(8193)}, {"timeout_ms": float64(0)}, {"encoding": "hex"}} {
+	for _, inputs := range []map[string]any{{"max_bytes": float64(0)}, {"max_bytes": float64(8193)}, {"timeout_ms": float64(0)}, {"encoding": "unknown"}} {
 		if _, err := UDPReceive(inputs); err == nil {
 			t.Fatalf("receive accepted %v", inputs)
 		}

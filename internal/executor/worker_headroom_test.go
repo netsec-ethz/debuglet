@@ -177,7 +177,11 @@ func TestSharedCompilerBudgetKeepsGuestAndControlResponsive(t *testing.T) {
 	if call.completion.CleanupErr != nil {
 		t.Fatal(call.completion.CleanupErr)
 	}
-	report := operationReport(t, peer, failed.DebugletID)
+	reports := operationReports(t, peer, failed.DebugletID.String(), queued.Id)
+	if report := reports[queued.Id]; report.ExitCode != -1 || report.GetErrorMessage() != "debuglet cancelled" {
+		t.Fatalf("queued cancellation outcome=%v", report)
+	}
+	report := reports[failed.DebugletID.String()]
 	if report.ExitCode != -1 || report.GetErrorMessage() != "compilation resource budget exceeded" {
 		t.Fatalf("compiler outcome=%v", report)
 	}

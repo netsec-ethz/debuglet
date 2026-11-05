@@ -9,8 +9,10 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/netsec-ethz/debuglet/internal/studio"
 	"github.com/netsec-ethz/debuglet/pkg/workflow"
 )
 
@@ -79,4 +81,23 @@ func TestContractStudioCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 	oaCheckResponse(t, c, http.MethodGet, "/studio/catalog", http.StatusOK, data)
+}
+
+func TestContractStudioGoPreviews(t *testing.T) {
+	contract := oaContract(t)
+	wf := communityTestWorkflow()
+	program, err := workflow.Generate(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wf.GoCode = &program.GoCode
+	experiment := workflow.Experiment{Version: 1, Kind: "experiment", Name: "Edited experiment", Participants: []workflow.Participant{{ID: "a", Workflow: wf}, {ID: "b", Workflow: wf}}, Channels: []workflow.Channel{}}
+	for path, document := range map[string]any{"/studio/validate": wf, "/studio/experiments/validate": experiment} {
+		body, _ := json.Marshal(document)
+		request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		studio.NewWorkerHandler(nil).ServeHTTP(response, request)
+		oaCheckResponse(t, contract, http.MethodPost, path, http.StatusOK, response.Body.Bytes())
+	}
 }

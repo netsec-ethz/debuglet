@@ -106,15 +106,50 @@ func (h *Handler) assistantReply(c echo.Context) error {
 	defer cancel()
 	result, err := h.assistant.client.Reply(ctx, input)
 	if err != nil {
-		if errors.Is(err, studio.ErrAssistantTimeout) || ctx.Err() != nil {
-			return apiError(http.StatusGatewayTimeout, CodeUnavailable, "experiment assistant timed out or was canceled; your draft is unchanged")
-		}
-		if errors.Is(err, studio.ErrAssistantInvalidReply) {
-			return apiError(http.StatusUnprocessableEntity, CodeInvalidRequest, "experiment assistant could not produce a valid experiment; your draft is unchanged")
-		}
-		return apiError(http.StatusBadGateway, CodeUnavailable, "experiment assistant provider is unavailable; your draft is unchanged")
+		return assistantFailure(err, ctx.Err())
 	}
 	_ = controller.SetWriteDeadline(time.Now().Add(30 * time.Second))
 	defer controller.SetWriteDeadline(time.Time{})
 	return c.JSON(http.StatusOK, result)
+}
+
+func assistantFailure(err, contextErr error) *echo.HTTPError {
+	reason := "provider_unavailable"
+	var failure *studio.AssistantError
+	if errors.As(err, &failure) {
+		reason = failure.Code
+	} else if errors.Is(err, studio.ErrAssistantInvalidReply) {
+		reason = "invalid_response"
+	} else if errors.Is(err, studio.ErrAssistantTimeout) {
+		reason = "deadline_exceeded"
+	}
+	if errors.Is(contextErr, context.DeadlineExceeded) {
+		reason = "deadline_exceeded"
+	} else if errors.Is(contextErr, context.Canceled) {
+		reason = "canceled"
+	}
+	status, code := http.StatusBadGateway, CodeUnavailable
+	var message string
+	switch reason {
+	case "provider_auth":
+		message = "the AI provider rejected its server credential; the operator needs to update it"
+	case "provider_rate_limit":
+		message = "the AI provider is at its usage limit; try again later"
+	case "output_truncated":
+		status, code = http.StatusUnprocessableEntity, CodeInvalidRequest
+		message = "the AI response was too large to finish; try a smaller experiment or change one part at a time"
+	case "invalid_response", "invalid_graph":
+		status, code = http.StatusUnprocessableEntity, CodeInvalidRequest
+		message = "the AI could not produce a valid experiment; try a smaller change or a template"
+	case "deadline_exceeded":
+		status = http.StatusGatewayTimeout
+		message = "the AI did not finish in time; try again or start from a template"
+	case "canceled":
+		status = http.StatusGatewayTimeout
+		message = "the AI request was canceled"
+	default:
+		reason = "provider_unavailable"
+		message = "the AI provider is unavailable; try again later"
+	}
+	return echo.NewHTTPError(status, ErrorResponse{Code: code, Reason: reason, Message: message + "; your draft is unchanged"})
 }

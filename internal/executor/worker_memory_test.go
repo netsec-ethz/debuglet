@@ -62,7 +62,11 @@ func TestSharedMemoryBudgetKeepsGuestAndControlResponsive(t *testing.T) {
 	if call.completion.CleanupErr != nil {
 		t.Fatal(call.completion.CleanupErr)
 	}
-	if report := operationReport(t, peer, failed.DebugletID); report.ExitCode != -1 || report.GetErrorMessage() != "execution resource budget exceeded" {
+	reports := operationReports(t, peer, failed.DebugletID.String(), queued.Id)
+	if report := reports[queued.Id]; report.ExitCode != -1 || report.GetErrorMessage() != "debuglet cancelled" {
+		t.Fatalf("queued cancellation outcome=%v", report)
+	}
+	if report := reports[failed.DebugletID.String()]; report.ExitCode != -1 || report.GetErrorMessage() != "execution resource budget exceeded" {
 		t.Fatalf("memory budget outcome=%v", report)
 	}
 
@@ -92,5 +96,8 @@ func TestSharedMemoryBudgetKeepsGuestAndControlResponsive(t *testing.T) {
 	}
 	if _, err := control.Abort(ctx, &pb.AbortRequest{DebugletId: queued.Id}); err != nil {
 		t.Fatal("control cleanup after guest:", err)
+	}
+	if report := operationReports(t, peer, queued.Id)[queued.Id]; report.ExitCode != -1 || report.GetErrorMessage() != "debuglet cancelled" {
+		t.Fatalf("queued cancellation outcome=%v", report)
 	}
 }

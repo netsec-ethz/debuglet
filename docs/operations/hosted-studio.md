@@ -163,6 +163,24 @@ source; the normal build and submission actions remain separate. No provider is
 selected or enabled by default. Verify the endpoint and model supplied for your
 provider account before enabling it.
 
+For `api.openai.com`, proposals use a strict graph scaffold and one required
+function call. Literal input maps and custom port defaults travel as JSON strings
+inside that scaffold, then are decoded into the ordinary editor format. Other
+compatible endpoints retain the ordinary document tool format. Strict output
+constrains the shape; it does not establish correct wiring or measurement
+semantics. Every proposed graph passes validation and Go source generation,
+including every participant in a coordinated experiment. Build still compiles
+the generated program separately. A rejected graph gets at most one correction
+within the same 90-second deadline; truncated output is rejected without another
+provider call. See [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling).
+
+The assistant uses catalog defaults for optional settings and explains choices
+such as a single IPv4 address and TCP port 443 for an unspecified web connection.
+It still asks when a target or essential requirement is missing. Review the
+proposed source before applying it. Provider authentication, rate limits,
+truncation, invalid graphs and cancellation have distinct safe error reasons;
+provider response bodies are never included in errors.
+
 Provision a provider key in a regular file readable only by its owner and,
 optionally, the dispatcher's group (mode `0600` or `0640`). Do not place the key
 in the repository, console configuration or inventory. For OpenAI GPT-6 Sol:

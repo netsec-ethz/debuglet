@@ -3,7 +3,7 @@
     "id": "http",
     "label": "HTTP request",
     "category": "Network",
-    "description": "Send one HTTP request. ok describes transport completion; compare status to choose an HTTP success policy. Body is text; request headers are string values. Response headers use lowercase names and lists of values. Redirects are returned, not followed.",
+    "description": "Send one HTTP request. ok describes transport completion; compare status to choose an HTTP success policy. Body encoding is text (UTF-8), hex, or base64; decoded body bytes are sent unchanged. Request headers are string values. Response headers use lowercase names and lists of values. Redirects are returned, not followed.",
     "pure": false,
     "inputs": [
       {
@@ -20,6 +20,11 @@
         "name": "body",
         "type": "string",
         "default": ""
+      },
+      {
+        "name": "encoding",
+        "type": "string",
+        "default": "text"
       },
       {
         "name": "headers",
@@ -1130,7 +1135,7 @@
     "id": "udp_exchange",
     "label": "UDP exchange",
     "category": "Network",
-    "description": "Send one datagram to host:port and wait for one response. Payload encoding is text or base64; response_base64 preserves exact bytes. Maximum response is 8191 bytes; larger replies are marked truncated.",
+    "description": "Send one datagram to host:port and wait for one response. Payload encoding is text (UTF-8), hex, or base64; response_base64 preserves exact bytes. Maximum response is 8191 bytes; larger replies are marked truncated.",
     "pure": false,
     "inputs": [
       {
@@ -1205,7 +1210,7 @@
     "id": "tcp_exchange",
     "label": "TCP exchange",
     "category": "Network",
-    "description": "Connect, send a payload, then read until a delimiter, byte count, or EOF. One timeout covers the exchange. response_base64 preserves exact bytes; complete distinguishes the requested ending from a size limit.",
+    "description": "Connect, send a payload, then read until a delimiter, byte count, or EOF. Payload and delimiter encoding are text (UTF-8), hex, or base64. One timeout covers the exchange. response_base64 preserves exact bytes; complete distinguishes the requested ending from a size limit.",
     "pure": false,
     "inputs": [
       {
@@ -1232,6 +1237,11 @@
         "name": "delimiter",
         "type": "string",
         "default": "\n"
+      },
+      {
+        "name": "delimiter_encoding",
+        "type": "string",
+        "default": "text"
       },
       {
         "name": "max_bytes",
@@ -1428,7 +1438,7 @@
     "id": "udp_receive",
     "label": "Receive UDP",
     "category": "Network",
-    "description": "Wait for one datagram on this run's admitted UDP listener. source can feed Reply UDP. payload uses text or base64; payload_base64 always preserves the received bytes. Requires an updated executor.",
+    "description": "Wait for one datagram on this run's admitted UDP listener. source can feed Reply UDP. payload uses text (UTF-8), hex, or base64; payload_base64 always preserves the received bytes. Requires an updated executor.",
     "pure": false,
     "inputs": [
       {
@@ -1489,7 +1499,7 @@
     "id": "udp_reply",
     "label": "Reply UDP",
     "category": "Network",
-    "description": "Reply to the last successfully received datagram from this run's UDP listener, subject to current outbound policy. Connect Receive UDP's source to destination. Payload encoding is text or base64. Requires an updated executor.",
+    "description": "Reply to the last successfully received datagram from this run's UDP listener, subject to current outbound policy. Connect Receive UDP's source to destination. Payload encoding is text (UTF-8), hex, or base64. Requires an updated executor.",
     "pure": false,
     "inputs": [
       {
@@ -1711,6 +1721,42 @@
       },
       {
         "name": "duration_ms",
+        "type": "number"
+      }
+    ],
+    "control_outputs": [
+      "next"
+    ]
+  },
+  {
+    "id": "log_event",
+    "label": "Log event",
+    "category": "Results",
+    "description": "Record a short message and optional JSON details when this action executes. Appears in run activity and live results, stamped with this executor's clock. Message: 1–1024 UTF-8 bytes; details: at most 8 KiB. Uses the workflow's output limits.",
+    "pure": false,
+    "inputs": [
+      {
+        "name": "message",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "details",
+        "type": "any",
+        "default": {}
+      }
+    ],
+    "outputs": [
+      {
+        "name": "message",
+        "type": "string"
+      },
+      {
+        "name": "details",
+        "type": "any"
+      },
+      {
+        "name": "timestamp_ms",
         "type": "number"
       }
     ],
@@ -2182,7 +2228,7 @@
     "id": "scion_reply",
     "label": "Reply SCION UDP",
     "category": "Network",
-    "description": "Reply from this run's SCION listener to the exact sender of its most recently received admitted datagram. Wire sender from Receive SCION UDP. Payload encoding is text or base64, up to 4096 bytes.",
+    "description": "Reply from this run's SCION listener to the exact sender of its most recently received admitted datagram. Wire sender from Receive SCION UDP. Payload encoding is text (UTF-8), hex, or base64, up to 4096 bytes.",
     "pure": false,
     "inputs": [
       {
@@ -2898,6 +2944,45 @@
     "control_outputs": [
       "next"
     ]
+  },
+  {
+    "id": "byte_payload",
+    "label": "Byte payload",
+    "category": "Data",
+    "description": "Decode text (UTF-8), hexadecimal byte pairs, or padded base64. size_bytes=-1 preserves all decoded bytes; 0 produces empty bytes; a positive size repeats and trims the decoded pattern to exactly that many bytes (up to 8192). Counts bytes, not characters. Connect base64 to a network payload/body and set its encoding to base64. Concatenate hex outputs to assemble binary fields.",
+    "pure": true,
+    "inputs": [
+      {
+        "name": "value",
+        "type": "string",
+        "default": ""
+      },
+      {
+        "name": "encoding",
+        "type": "string",
+        "default": "text"
+      },
+      {
+        "name": "size_bytes",
+        "type": "number",
+        "default": -1
+      }
+    ],
+    "outputs": [
+      {
+        "name": "base64",
+        "type": "string"
+      },
+      {
+        "name": "hex",
+        "type": "string"
+      },
+      {
+        "name": "bytes",
+        "type": "number"
+      }
+    ],
+    "control_outputs": []
   },
   {
     "id": "for_each",

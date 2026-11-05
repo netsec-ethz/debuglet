@@ -165,11 +165,15 @@ func (e *Experiment) writeFrame(frame experimentFrame, deadline time.Time) error
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
 	if err := conn.SetWriteDeadline(deadline); err != nil {
+		_ = conn.Close()
 		return err
 	}
-	return experimentWrite(conn, data)
+	if err := experimentWrite(conn, data); err != nil {
+		_ = conn.Close()
+		return err
+	}
+	return conn.Close()
 }
 
 func (e *Experiment) receiveFrame(deadline time.Time) error {

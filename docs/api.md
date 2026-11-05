@@ -68,8 +68,11 @@ admission and a global six requests/minute limit with burst four apply. Excess
 work returns `429` with `Retry-After`. Each request has a 90-second deadline,
 including at most one repair attempt; each provider call allows 16,384 output
 tokens and a 512 KiB response. Replies contain at most 8,192 message bytes and a
-256 KiB document. Disabled service returns `503`, upstream or invalid replies
-`502`, and timeout/cancellation `504`, using the normal API error envelope.
+256 KiB document. Disabled service returns `503`, provider failures `502`, invalid
+or incomplete proposals `422`, and timeout/cancellation `504`. The draft remains
+unchanged on failure. API 1.32 adds an optional `reason` to the normal error
+envelope, distinguishing provider credentials or usage limits, incomplete output,
+invalid graphs, and timeout/cancellation. No raw provider error is returned.
 
 See [operator configuration](operations/hosted-studio.md#optional-experiment-assistant)
 for provider setup and spending controls.
@@ -88,6 +91,11 @@ POST bodies contain the existing workflow or experiment JSON, with
 limited to 1 MiB, experiment requests to 4 MiB, and responses to 32 MiB. Paths
 accept no query parameters. Validation returns diagnostics; builds return the
 portable bundle used by local Studio. Building does not submit or execute a run.
+
+Studio validation responses include generated Go previews in API 1.31. A workflow
+may retain explicit manual function declarations in `go_code`; omitting that
+field restores generation from blocks. See [Go editing](development/workflow-authoring.md#inspect-and-edit-go)
+for the distinction between the saved visual graph and the executed code.
 
 The dispatcher forwards these operations to its configured local Unix socket
 worker. Disabled or unreachable workers return 503. Each account may have one

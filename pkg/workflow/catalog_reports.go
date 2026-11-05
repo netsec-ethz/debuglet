@@ -5,6 +5,8 @@ package workflow
 
 func reportCatalog() []Block {
 	return []Block{
+		{"log_event", "Log event", "Results", "Record a short message and optional JSON details when this action executes. Appears in run activity and live results, stamped with this executor's clock. Message: 1–1024 UTF-8 bytes; details: at most 8 KiB. Uses the workflow's output limits.", false,
+			[]Port{input("message", "string"), optional("details", "any", map[string]any{})}, []Port{output("message", "string"), output("details", "any"), output("timestamp_ms", "number")}, []string{"next"}},
 		{"plot_sample", "Plot sample", "Results", "Append one finite value to a named live graph at the guest's current time. Use series to distinguish peers or directions. Samples share the workflow's existing action and output limits.", false,
 			[]Port{input("name", "string"), input("value", "number"), optional("unit", "string", ""), optional("series", "string", "")}, []Port{}, []string{"next"}},
 		{"select_field", "Select field", "Data", "Read one named field from every object in a list, preserving order. Missing fields and non-object rows are errors. Connect a number field to existing statistics blocks.", true,

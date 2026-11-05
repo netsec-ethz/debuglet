@@ -168,6 +168,9 @@ func testSocketQuotaKeepsRealGuestAndControlResponsive(t *testing.T, supervisor 
 	if _, err := control.Abort(ctx, &pb.AbortRequest{DebugletId: queued.Id}); err != nil {
 		t.Fatal("control cleanup:", err)
 	}
+	if report := operationReports(t, peer, queued.Id)[queued.Id]; report.ExitCode != -1 || report.GetErrorMessage() != "debuglet cancelled" {
+		t.Fatalf("queued cancellation outcome=%v", report)
+	}
 
 	siblingListener := listen()
 	sibling := operationSpec()

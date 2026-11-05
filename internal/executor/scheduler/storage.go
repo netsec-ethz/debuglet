@@ -36,6 +36,9 @@ type Admission struct {
 	Start  AdmissionGuard
 }
 
+// AdmissionTimeout bounds new persistent admission, including connection waits.
+const AdmissionTimeout = 5 * time.Second
+
 // CleanupTimeout bounds an individual resource-cleanup/report operation or SQL
 // statement after connection admission. Owned finalization may wait longer for
 // a connection; caller deadlines separately bound Cancel and Shutdown joins.

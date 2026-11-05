@@ -109,6 +109,7 @@ func generate(w Workflow, experimentConfig string) (Program, error) {
 		// Retain the declared graph even if readiness fails before the first block.
 		fmt.Fprintf(&out, "func main(){if _,err:=fmt.Fprintln(os.Stdout,%q);err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)};var err error;experiment,err=guest.JoinExperiment(%q);if err==nil{err=func()error{%sruntime.SetScheduleAnchor(experiment.StartTime());return run%d()}()};if err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)}}\n", string(manifest), experimentConfig, cleanup, indexes[w.Entry])
 	}
+	bodyStart := out.Len()
 	for i, c := range w.CustomBlocks {
 		fmt.Fprintf(&out, "// Custom block %s\nfunc custom%d(inputs map[string]any)(map[string]any,error){\n%s\n}\n", c.ID, i, c.Code)
 	}
@@ -267,6 +268,8 @@ func generate(w Workflow, experimentConfig string) (Program, error) {
 				out.WriteString("values,err:=guest.Ping(in)\n")
 			case "emit":
 				out.WriteString("values:=in\n")
+			case "log_event":
+				out.WriteString("values,err:=guest.LogEvent(in)\n")
 			case "report_metric", "report_table", "report_text", "report_chart":
 				fmt.Fprintf(&out, "values,err:=guest.Report(%q,in)\n", n.Block)
 			case "plot_sample":
@@ -279,11 +282,19 @@ func generate(w Workflow, experimentConfig string) (Program, error) {
 		}
 		out.WriteString("}\n")
 	}
+	if w.GoCode != nil {
+		out.Truncate(bodyStart)
+		out.WriteString(*w.GoCode)
+	}
+	code, err := format.Source(out.Bytes()[bodyStart:])
+	if err != nil {
+		return Program{}, fmt.Errorf("format Go functions: %w", err)
+	}
 	source, err := format.Source(out.Bytes())
 	if err != nil {
 		return Program{}, fmt.Errorf("format generated program: %w", err)
 	}
-	program := Program{Source: string(source), WorkflowSHA256: digest, Destinations: []string{}}
+	program := Program{Source: string(source), GoCode: string(code), WorkflowSHA256: digest, Destinations: []string{}}
 	for _, n := range w.Nodes {
 		if function := scionHostFunction(n.Block); function != "" {
 			program.RequireSCION = true
@@ -393,8 +404,15 @@ func typeMap(ports []Port) string {
 func customImports(w Workflow) []string {
 	allowed := map[string]string{"debuglet": "github.com/netsec-ethz/debuglet/pkg/debuglet", "time": "time", "strings": "strings", "math": "math"}
 	used := map[string]bool{}
+	bodies := make([]string, 0, len(w.CustomBlocks))
 	for _, block := range w.CustomBlocks {
-		file, err := parser.ParseFile(token.NewFileSet(), "custom.go", "package main\nfunc custom(inputs map[string]any)(map[string]any,error){\n"+block.Code+"\n}", 0)
+		bodies = append(bodies, "func custom(inputs map[string]any)(map[string]any,error){\n"+block.Code+"\n}")
+	}
+	if w.GoCode != nil {
+		bodies = []string{*w.GoCode}
+	}
+	for _, body := range bodies {
+		file, err := parser.ParseFile(token.NewFileSet(), "custom.go", "package main\n"+body, 0)
 		if err != nil {
 			continue
 		}

@@ -37,7 +37,8 @@ runs its `true` or `false` control branch. A second target uses another ordinary
 network block with different inputs.
 
 HTTP's `ok` indicates a completed response, including 3xx, 4xx and 5xx statuses.
-Redirects are not followed. The optional `body` is text, and `headers` is an
+Redirects are not followed. The optional `body` uses `encoding` (`text`, `hex`,
+or `base64`, default `text`), and `headers` is an
 object whose values are strings: for example `{"Content-Type":"application/json"}`.
 Connect Stringify JSON to `body` to send a structured value. The HTTP block sets
 Content-Length from the body's byte length and keeps the URL's host as the
@@ -66,11 +67,46 @@ in the run's destination policy, rather than the name being queried.
 **UDP exchange** sends one datagram and receives one reply. **TCP exchange**
 connects, writes one payload, and reads to an explicit boundary: a delimiter
 (included in the response), exactly `max_bytes`, or end of stream. Payloads use
-text or padded base64 and are at most 8 KiB. `response_base64` preserves exact
+text (UTF-8), contiguous hexadecimal byte pairs, or padded base64 and are at most 8 KiB.
+TCP's `delimiter_encoding` selects the same formats for its 1–256-byte delimiter.
+`response_base64` preserves exact
 bytes; `response` is a UTF-8 display string. Check `ok`, `complete` and
 `truncated` before interpreting a reply. One timeout bounds the entire exchange,
 including connection setup. Neither block retries writes. UDP response limits
 are 1–8,191 bytes; TCP limits are 1–8,192 bytes.
+
+### Exact byte payloads
+
+**Byte payload** converts a `value` in `text`, `hex`, or `base64` encoding into
+canonical `hex` and `base64` outputs plus a `bytes` count. Text preserves spaces,
+line breaks and NUL bytes; characters such as `é` occupy more than one UTF-8
+byte. Hex requires contiguous pairs such as `00ff80`, without spaces or a `0x`
+prefix. Base64 uses the standard padded alphabet. Binary data stays encoded on
+workflow connections so JSON cannot replace invalid UTF-8 bytes.
+
+Leave `size_bytes` at `-1` to preserve the complete decoded input. Choose `0`
+for an empty payload, or a positive integer up to 8192 to repeat the decoded
+pattern and trim its final repetition to exactly that many bytes. For example,
+hex `00ff` with size `5` produces `00ff00ff00`. Trimming counts bytes and can
+split a UTF-8 character; the resulting binary bytes remain exact. An empty
+pattern with a positive size and oversized inputs are errors before network I/O.
+Limits apply to decoded bytes; workflow strings still have their existing 16 KiB limit.
+
+Connect `base64` to a UDP/TCP `payload` or HTTP `body` and explicitly set the
+receiving block's `encoding` to `base64`. Connecting the `hex` output requires
+`encoding=hex`. With `encoding=text`, those strings would be sent literally.
+An empty UDP payload sends one zero-byte datagram. HTTP generates framing from
+the decoded body length; this controls body bytes, not raw HTTP headers or wire
+framing. **Send message** remains a JSON message envelope, rather than a raw
+byte transport. SCION payloads retain their 4096-byte limit.
+
+Use existing **Concatenate** blocks to assemble hex fields in order. The
+[exact UDP payload example](../../examples/workflows/exact-byte-udp.json)
+joins the four-byte header `d06c0008` to eight bytes of repeated `00ff`, sends
+the resulting 12 bytes, and compares the echo's canonical base64 to the
+constructed payload. Set its target to an echo endpoint you control. Header
+widths and byte order are explicit in the hex values; changing a payload length
+does not automatically rewrite fields inside a custom protocol header.
 
 **TLS handshake** makes a normally verified TLS connection and returns protocol,
 cipher, negotiated ALPN, peer address and certificate summaries. It never
@@ -171,6 +207,18 @@ shows filtering, field selection, a mean, a metric, a table and explanatory text
 using fixed sample data, with no network access needed.
 
 ### Live graphs
+
+Use **Log event** in **Results** to mark meaningful steps such as “Fault detected”,
+“Peers triggered” and “Diagnosis ready”. Connect its control input and `next`
+to the actions it describes: it emits only when execution reaches the block.
+Provide a short `message` and optionally wire selected JSON fields into `details`.
+The console shows these events in Activity and live results with their participant
+and guest timestamp. Executor clocks need not agree, so timestamps alone do not
+prove the order of events across machines. Do not put credentials in event details.
+
+Messages allow 1–1,024 UTF-8 bytes and details at most 8 KiB of JSON. Events survive
+Every's diagnostic trace suppression and share the same total output budget as
+other reports. Retained run output contains each event for later viewing or export.
 
 Drag **Plot sample** from **Results** onto the canvas, connect a numeric output
 to `value`, and connect the action's control path through the block. Set `name`
