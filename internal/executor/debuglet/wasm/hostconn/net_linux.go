@@ -22,7 +22,9 @@ func (h *HostConn) Drain(ctx context.Context) { _ = h.DrainTCP(ctx) }
 // read, so peers can both send before receiving without a protocol deadlock.
 // Forced close and destination revocation bypass this bounded guest operation.
 func (h *HostConn) DrainTCP(ctx context.Context) error {
-	if h.tcp == nil {
+	// A terminal I/O error already returned to the guest needs only resource
+	// release. An unobserved reset must still fail the delivery check below.
+	if h.tcp == nil || h.terminalIOReported.Load() {
 		return nil
 	}
 	deadline := time.Now().Add(2 * time.Second)

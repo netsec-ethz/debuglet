@@ -174,6 +174,30 @@ func TestDrainCountedReceiverClose(t *testing.T) {
 }
 
 func TestDrainTCPReportsPeerReset(t *testing.T) {
+	host := resetTCPConnection(t)
+	if err := host.DrainTCP(context.Background()); err == nil {
+		t.Fatal("drain reported successful delivery after peer reset")
+	}
+}
+
+func TestDrainTCPReleasesAlreadyReportedReset(t *testing.T) {
+	host := resetTCPConnection(t)
+	if n, err := host.Read(make([]byte, 1)); n != 0 || !errors.Is(err, syscall.ECONNRESET) {
+		t.Fatalf("reset read = %d, %v", n, err)
+	}
+	if err := host.DrainTCP(context.Background()); err != nil {
+		t.Fatalf("drain repeated an already reported reset: %v", err)
+	}
+	if err := host.Close(); err != nil {
+		t.Fatalf("release after reset: %v", err)
+	}
+	if _, err := host.Read(make([]byte, 1)); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("read after release: %v", err)
+	}
+}
+
+func resetTCPConnection(t *testing.T) *HostConn {
+	t.Helper()
 	listener, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.ParseIP("127.0.0.1")})
 	if err != nil {
 		t.Fatal(err)
@@ -183,7 +207,7 @@ func TestDrainTCPReportsPeerReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	t.Cleanup(func() { client.Close() })
 	server, err := listener.AcceptTCP()
 	if err != nil {
 		t.Fatal(err)
@@ -219,8 +243,5 @@ func TestDrainTCPReportsPeerReset(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	host := &HostConn{conn: client, tcp: client}
-	if err := host.DrainTCP(context.Background()); err == nil {
-		t.Fatal("drain reported successful delivery after peer reset")
-	}
+	return &HostConn{conn: client, tcp: client}
 }

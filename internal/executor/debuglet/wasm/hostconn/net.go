@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/bitrate"
@@ -26,14 +28,15 @@ type HostConn struct {
 	id    uuid.UUID
 	limit bitrate.Bitrate
 
-	conn          net.Conn
-	tcp           *net.TCPConn // Retained before accounting/policy wrappers hide it.
-	deadlineMu    sync.Mutex
-	writeDeadline time.Time
-	connCtx       context.Context
-	socketID      uint32
-	socketType    socket.SocketType
-	tlsState      *tls.ConnectionState
+	conn               net.Conn
+	tcp                *net.TCPConn // Retained before accounting/policy wrappers hide it.
+	deadlineMu         sync.Mutex
+	writeDeadline      time.Time
+	connCtx            context.Context
+	socketID           uint32
+	socketType         socket.SocketType
+	tlsState           *tls.ConnectionState
+	terminalIOReported atomic.Bool
 
 	closeOnce sync.Once
 	closeErr  error
@@ -111,9 +114,22 @@ func (h *HostConn) closeImpl() error {
 	return h.conn.Close()
 }
 
-func (h *HostConn) Write(b []byte) (int, error) { return h.conn.Write(b) }
-func (h *HostConn) Read(b []byte) (int, error)  { return h.conn.Read(b) }
-func (h *HostConn) Type() socket.SocketType     { return h.socketType }
+func (h *HostConn) Write(b []byte) (int, error) {
+	n, err := h.conn.Write(b)
+	h.recordTerminalIO(err)
+	return n, err
+}
+func (h *HostConn) Read(b []byte) (int, error) {
+	n, err := h.conn.Read(b)
+	h.recordTerminalIO(err)
+	return n, err
+}
+func (h *HostConn) recordTerminalIO(err error) {
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || errors.Is(err, net.ErrClosed) {
+		h.terminalIOReported.Store(true)
+	}
+}
+func (h *HostConn) Type() socket.SocketType { return h.socketType }
 
 func (h *HostConn) Addr() string {
 	host, _, err := net.SplitHostPort(h.conn.RemoteAddr().String())
