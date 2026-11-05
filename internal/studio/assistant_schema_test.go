@@ -38,7 +38,13 @@ func assistantWireFixture(t *testing.T, wf workflow.Workflow) assistantWireWorkf
 			inputs = map[string]any{}
 		}
 		literal, _ := json.Marshal(inputs)
-		wire.Nodes = append(wire.Nodes, assistantWireNode{ID: n.ID, Block: n.Block, InputsJSON: string(literal), Position: n.Position})
+		node := assistantWireNode{ID: n.ID, Block: n.Block, InputsJSON: string(literal), Position: n.Position}
+		for _, block := range wf.CustomBlocks {
+			if block.ID == n.Block {
+				node.Block, node.CustomBlock = "", n.Block
+			}
+		}
+		wire.Nodes = append(wire.Nodes, node)
 	}
 	return wire
 }
@@ -205,6 +211,26 @@ func TestAssistantStrictExperimentRoundTrip(t *testing.T) {
 	graph := participants["items"].(map[string]any)["properties"].(map[string]any)["workflow"].(map[string]any)
 	if graph["type"] != "object" {
 		t.Fatal("participant workflow must not be nullable")
+	}
+	channels := schema["properties"].(map[string]any)["document"].(map[string]any)["properties"].(map[string]any)["channels"].(map[string]any)
+	channel := channels["items"].(map[string]any)["properties"].(map[string]any)
+	for _, field := range []string{"type", "response_type"} {
+		values, ok := channel[field].(map[string]any)["enum"].([]string)
+		if !ok || len(values) == 0 {
+			t.Fatal("channel types are unconstrained")
+		}
+		for _, value := range values {
+			test := native
+			test.Channels = []workflow.Channel{{ID: "test", From: "A", To: "B", Type: "object"}}
+			if field == "type" {
+				test.Channels[0].Type = value
+			} else {
+				test.Channels[0].ResponseType = value
+			}
+			if ds := workflow.ValidateExperiment(test); len(ds) != 0 {
+				t.Fatalf("schema channel type %q does not validate: %+v", value, ds)
+			}
+		}
 	}
 }
 

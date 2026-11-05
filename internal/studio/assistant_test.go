@@ -286,7 +286,7 @@ func assistantRepairDiagnostics(t *testing.T, r *http.Request) []workflow.Experi
 	var report struct {
 		Diagnostics []workflow.ExperimentDiagnostic `json:"diagnostics"`
 	}
-	_, data, _ := strings.Cut(message.Content, "Return a corrected complete document: ")
+	_, data, _ := strings.Cut(message.Content, "Diagnostics: ")
 	if err := json.Unmarshal([]byte(data), &report); err != nil || message.Role != "tool" {
 		t.Errorf("invalid repair feedback: %v", err)
 	}
