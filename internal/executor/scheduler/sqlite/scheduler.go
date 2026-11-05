@@ -175,6 +175,10 @@ func (s *SqliteStorage) restore(ctx context.Context, emit func(scheduler.Spec) e
 }
 
 func (s *SqliteStorage) Insert(ctx context.Context, spec scheduler.Spec) error {
+	// New admission has no accepted work to protect while waiting for the
+	// connection pool. Bound that wait as well as the persistence statement.
+	ctx, cancel := context.WithTimeout(ctx, scheduler.AdmissionTimeout)
+	defer cancel()
 	return s.local.Insert(ctx, spec)
 }
 
@@ -317,6 +321,7 @@ func (s *SqliteStorage) RegisterFailed(cb scheduler.FailedFunc) {
 	s.callbackMu.Lock()
 	defer s.callbackMu.Unlock()
 	s.onFailedCb = cb
+	s.local.RegisterFailed(cb)
 }
 
 func (s *SqliteStorage) onStart(ctx context.Context, spec scheduler.Spec) scheduler.Completion {

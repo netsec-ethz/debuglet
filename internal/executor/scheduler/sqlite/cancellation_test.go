@@ -664,3 +664,98 @@ func TestSQLiteShutdownJoinsRestore(t *testing.T) {
 		t.Fatalf("SQL after shutdown barrier: queries=%d", observed.lists.Load())
 	}
 }
+
+// A successful SQLite write may return after both Upload and Abort callers
+// expire. The accepted owner must never start, and must retain its terminal
+// cancellation even after the queued row has been removed.
+func TestSQLiteLateAdmissionRetainsQueuedCancellation(t *testing.T) {
+	db := newSchedulerTestDB(t)
+	s := newTestStorage(t, db, storageTestEligibility)
+	cancellationCleanup(t, s)
+	gate := newCancellationGate(t)
+	s.decorate = (&cancellationDB{afterCreate: func(database.DBTX, error) { gate.hold(context.Background()) }}).decorate
+	spec := insertTestSpec()
+	var started atomic.Int32
+	s.RegisterOnStart(func(context.Context, scheduler.Spec) scheduler.Completion {
+		started.Add(1)
+		return scheduler.Completion{}
+	})
+	reported := make(chan error, 1)
+	s.RegisterFailed(func(ctx context.Context, run scheduler.Spec, cause error) scheduler.Completion {
+		message := cause.Error()
+		reported <- s.RecordTerminal(ctx, scheduler.TerminalEvent{DebugletID: run.DebugletID, Binding: run.Binding, ExitCode: -1, ErrorMessage: &message})
+		return scheduler.Completion{}
+	})
+	uploadCtx, cancelUpload := context.WithCancel(context.Background())
+	defer cancelUpload()
+	inserted := cancellationCaller(t, gate.open, func() error { return s.Insert(uploadCtx, spec) })
+	cancellationAwait(t, gate.entered, "committed SQLite insert with delayed response")
+	cancelUpload()
+	cancelled, joining := cancellationCall(t, s, spec.DebugletID, errors.New("cancel disconnected upload"), 30*time.Millisecond)
+	cancellationAwait(t, joining, "cancellation reserved while insert returns")
+	if result := cancellationAwait(t, cancelled, "Abort caller expired"); !result.found || !errors.Is(result.err, context.DeadlineExceeded) {
+		t.Fatalf("Abort must retain its owned pending cancellation: %+v", result)
+	}
+	gate.open()
+	if err := cancellationAwait(t, inserted, "late accepted insertion"); err != nil {
+		t.Fatalf("committed insertion lost acceptance: %v", err)
+	}
+	if err := cancellationAwait(t, reported, "durable queued terminal report"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), cancellationTestBound)
+	defer cancel()
+	if err := s.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	insertAssertRows(t, db)
+	row, err := database.New(db).GetDebugletExit(ctx, spec.DebugletID.String())
+	if err != nil || row.ExitCode != -1 || row.ErrorMessage.String != "cancel disconnected upload" || row.SessionID != spec.Binding.SessionID || started.Load() != 0 {
+		t.Fatalf("late admission terminal evidence = %+v, %v; starts=%d", row, err, started.Load())
+	}
+}
+
+func TestSQLiteQueuedCancellationFinalizerRetryDoesNotReplay(t *testing.T) {
+	db := newSchedulerTestDB(t)
+	s := newTestStorage(t, db, storageTestEligibility)
+	cancellationCleanup(t, s)
+	var reports, starts atomic.Int32
+	s.RegisterOnStart(func(context.Context, scheduler.Spec) scheduler.Completion {
+		starts.Add(1)
+		return scheduler.Completion{}
+	})
+	s.RegisterFailed(func(context.Context, scheduler.Spec, error) scheduler.Completion {
+		reports.Add(1)
+		return scheduler.Completion{}
+	})
+	spec := insertTestSpec()
+	if err := s.Insert(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("CREATE TRIGGER hold_cancelled BEFORE DELETE ON debuglets BEGIN SELECT RAISE(FAIL, 'held queued cleanup'); END"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), cancellationTestBound)
+	defer cancel()
+	if found, err := s.CancelBound(ctx, spec.DebugletID, spec.Binding, errors.New("cancel queued")); !found || err == nil {
+		t.Fatalf("failed finalization was not retained: %t %v", found, err)
+	}
+	if reports.Load() != 1 {
+		t.Fatalf("queued terminal report missing before finalization retry: %d", reports.Load())
+	}
+	// Starting the scheduler must not replay work already reported terminal.
+	cancellationLoop(t, s)
+	if _, err := db.Exec("DROP TRIGGER hold_cancelled"); err != nil {
+		t.Fatal(err)
+	}
+	if found, err := s.CancelBound(ctx, spec.DebugletID, spec.Binding, errors.New("retry cleanup")); !found || err != nil {
+		t.Fatalf("retained finalization retry: %t %v", found, err)
+	}
+	if err := s.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	insertAssertRows(t, db)
+	if reports.Load() != 1 || starts.Load() != 0 {
+		t.Fatalf("terminal callback replayed: reports=%d starts=%d", reports.Load(), starts.Load())
+	}
+}

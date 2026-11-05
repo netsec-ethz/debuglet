@@ -95,6 +95,7 @@ type tgPeer struct {
 	aborts       []*pb.AbortRequest
 	bandwidth    []*pb.BandwidthRequest
 	beforeUpload func(ctx context.Context, req *pb.UploadRequest) error
+	beforeAbort  func(ctx context.Context, req *pb.AbortRequest) error
 	abortErr     error
 	bandwidthErr error
 
@@ -124,11 +125,16 @@ func (p *tgPeer) Upload(ctx context.Context, req *pb.UploadRequest) (*pb.UploadR
 	return &pb.UploadResponse{}, nil
 }
 
-func (p *tgPeer) Abort(_ context.Context, req *pb.AbortRequest) (*pb.AbortResponse, error) {
+func (p *tgPeer) Abort(ctx context.Context, req *pb.AbortRequest) (*pb.AbortResponse, error) {
 	p.mu.Lock()
 	p.aborts = append(p.aborts, req)
-	err := p.abortErr
+	err, hook := p.abortErr, p.beforeAbort
 	p.mu.Unlock()
+	if hook != nil {
+		if err := hook(ctx, req); err != nil {
+			return nil, err
+		}
+	}
 	if err != nil {
 		return nil, err
 	}

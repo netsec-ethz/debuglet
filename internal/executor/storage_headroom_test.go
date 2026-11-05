@@ -110,6 +110,9 @@ func TestLowStoragePreservesRealGuestControlAndOutputFinality(t *testing.T) {
 	if _, err = control.Abort(ctx, &pb.AbortRequest{DebugletId: queued.Id}); err != nil {
 		t.Fatal("control abort:", err)
 	}
+	if report := operationReports(t, peer, queued.Id)[queued.Id]; report.ExitCode != -1 || report.GetErrorMessage() != "debuglet cancelled" {
+		t.Fatalf("queued cancellation outcome=%v", report)
+	}
 	healthy := startOperationTest(t, e, sibling)
 	select {
 	case <-healthy.done:
@@ -127,7 +130,7 @@ func TestLowStoragePreservesRealGuestControlAndOutputFinality(t *testing.T) {
 	case <-time.After(operationTestBound):
 		t.Fatal("healthy sibling terminal missing")
 	}
-	if peer.reportCalls.Load() != 2 {
+	if peer.reportCalls.Load() != 3 {
 		t.Fatal("unexpected terminal count")
 	}
 

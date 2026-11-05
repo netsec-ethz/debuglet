@@ -46,9 +46,9 @@ func awaitPoolWaiters(t *testing.T, db *sql.DB, want int64) {
 
 // All three waits occur on the actual one-connection sql.DB pool: an accepted
 // queued deletion, a completed callback's finalizer, and a reserved new Insert.
-// They remain owned beyond the SQL budget. Caller/Shutdown deadlines cannot
-// release that ownership or turn a successfully persisted Insert into rejection.
-func TestSQLiteSQLBudgetAfterConnectionAdmission(t *testing.T) {
+// Finalizers remain owned beyond the SQL budget; new admission has its own
+// end-to-end bound and never writes after timing out on the connection pool.
+func TestSQLiteFinalizersOutlivePoolWaitButAdmissionIsBounded(t *testing.T) {
 	db := newSchedulerTestDB(t)
 	s := newTestStorage(t, db, storageTestEligibility)
 	cancellationCleanup(t, s)
@@ -113,15 +113,13 @@ func TestSQLiteSQLBudgetAfterConnectionAdmission(t *testing.T) {
 
 	// A real elapsed interval is necessary: a timer installed before pool
 	// admission must expire here. No SQL durability setting is changed.
-	hold := time.NewTimer(scheduler.CleanupTimeout + 100*time.Millisecond)
 	select {
 	case err := <-insertDone:
-		hold.Stop()
-		t.Fatalf("Insert ended while pool remained owned: %v", err)
-	case <-hold.C:
-	case <-ctx.Done():
-		hold.Stop()
-		t.Fatal("fixture deadline while holding pool")
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("new admission must expire before acquiring the connection: %v", err)
+		}
+	case <-time.After(scheduler.AdmissionTimeout + time.Second):
+		t.Fatal("new admission exceeded its connection wait budget")
 	}
 	if len(budgets) != 0 {
 		t.Fatal("statement began without acquiring the held connection")
@@ -129,18 +127,15 @@ func TestSQLiteSQLBudgetAfterConnectionAdmission(t *testing.T) {
 	if err := held.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := cancellationAwait(t, insertDone, "accepted reserved Insert after admission"); err != nil {
-		t.Fatalf("connection wait consumed statement budget: %v", err)
-	}
 	joinCtx, cancelJoin := context.WithTimeout(context.Background(), cancellationTestBound)
 	defer cancelJoin()
 	if err := s.Shutdown(joinCtx); err != nil {
 		t.Fatalf("retained admission/finalizers did not join: %v", err)
 	}
-	if len(budgets) != 3 {
-		t.Fatalf("statement attempts after admission=%d want3", len(budgets))
+	if len(budgets) != 2 {
+		t.Fatalf("finalizer statement attempts after admission=%d want2", len(budgets))
 	}
-	for range 3 {
+	for range 2 {
 		budget := <-budgets
 		if !budget.bounded || budget.err != nil || budget.remaining > scheduler.CleanupTimeout || budget.remaining < scheduler.CleanupTimeout-time.Second {
 			t.Fatalf("statement did not receive a fresh five-second execution budget: %+v", budget)
@@ -149,7 +144,7 @@ func TestSQLiteSQLBudgetAfterConnectionAdmission(t *testing.T) {
 	if callbacks.Load() != 1 {
 		t.Fatal("callback was replayed while finalizer waited")
 	}
-	insertAssertRows(t, db, acceptedSpec)
+	insertAssertRows(t, db)
 }
 
 type cancelledMarkerConnection struct {
