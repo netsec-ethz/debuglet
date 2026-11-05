@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -128,15 +129,15 @@ func TestAssistantStrictClarificationAndCoordinateHaveNoDocument(t *testing.T) {
 func TestAssistantStrictWireStillRejectsInvalidGraph(t *testing.T) {
 	wf := sampleWorkflow()
 	wf.Entry = "missing"
-	calls := 0
+	var calls atomic.Int32
 	client := assistantFixture(t, func(w http.ResponseWriter, _ *http.Request) {
-		calls++
+		calls.Add(1)
 		assistantToolReply(w, map[string]any{"message": "Ready", "action": "", "document": assistantWireFixture(t, wf)})
 	})
 	client.strictSchema = true
 	result, err := client.Reply(t.Context(), assistantInput(t, "workflow", sampleWorkflow()))
 	var classified *AssistantError
-	if calls != 2 || len(result.Document) != 0 || !errors.As(err, &classified) || classified.Code != "invalid_graph" || !errors.Is(err, ErrAssistantInvalidReply) {
+	if calls.Load() != 2 || len(result.Document) != 0 || !errors.As(err, &classified) || classified.Code != "invalid_graph" || !errors.Is(err, ErrAssistantInvalidReply) {
 		t.Fatalf("invalid graph escaped: %v", err)
 	}
 }
@@ -159,14 +160,14 @@ func TestAssistantClassifiesProviderFailureWithoutBody(t *testing.T) {
 }
 
 func TestAssistantTruncationIsNotRetried(t *testing.T) {
-	calls := 0
+	var calls atomic.Int32
 	client := assistantFixture(t, func(w http.ResponseWriter, _ *http.Request) {
-		calls++
+		calls.Add(1)
 		_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"length","message":{"content":"partial"}}]}`))
 	})
 	_, err := client.Reply(t.Context(), assistantInput(t, "workflow", sampleWorkflow()))
 	var classified *AssistantError
-	if calls != 1 || !errors.As(err, &classified) || classified.Code != "output_truncated" {
+	if calls.Load() != 1 || !errors.As(err, &classified) || classified.Code != "output_truncated" {
 		t.Fatalf("unexpected truncation handling: %v", err)
 	}
 }
