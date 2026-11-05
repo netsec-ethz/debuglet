@@ -31,7 +31,7 @@ func assistantDocumentSchema(kind string) map[string]any {
 	node := func(custom bool) map[string]any {
 		properties := map[string]any{"id": str(), "inputs_json": map[string]any{"type": "string", "description": "A JSON object containing literal input values only; use {} when all inputs are wired."}, "position": position}
 		if custom {
-			properties["custom_block"] = map[string]any{"type": "string", "description": "ID of a custom_blocks definition in this workflow. It must exist; define a new helper in custom_blocks before referencing it."}
+			properties["custom_block"] = map[string]any{"type": "string", "description": "ID of a custom_blocks definition in this workflow. It must exist; define a new helper in custom_blocks before referencing it. Every custom block is an action: execute it through control in/next before using its outputs, even when it only processes data."}
 		} else {
 			properties["block"] = map[string]any{"type": "string", "enum": blocks}
 		}
