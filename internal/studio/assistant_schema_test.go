@@ -212,6 +212,26 @@ func TestAssistantStrictExperimentRoundTrip(t *testing.T) {
 	if graph["type"] != "object" {
 		t.Fatal("participant workflow must not be nullable")
 	}
+	channels := schema["properties"].(map[string]any)["document"].(map[string]any)["properties"].(map[string]any)["channels"].(map[string]any)
+	channel := channels["items"].(map[string]any)["properties"].(map[string]any)
+	for _, field := range []string{"type", "response_type"} {
+		values, ok := channel[field].(map[string]any)["enum"].([]string)
+		if !ok || len(values) == 0 {
+			t.Fatal("channel types are unconstrained")
+		}
+		for _, value := range values {
+			test := native
+			test.Channels = []workflow.Channel{{ID: "test", From: "A", To: "B", Type: "object"}}
+			if field == "type" {
+				test.Channels[0].Type = value
+			} else {
+				test.Channels[0].ResponseType = value
+			}
+			if ds := workflow.ValidateExperiment(test); len(ds) != 0 {
+				t.Fatalf("schema channel type %q does not validate: %+v", value, ds)
+			}
+		}
+	}
 }
 
 func TestAssistantExpiredDeadlineHasDistinctReason(t *testing.T) {

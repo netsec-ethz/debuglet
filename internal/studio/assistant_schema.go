@@ -21,7 +21,9 @@ func assistantDocumentSchema(kind string) map[string]any {
 	endpoint := assistantSchemaObject(map[string]any{"node": str(), "port": str()})
 	position := assistantSchemaObject(map[string]any{"x": map[string]any{"type": "number"}, "y": map[string]any{"type": "number"}})
 	position["type"] = []string{"object", "null"}
-	port := assistantSchemaObject(map[string]any{"name": str(), "type": map[string]any{"type": "string", "enum": []string{"string", "number", "boolean", "numbers", "strings", "object", "any"}}, "required": map[string]any{"type": "boolean"}, "default_json": map[string]any{"type": "string", "description": "JSON-encoded default literal, or null encoded as a string when absent."}})
+	valueTypes := []string{"string", "number", "boolean", "numbers", "strings", "object", "any"}
+	valueType := map[string]any{"type": "string", "enum": valueTypes}
+	port := assistantSchemaObject(map[string]any{"name": str(), "type": valueType, "required": map[string]any{"type": "boolean"}, "default_json": map[string]any{"type": "string", "description": "JSON-encoded default literal, or null encoded as a string when absent."}})
 	blocks := make([]string, 0)
 	for _, block := range workflow.Catalog() {
 		blocks = append(blocks, block.ID)
@@ -51,7 +53,8 @@ func assistantDocumentSchema(kind string) map[string]any {
 			"kind":    map[string]any{"type": "string", "enum": []string{"experiment"}}, "name": str(),
 			"participants": array(assistantSchemaObject(map[string]any{"id": str(), "label": str(), "workflow": graph})),
 			"channels": array(assistantSchemaObject(map[string]any{
-				"id": str(), "from": str(), "to": str(), "type": str(), "response_type": str(),
+				"id": str(), "from": str(), "to": str(), "type": valueType,
+				"response_type": map[string]any{"type": "string", "enum": append([]string{""}, valueTypes...)},
 			})),
 		})
 	}
