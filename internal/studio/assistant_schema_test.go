@@ -210,6 +210,9 @@ func TestAssistantStrictExperimentRoundTrip(t *testing.T) {
 	schema := assistantDocumentSchema("experiment")
 	participants := schema["properties"].(map[string]any)["document"].(map[string]any)["properties"].(map[string]any)["participants"].(map[string]any)
 	graph := participants["items"].(map[string]any)["properties"].(map[string]any)["workflow"].(map[string]any)
+	if graph["$ref"] == "#/$defs/compact_workflow" {
+		graph = schema["$defs"].(map[string]any)["compact_workflow"].(map[string]any)
+	}
 	if graph["type"] != "object" {
 		t.Fatal("participant workflow must not be nullable")
 	}
