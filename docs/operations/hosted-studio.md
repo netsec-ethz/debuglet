@@ -176,6 +176,8 @@ the ordinary document tool format. Strict output
 constrains the shape; it does not establish correct wiring or measurement
 semantics. Every proposed graph passes validation and Go source generation,
 including every participant in a coordinated experiment. Assistant proposals also
+reject newly disconnected actions while preserving unrelated unfinished draft
+blocks. This does not prove that the proposal fulfills the request. They
 check whether action outputs are available along supported control paths, stopping
 at loop boundaries; loop bodies, continuations and custom conditions still need review. For proposals containing
 custom blocks, actual compilation errors also feed the one correction attempt.
