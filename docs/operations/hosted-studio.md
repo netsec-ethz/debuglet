@@ -214,15 +214,17 @@ in the repository, console configuration or inventory. For OpenAI GPT-6 Sol:
 ```toml
 [studio.assistant]
 enabled = true
-endpoint = "https://api.openai.com/v1/chat/completions"
+endpoint = "https://api.openai.com/v1/responses"
 model = "gpt-6-sol"
 api_key_file = "/etc/debuglet/assistant.key"
-reasoning_effort = "none"
+reasoning_effort = "high"
 ```
 
-GPT-6 Sol supports function calling through Chat Completions only with
-`reasoning_effort = "none"`. Reasoning with tools requires the Responses API,
-which this adapter does not implement. See the
+The `/v1/responses` endpoint selects the Responses API with strict function
+calling and `store: false`. It supports reasoning with tools; higher reasoning
+effort can take longer. Other endpoint paths retain the Chat Completions protocol
+for compatible providers. GPT-6 Sol requires `reasoning_effort = "none"` when
+using `/v1/chat/completions`. See the
 [OpenAI model documentation](https://developers.openai.com/api/docs/models/gpt-6-sol).
 
 If `api_key_file` is omitted, the dispatcher reads `DEBUGLET_ASSISTANT_API_KEY`
@@ -240,8 +242,10 @@ For models that support it, `reasoning_effort` accepts `none`, `low`, `high` or
 not select `none`. For interactive GLM-5.3-Flash authoring, use
 `reasoning_effort = "low"` to keep reasoning within
 the request deadline. This controls reasoning depth rather than disabling it.
-Provider `reasoning_content`, when present, is retained only for the single
-validation-repair call; it is not returned to the browser or logged.
+Provider `reasoning_content` or opaque Responses reasoning items, when present,
+are retained only for the single validation-repair call; they are not returned
+to the browser or logged. Responses reasoning items are requested in encrypted
+form and replayed with the tool result, without relying on stored response IDs.
 
 The Ansible equivalents are `dispatcher_assistant_enabled`,
 `dispatcher_assistant_endpoint`, `dispatcher_assistant_model` and

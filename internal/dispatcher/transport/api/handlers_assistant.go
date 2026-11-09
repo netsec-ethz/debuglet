@@ -14,7 +14,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/studio"
+	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 )
 
@@ -118,8 +120,10 @@ func (h *Handler) assistantReplyWithProgress(c echo.Context, stream bool) error 
 	if stream {
 		return h.streamAssistant(c, ctx, cancel, input, h.assistantCompileCheck(account.UserUUID))
 	}
+	started := time.Now()
 	result, err := h.assistant.client.ReplyChecked(ctx, input, h.assistantCompileCheck(account.UserUUID))
 	if err != nil {
+		h.logAssistantFailure(c, err, ctx.Err(), time.Since(started))
 		var compilerFailure *echo.HTTPError
 		if errors.As(err, &compilerFailure) {
 			if compilerFailure.Code == http.StatusTooManyRequests {
@@ -145,6 +149,7 @@ type assistantStreamEvent struct {
 }
 
 func (h *Handler) streamAssistant(c echo.Context, ctx context.Context, cancel context.CancelFunc, input studio.AssistantRequest, check studio.AssistantCompileCheck) error {
+	started := time.Now()
 	c.Response().Header().Set("Content-Type", "text/event-stream")
 	c.Response().Header().Set("X-Accel-Buffering", "no")
 	controller := http.NewResponseController(c.Response().Writer)
@@ -174,6 +179,9 @@ func (h *Handler) streamAssistant(c echo.Context, ctx context.Context, cancel co
 		}
 		return send(assistantStreamEvent{Type: "stage", Stage: stage})
 	})
+	if err != nil {
+		h.logAssistantFailure(c, err, ctx.Err(), time.Since(started))
+	}
 	if writeFailed || c.Request().Context().Err() != nil {
 		return nil // A disconnected reader must not leave provider work running.
 	}
@@ -186,6 +194,34 @@ func (h *Handler) streamAssistant(c echo.Context, ctx context.Context, cancel co
 		return send(assistantStreamEvent{Type: "error", Error: &body, Status: status})
 	}
 	return send(assistantStreamEvent{Type: "result", Result: &result})
+}
+
+// Streaming failures happen after the HTTP response has begun, so they cannot
+// pass through errorHandler. Keep the same bounded diagnostics for both routes.
+func (h *Handler) logAssistantFailure(c echo.Context, err, contextErr error, elapsed time.Duration) {
+	if h.logger == nil {
+		return
+	}
+	var public *echo.HTTPError
+	if !errors.As(err, &public) {
+		public = assistantFailure(err, contextErr)
+	}
+	_, body, _ := errorEnvelope(public)
+	reason := body.Reason
+	switch reason {
+	case "provider_auth", "provider_rate_limit", "provider_unavailable", "output_truncated", "invalid_response", "invalid_graph", "deadline_exceeded", "canceled", "compiler_busy", "compiler_unavailable":
+	default:
+		reason = "unknown"
+	}
+	providerStatus := 0
+	var failure *studio.AssistantError
+	if errors.As(err, &failure) && failure.ProviderStatus >= 100 && failure.ProviderStatus <= 599 {
+		providerStatus = failure.ProviderStatus
+	}
+	h.logger.Warn("Assistant request failed",
+		zap.String("request_id", daemonlog.RequestID(c.Request().Context())),
+		zap.String("reason", reason), zap.Int("provider_status", providerStatus),
+		zap.Duration("latency", elapsed))
 }
 
 func assistantFailure(err, contextErr error) *echo.HTTPError {
