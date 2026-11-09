@@ -180,7 +180,9 @@ reject newly disconnected actions while preserving unrelated unfinished draft
 blocks. This does not prove that the proposal fulfills the request. They
 check whether action outputs are available along supported control paths, stopping
 at loop boundaries; loop bodies, continuations and custom conditions still need review. For proposals containing
-custom blocks, actual compilation errors also feed the one correction attempt.
+custom blocks or explicitly accepted Go functions, actual compilation errors also
+feed the one correction attempt. Visual proposals are limited to ten immediate
+cards at each level using nested groups; this affects presentation, not execution.
 The compiler shares the normal per-account/global capacity limits, and a busy or
 unavailable compiler leaves the draft unchanged. Built-in-only drafts do not
 need the compiler at this stage. Compilation proves neither runtime success nor
@@ -248,7 +250,8 @@ The Ansible equivalents are `dispatcher_assistant_enabled`,
 is `dispatcher_assistant_reasoning_effort` (default empty). Provision the private key file separately,
 then apply the normal configuration update and restart the dispatcher. The
 ordinary disabled deployment requires no key or additional service. Configure
-the reverse proxy for at least 120 seconds on `/api/studio/assistant` to allow
+the reverse proxy for at least 120 seconds on `/api/studio/assistant` and
+`/api/studio/assistant/stream` to allow
 the backend's 90-second deadline and response delivery.
 
 The model receives the graph, including any custom source, the prompt and the

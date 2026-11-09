@@ -36,6 +36,7 @@ func oaStudioUnavailableExchanges(t *testing.T, ctx context.Context, recorder *o
 		{http.MethodGet, "/studio/catalog", nil, 503},
 		{http.MethodGet, "/studio/assistant", nil, 200},
 		{http.MethodPost, "/studio/assistant", map[string]any{"kind": "workflow", "document": wf, "message": "Explain this graph"}, 503},
+		{http.MethodPost, "/studio/assistant/stream", map[string]any{"kind": "workflow", "document": wf, "message": "Explain this graph"}, 503},
 		{http.MethodPost, "/studio/validate", wf, 503},
 		{http.MethodPost, "/studio/build", wf, 503},
 		{http.MethodPost, "/studio/experiments/validate", experiment, 503},

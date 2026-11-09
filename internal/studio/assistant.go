@@ -49,10 +49,11 @@ type AssistantMessage struct {
 }
 
 type AssistantRequest struct {
-	Kind     string             `json:"kind"`
-	Document json.RawMessage    `json:"document"`
-	Message  string             `json:"message"`
-	History  []AssistantMessage `json:"history,omitempty"`
+	Kind      string             `json:"kind"`
+	Document  json.RawMessage    `json:"document"`
+	Message   string             `json:"message"`
+	History   []AssistantMessage `json:"history,omitempty"`
+	AllowCode bool               `json:"allow_code,omitempty"`
 }
 
 type AssistantResponse struct {
@@ -150,13 +151,13 @@ func DecodeAssistantRequest(r io.Reader) (AssistantRequest, error) {
 	}
 	switch doc := document.(type) {
 	case workflow.Workflow:
-		if doc.GoCode != nil {
-			return request, errors.New("restore blocks before asking the assistant to edit this program; manual Go code is preserved")
+		if doc.GoCode != nil && !request.AllowCode {
+			return request, errors.New("choose Go authoring or restore blocks before asking the assistant to edit this program; manual Go code is preserved")
 		}
 	case workflow.Experiment:
 		for _, participant := range doc.Participants {
-			if participant.Workflow.GoCode != nil {
-				return request, errors.New("restore blocks for programs with manual Go code before asking the assistant to edit this experiment")
+			if participant.Workflow.GoCode != nil && !request.AllowCode {
+				return request, errors.New("choose Go authoring or restore blocks for programs with manual Go code before asking the assistant to edit this experiment")
 			}
 		}
 	}
@@ -192,27 +193,60 @@ func (a *Assistant) Reply(ctx context.Context, request AssistantRequest) (Assist
 // stops the request. It must not execute or submit the generated program.
 type AssistantCompileCheck func(context.Context, string, json.RawMessage) (diagnostic string, err error)
 
-// ReplyChecked adds compilation feedback for custom code to the same bounded
-// proposal/repair cycle. A nil check keeps Reply's source-only authoring behavior.
+// ReplyChecked adds compilation feedback to the bounded proposal/repair cycle.
+// A nil check keeps source-only visual authoring; Go mode requires compilation.
 func (a *Assistant) ReplyChecked(ctx context.Context, request AssistantRequest, check AssistantCompileCheck) (AssistantResponse, error) {
+	return a.ReplyObserved(ctx, request, check, nil)
+}
+
+// ReplyObserved reports actual processing boundaries. An observer error stops
+// the request, so a disconnected client does not keep generating a proposal.
+func (a *Assistant) ReplyObserved(ctx context.Context, request AssistantRequest, check AssistantCompileCheck, observe func(string) error) (AssistantResponse, error) {
+	notify := func(stage string) error {
+		if observe != nil {
+			return observe(stage)
+		}
+		return nil
+	}
 	ctx, cancel := context.WithTimeout(ctx, AssistantTimeout)
 	defer cancel()
+	if !request.AllowCode && assistantHasGoCode(request.Kind, request.Document) {
+		return AssistantResponse{}, assistantError("invalid_graph", 0)
+	}
 	catalog, _ := json.Marshal(workflow.Catalog())
 	instructions := assistantInstructions
-	if a.strictSchema {
-		instructions += assistantStrictInstructions
+	var codeContext any
+	if request.AllowCode {
+		var err error
+		request.Document, codeContext, err = assistantPrepareCode(request.Kind, request.Document)
+		if err != nil {
+			return AssistantResponse{}, assistantError("invalid_graph", 0)
+		}
+		instructions = assistantCodeInstructions
 	} else {
-		instructions += assistantLegacyInstructions
+		if a.strictSchema {
+			instructions += assistantStrictInstructions
+		} else {
+			instructions += assistantLegacyInstructions
+		}
+		instructions += "\nAvailable blocks: " + string(catalog)
 	}
-	messages := []assistantModelMessage{{Role: "system", Content: instructions + "\nAvailable blocks: " + string(catalog)}}
+	messages := []assistantModelMessage{{Role: "system", Content: instructions}}
 	for _, item := range request.History {
 		messages = append(messages, assistantModelMessage{Role: item.Role, Content: item.Content})
 	}
-	input, _ := json.Marshal(map[string]any{"kind": request.Kind, "document": request.Document, "request": request.Message})
+	input, _ := json.Marshal(map[string]any{"kind": request.Kind, "document": request.Document, "request": request.Message, "allow_code": request.AllowCode, "code_context": codeContext})
 	messages = append(messages, assistantModelMessage{Role: "user", Content: string(input)})
 	editBase := request.Document
 	for attempt := 0; attempt < 2; attempt++ {
-		answer, err := a.complete(ctx, messages, request.Kind)
+		stage := "generating"
+		if attempt > 0 {
+			stage = "repairing"
+		}
+		if err := notify(stage); err != nil {
+			return AssistantResponse{}, err
+		}
+		answer, err := a.complete(ctx, messages, request.Kind, request.AllowCode)
 		if err != nil {
 			return AssistantResponse{}, err
 		}
@@ -235,9 +269,13 @@ func (a *Assistant) ReplyChecked(ctx context.Context, request AssistantRequest, 
 			}
 			arguments = []byte(text)
 		}
+		if err := notify("validating"); err != nil {
+			return AssistantResponse{}, err
+		}
 		var proposed struct {
 			AssistantResponse
-			Edits *assistantEdits `json:"edits,omitempty"`
+			Edits *assistantEdits     `json:"edits,omitempty"`
+			Code  []assistantCodeEdit `json:"code,omitempty"`
 		}
 		failureCode := "invalid_response"
 		err = assistantDecode(arguments, &proposed)
@@ -250,8 +288,22 @@ func (a *Assistant) ReplyChecked(ctx context.Context, request AssistantRequest, 
 		if err == nil && proposed.Edits != nil && (!a.strictSchema || len(proposed.Document) != 0) {
 			err = errors.New("return either edits or a document, not both; edits require the strict provider schema")
 		}
-		if err == nil && proposed.Action != "" && (proposed.Action != "coordinate" || request.Kind != "workflow" || len(proposed.Document) != 0 || proposed.Edits != nil) {
-			err = errors.New("action must be coordinate, for a workflow, without a document; ask the user before converting")
+		if err == nil && proposed.Action != "" &&
+			((proposed.Action != "coordinate" && proposed.Action != "code") ||
+				(proposed.Action == "coordinate" && request.Kind != "workflow") ||
+				len(proposed.Document) != 0 || proposed.Edits != nil || len(proposed.Code) != 0 || request.AllowCode) {
+			err = errors.New("offer coordinate for a workflow or code without any document or edits; wait for the user's explicit choice")
+		}
+		if err == nil && request.AllowCode && (len(proposed.Document) != 0 || proposed.Edits != nil) {
+			err = errors.New("Go mode replaces functions through code only; the saved visual graph must remain unchanged")
+		}
+		if err == nil && len(proposed.Code) != 0 {
+			if !request.AllowCode || proposed.Edits != nil || len(proposed.Document) != 0 || proposed.Action != "" {
+				err = errors.New("Go code needs explicit allow_code consent and cannot be combined with visual edits")
+			} else {
+				failureCode = "invalid_graph"
+				proposed.Document, err = assistantApplyCode(request.Kind, editBase, proposed.Code)
+			}
 		}
 		baseDescription := "Edits still target the current document in the user request."
 		completeRepair := false
@@ -261,9 +313,12 @@ func (a *Assistant) ReplyChecked(ctx context.Context, request AssistantRequest, 
 		}
 		if err == nil && len(proposed.Document) > 0 {
 			failureCode = "invalid_graph"
-			completeRepair = a.strictSchema && proposed.Edits == nil
-			if a.strictSchema && proposed.Edits == nil {
+			completeRepair = a.strictSchema && proposed.Edits == nil && !request.AllowCode
+			if a.strictSchema && proposed.Edits == nil && !request.AllowCode {
 				proposed.Document, err = assistantDecodeWireDocument(request.Kind, proposed.Document)
+			}
+			if err == nil && !request.AllowCode && assistantHasGoCode(request.Kind, proposed.Document) {
+				err = errors.New("Go code requires an explicit code offer and allow_code consent")
 			}
 			if err == nil {
 				// Retain the proposed source even when semantic validation fails, so
@@ -271,13 +326,22 @@ func (a *Assistant) ReplyChecked(ctx context.Context, request AssistantRequest, 
 				editBase = proposed.Document
 				baseDescription = "Edits now target the rejected proposal above, including its earlier edits, not the original user document."
 				proposed.Document, err = assistantValidateDocument(request.Kind, proposed.Document)
-				if err == nil {
+				if err == nil && !request.AllowCode {
 					err = assistantValidateReachability(request.Kind, request.Document, proposed.Document)
+				}
+				if err == nil && !request.AllowCode {
+					err = assistantValidatePresentation(request.Kind, proposed.Document)
 				}
 				if err == nil {
 					completeRepair = false // A compiler-only correction can stay incremental.
 				}
-				if err == nil && check != nil && assistantHasCustomCode(request.Kind, proposed.Document) {
+				if err == nil && request.AllowCode && check == nil {
+					return AssistantResponse{}, assistantError("provider_unavailable", 0)
+				}
+				if err == nil && check != nil && (assistantHasCustomCode(request.Kind, proposed.Document) || assistantHasGoCode(request.Kind, proposed.Document)) {
+					if observeErr := notify("compiling"); observeErr != nil {
+						return AssistantResponse{}, observeErr
+					}
 					diagnostic, checkErr := check(ctx, request.Kind, proposed.Document)
 					if ctx.Err() != nil {
 						return AssistantResponse{}, assistantContextError(ctx)
@@ -303,7 +367,9 @@ func (a *Assistant) ReplyChecked(ctx context.Context, request AssistantRequest, 
 		answer.Role = "assistant"
 		answer.Content = ""
 		instruction := "Return a corrected complete document."
-		if a.strictSchema {
+		if request.AllowCode {
+			instruction = "Return corrected complete function replacements only for failing programs in code; replacements for other programs are retained from the rejected proposal and saved blocks are unchanged."
+		} else if a.strictSchema {
 			instruction = baseDescription + " Return edits for the failing parts, or a corrected complete document."
 			if completeRepair {
 				instruction = "Return a corrected complete compact document with edits null. Preserve all requested measurements and report actions; repair their bindings and control paths instead of deleting them."
@@ -336,13 +402,13 @@ func assistantHasCustomCode(kind string, document json.RawMessage) bool {
 	return false
 }
 
-func (a *Assistant) complete(ctx context.Context, messages []assistantModelMessage, kind string) (assistantModelMessage, error) {
+func (a *Assistant) complete(ctx context.Context, messages []assistantModelMessage, kind string, allowCode bool) (assistantModelMessage, error) {
 	var empty assistantModelMessage
 	tool := map[string]any{"type": "function", "function": map[string]any{
 		"name": "propose_document", "description": "Propose one complete editable document of the same kind, ask for clarification, or offer to convert a workflow to a coordinated experiment.",
 		"parameters": map[string]any{"type": "object", "properties": map[string]any{
 			"message": map[string]any{"type": "string"}, "document": map[string]any{"type": "object"},
-			"action": map[string]any{"type": "string", "enum": []string{"coordinate"}, "description": "Offer to convert a workflow to a coordinated experiment. Omit document; the user must accept first."},
+			"action": map[string]any{"type": "string", "enum": []string{"coordinate", "code"}, "description": "Offer coordinated or Go authoring without a document; the user must accept first."},
 		}, "required": []string{"message"}, "additionalProperties": false},
 	}}
 	if a.strictSchema {
@@ -350,6 +416,11 @@ func (a *Assistant) complete(ctx context.Context, messages []assistantModelMessa
 		function["description"] = "Propose compact edits or one complete editable document of the same kind, ask for clarification, or offer to convert a workflow to a coordinated experiment."
 		function["strict"] = true
 		function["parameters"] = assistantDocumentSchema(kind)
+	}
+	if allowCode {
+		function := tool["function"].(map[string]any)
+		function["parameters"] = assistantCodeSchema()
+		function["description"] = "Propose complete function replacements for the explicitly selected Go program, preserving its saved visual source."
 	}
 	payload := map[string]any{"model": a.model, "messages": messages, "tools": []any{tool}, "tool_choice": "auto", "stream": false, a.tokenLimitField: 16384}
 	if a.strictSchema {
@@ -424,7 +495,7 @@ func assistantValidateDocument(kind string, data json.RawMessage) (json.RawMessa
 			return nil, err
 		}
 		ds := workflow.Validate(document)
-		if len(ds) == 0 {
+		if len(ds) == 0 && document.GoCode == nil {
 			ds = workflow.ValidateOutputAvailability(document)
 		}
 		if len(ds) != 0 {
@@ -448,6 +519,9 @@ func assistantValidateDocument(kind string, data json.RawMessage) (json.RawMessa
 		}
 		var availability []workflow.ExperimentDiagnostic
 		for _, participant := range document.Participants {
+			if participant.Workflow.GoCode != nil {
+				continue
+			}
 			for _, diagnostic := range workflow.ValidateOutputAvailability(participant.Workflow) {
 				availability = append(availability, workflow.ExperimentDiagnostic{Participant: participant.ID, Diagnostic: diagnostic})
 			}
@@ -524,7 +598,7 @@ Example for requested independent resolver comparisons: handle resolver A, then 
 
 5. Use simple defaults. Use catalog defaults for optional inputs. For resolving a supplied web hostname then connecting, default to one IPv4 A query and TCP 443. Cloudflare DNS is 1.1.1.1:53; Google DNS is 8.8.8.8:53. Select the first IPv4 address only after ok, rcode NOERROR, not truncated and nonempty addresses; do not add all-address loops unless requested. State meaningful defaults briefly. Executor selection and listener permissions are launch choices; do not ask about them while drafting.
 
-6. Use small custom processing actions when they replace many elementary field/formatting blocks. Give each a clear label, short description, typed inputs/outputs and visible code; define it in every workflow that uses it. Code is a Go FUNCTION BODY for func(inputs map[string]any) (map[string]any,error), not a declaration. Only fmt, json, os, guest, debuglet, time, strings and math packages are available; no imports. JSON arrays arrive as []any. Helpers only transform explicit inputs: never hide network I/O or an entire experiment inside them.
+6. Use small custom processing actions when they replace many elementary field/formatting blocks. Give each a clear label, short description, typed inputs/outputs and visible code; define it in every workflow that uses it. Code is a Go FUNCTION BODY for func(inputs map[string]any) (map[string]any,error), not a declaration. Only fmt, json, os, guest, debuglet, time, strings and math packages are available; no imports. JSON arrays arrive as []any. Prefer helpers that only transform explicit inputs. If a genuinely missing operation needs custom network I/O, make it a clearly named, described custom action with typed inputs/outputs and bounded runtime; never disguise it as processing or hide an entire experiment inside one block. If tightly coupled sockets/state/concurrency would be clearer in Go functions, explain the missing capability and offer action:"code" with no document. Do not switch to code because the graph is large; grouping is for size. Wait for allow_code:true before returning any Go override.
 Worked example: tcp_connect actions a and b -> custom comparison -> report_table. Both checks execute before comparison. Data connections provide a.ok/b.ok and a.duration_ms/b.duration_ms to helper inputs a_ok:boolean,b_ok:boolean,a_ms:number,b_ms:number; rows:any feeds the table. A helper body is:
 aOK,_:=inputs["a_ok"].(bool); bOK,_:=inputs["b_ok"].(bool)
 row:=map[string]any{"a_ms":nil,"b_ms":nil,"difference_ms":nil}
@@ -539,7 +613,7 @@ This is four actions with independent failed values retained. Adapt the pattern 
 
 9. Respect SCION scope. Use explicit SCION UDP blocks only. Discover paths to a complete ISD-AS,IP:port endpoint, select an opaque path ID, then exchange on it. Preserve failure if that path disappears; never silently substitute another. path_id identifies the outgoing path, not its return path. A coordinated receiver publishes scion_listener_address through the TCP control channel before discovery; never invent a listener/echo service. Use base64 for exact payload bytes and correlate replies. SCION blocks do not supply SCION TCP/HTTP or TESLA attribution.
 
-10. Present readable stages. For complex new workflows, group related preparation or reporting into named expandable stages while keeping network/control/message structure inspectable. Each group references 2–128 existing nodes in the same workflow, each node in at most one group; groups do not replace nodes or provide ports. Do not group a simple graph or rewrite groups for a small edit. Preserve existing positions; let the editor arrange new nodes when the response format permits it.`
+10. Show at most TEN cards in EVERY view: root and inside each group. A card is an immediate child group or an ungrouped node at that level. Group related work into meaningful named stages and decompose recursively, without changing nodes or execution. Each group lists ALL contained leaf node IDs, 2–128 existing nodes in the same workflow. A nested group is a strict subset of its parent; siblings are disjoint. Equal memberships and partial overlaps are invalid. Groups are presentation, not executable nodes or ports. Keep simple graphs ungrouped; preserve source, identifiers and positions on edits, adding only grouping needed to satisfy the ten-card budget. Never suppress requested measurements to meet the limit.`
 
 // Native editor serialization is used only by providers without the strict
 // transport schema. Keep it out of compact-response instructions.
