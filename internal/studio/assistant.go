@@ -71,6 +71,7 @@ type Assistant struct {
 	reasoningEffort string
 	tokenLimitField string
 	strictSchema    bool
+	responsesAPI    bool
 	client          *http.Client
 }
 
@@ -96,10 +97,11 @@ func NewAssistant(cfg AssistantConfig) (*Assistant, error) {
 	if strings.EqualFold(u.Hostname(), "api.openai.com") {
 		tokenLimitField = "max_completion_tokens"
 	}
+	responsesAPI := strings.TrimRight(u.Path, "/") == "/v1/responses"
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxResponseHeaderBytes = 16 << 10
 	transport.ResponseHeaderTimeout = AssistantTimeout
-	return &Assistant{endpoint: u.String(), model: cfg.Model, key: key, reasoningEffort: cfg.ReasoningEffort, tokenLimitField: tokenLimitField, strictSchema: strings.EqualFold(u.Hostname(), "api.openai.com"), client: &http.Client{
+	return &Assistant{endpoint: u.String(), model: cfg.Model, key: key, reasoningEffort: cfg.ReasoningEffort, tokenLimitField: tokenLimitField, strictSchema: responsesAPI || strings.EqualFold(u.Hostname(), "api.openai.com"), responsesAPI: responsesAPI, client: &http.Client{
 		Transport: transport, Timeout: AssistantTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}, nil
@@ -180,6 +182,9 @@ type assistantModelMessage struct {
 	ReasoningContent string          `json:"reasoning_content,omitempty"`
 	ToolCalls        []assistantCall `json:"tool_calls,omitempty"`
 	ToolCallID       string          `json:"tool_call_id,omitempty"`
+	// Responses output is replayed only for the bounded repair, never serialized
+	// into browser responses or Chat Completions messages.
+	ResponseItems []json.RawMessage `json:"-"`
 }
 
 // Reply makes at most two provider requests: one proposal and one correction
@@ -438,6 +443,9 @@ func (a *Assistant) complete(ctx context.Context, messages []assistantModelMessa
 		function["parameters"] = assistantCodeSchema()
 		function["description"] = "Propose complete function replacements for the explicitly selected Go program, preserving its saved visual source."
 	}
+	if a.responsesAPI {
+		return a.completeResponses(ctx, messages, tool["function"].(map[string]any))
+	}
 	payload := map[string]any{"model": a.model, "messages": messages, "tools": []any{tool}, "tool_choice": "auto", "stream": false, a.tokenLimitField: 16384}
 	if a.strictSchema {
 		payload["parallel_tool_calls"] = false
@@ -446,41 +454,9 @@ func (a *Assistant) complete(ctx context.Context, messages []assistantModelMessa
 	if a.reasoningEffort != "" {
 		payload["reasoning_effort"] = a.reasoningEffort
 	}
-	data, err := json.Marshal(payload)
+	data, err := a.postAssistant(ctx, payload)
 	if err != nil {
-		return empty, assistantError("invalid_response", 0)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.endpoint, bytes.NewReader(data))
-	if err != nil {
-		return empty, assistantError("provider_unavailable", 0)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+a.key)
-	response, err := a.client.Do(req)
-	if err != nil {
-		if ctx.Err() != nil {
-			return empty, assistantContextError(ctx)
-		}
-		return empty, assistantError("provider_unavailable", 0)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		code := "provider_unavailable"
-		if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
-			code = "provider_auth"
-		}
-		if response.StatusCode == http.StatusTooManyRequests {
-			code = "provider_rate_limit"
-		}
-		return empty, assistantError(code, response.StatusCode)
-	}
-	data, err = io.ReadAll(io.LimitReader(response.Body, assistantResponseLimit+1))
-	if ctx.Err() != nil {
-		return empty, assistantContextError(ctx)
-	}
-	if err != nil || len(data) > assistantResponseLimit {
-		return empty, assistantError("invalid_response", 0)
+		return empty, err
 	}
 	var result struct {
 		Choices []struct {
@@ -498,6 +474,48 @@ func (a *Assistant) complete(ctx context.Context, messages []assistantModelMessa
 		return empty, assistantError("invalid_response", 0)
 	}
 	return result.Choices[0].Message, nil
+}
+
+// postAssistant applies the same deadlines, response limits and sanitized HTTP
+// errors to both provider protocols.
+func (a *Assistant) postAssistant(ctx context.Context, payload map[string]any) ([]byte, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, assistantError("invalid_response", 0)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.endpoint, bytes.NewReader(data))
+	if err != nil {
+		return nil, assistantError("provider_unavailable", 0)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+a.key)
+	response, err := a.client.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, assistantContextError(ctx)
+		}
+		return nil, assistantError("provider_unavailable", 0)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		code := "provider_unavailable"
+		if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+			code = "provider_auth"
+		}
+		if response.StatusCode == http.StatusTooManyRequests {
+			code = "provider_rate_limit"
+		}
+		return nil, assistantError(code, response.StatusCode)
+	}
+	data, err = io.ReadAll(io.LimitReader(response.Body, assistantResponseLimit+1))
+	if ctx.Err() != nil {
+		return nil, assistantContextError(ctx)
+	}
+	if err != nil || len(data) > assistantResponseLimit {
+		return nil, assistantError("invalid_response", 0)
+	}
+	return data, nil
 }
 
 func assistantValidateDocument(kind string, data json.RawMessage) (json.RawMessage, error) {
