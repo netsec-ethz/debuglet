@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -24,6 +25,17 @@ func responsesFixture(t *testing.T, handler http.HandlerFunc) *Assistant {
 		t.Fatal(err)
 	}
 	return client
+}
+
+func responsesStreamReply(w http.ResponseWriter, response any) {
+	data, _ := json.Marshal(response)
+	var state struct {
+		Status string `json:"status"`
+	}
+	_ = json.Unmarshal(data, &state)
+	w.Header().Set("Content-Type", "text/event-stream")
+	event, _ := json.Marshal(map[string]any{"type": "response." + state.Status, "response": json.RawMessage(data)})
+	_, _ = fmt.Fprintf(w, "data: %s\n\n", event)
 }
 
 func responsesOutput(t *testing.T, proposal any) []json.RawMessage {
@@ -50,10 +62,10 @@ func TestAssistantResponsesRequestAndProposal(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body["store"] != false || body["stream"] != false || body["parallel_tool_calls"] != false || body["max_output_tokens"] != float64(16384) {
+		if body["store"] != false || body["stream"] != true || body["parallel_tool_calls"] != false || body["max_output_tokens"] != float64(16384) {
 			t.Error("missing bounded stateless Responses settings")
 		}
-		if body["reasoning"].(map[string]any)["effort"] != "high" || !reflect.DeepEqual(body["include"], []any{"reasoning.encrypted_content"}) {
+		if body["reasoning"].(map[string]any)["effort"] != "high" || body["reasoning"].(map[string]any)["summary"] != "auto" || !reflect.DeepEqual(body["include"], []any{"reasoning.encrypted_content"}) {
 			t.Error("reasoning settings missing")
 		}
 		for _, name := range []string{"messages", "reasoning_effort", "max_tokens", "max_completion_tokens", "previous_response_id"} {
@@ -78,7 +90,7 @@ func TestAssistantResponsesRequestAndProposal(t *testing.T) {
 		if len(input) != 2 || input[0].(map[string]any)["role"] != "system" || input[1].(map[string]any)["role"] != "user" {
 			t.Error("prompt messages were not preserved")
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": "completed", "output": responsesOutput(t, map[string]any{"message": "Ready", "action": "", "document": assistantWireFixture(t, wf)})})
+		responsesStreamReply(w, map[string]any{"status": "completed", "output": responsesOutput(t, map[string]any{"message": "Ready", "action": "", "document": assistantWireFixture(t, wf)})})
 	})
 	result, err := client.Reply(t.Context(), assistantInput(t, "workflow", sampleWorkflow()))
 	if err != nil {
@@ -124,10 +136,10 @@ func TestAssistantResponsesRepairReplaysReasoningAndCall(t *testing.T) {
 			if feedback["type"] != "function_call_output" || feedback["call_id"] != "call_result_id" || !strings.Contains(feedback["output"].(string), "Diagnostics:") {
 				t.Error("repair did not target the function call with validation feedback")
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"status": "completed", "output": responsesOutput(t, map[string]any{"message": "Fixed", "action": "", "document": assistantWireFixture(t, wf)})})
+			responsesStreamReply(w, map[string]any{"status": "completed", "output": responsesOutput(t, map[string]any{"message": "Fixed", "action": "", "document": assistantWireFixture(t, wf)})})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": "completed", "output": first})
+		responsesStreamReply(w, map[string]any{"status": "completed", "output": first})
 	})
 	result, err := client.Reply(t.Context(), assistantInput(t, "workflow", wf))
 	if err != nil || len(result.Document) == 0 || calls.Load() != 2 {
@@ -150,7 +162,7 @@ func TestAssistantResponsesRejectsIncompleteAndInvalidOutputs(t *testing.T) {
 		{"incomplete_call", `{"status":"completed","output":[{"type":"function_call","name":"propose_document","call_id":"c","status":"in_progress","arguments":"{}"}]}`, "invalid_response"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			client := responsesFixture(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(tc.response)) })
+			client := responsesFixture(t, func(w http.ResponseWriter, _ *http.Request) { responsesStreamReply(w, json.RawMessage(tc.response)) })
 			result, err := client.Reply(t.Context(), assistantInput(t, "workflow", sampleWorkflow()))
 			var failure *AssistantError
 			if !errors.As(err, &failure) || failure.Code != tc.code || len(result.Document) != 0 || strings.Contains(err.Error(), "private-provider-error") {

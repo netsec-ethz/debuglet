@@ -188,7 +188,7 @@ unavailable compiler leaves the draft unchanged. Built-in-only drafts do not
 need the compiler at this stage. Compilation proves neither runtime success nor
 network reachability. The check does not retain a bundle, so Build compiles the
 accepted source again. A rejected graph gets at most one correction
-within the same 90-second deadline; truncated output is rejected without another
+within the same three-minute deadline; truncated output is rejected without another
 provider call. For small changes, the model can return only changed nodes and
 connections. The dispatcher applies these edits to the supplied snapshot and
 validates the complete result before returning ordinary editor JSON. Structural
@@ -222,7 +222,7 @@ reasoning_effort = "high"
 
 The `/v1/responses` endpoint selects the Responses API with strict function
 calling and `store: false`. It supports reasoning with tools; higher reasoning
-effort can take longer. Other endpoint paths retain the Chat Completions protocol
+effort can take several minutes within the shared three-minute request deadline. Other endpoint paths retain the Chat Completions protocol
 for compatible providers. GPT-6 Sol requires `reasoning_effort = "none"` when
 using `/v1/chat/completions`. See the
 [OpenAI model documentation](https://developers.openai.com/api/docs/models/gpt-6-sol).
@@ -246,6 +246,9 @@ Provider `reasoning_content` or opaque Responses reasoning items, when present,
 are retained only for the single validation-repair call; they are not returned
 to the browser or logged. Responses reasoning items are requested in encrypted
 form and replayed with the tool result, without relying on stored response IDs.
+The Responses connection streams real acceptance and function-output activity.
+Only the provider's optional public reasoning summaries are shown in the editor;
+raw and encrypted reasoning stay private. No partial proposal is applied.
 
 The Ansible equivalents are `dispatcher_assistant_enabled`,
 `dispatcher_assistant_endpoint`, `dispatcher_assistant_model` and
@@ -254,9 +257,9 @@ The Ansible equivalents are `dispatcher_assistant_enabled`,
 is `dispatcher_assistant_reasoning_effort` (default empty). Provision the private key file separately,
 then apply the normal configuration update and restart the dispatcher. The
 ordinary disabled deployment requires no key or additional service. Configure
-the reverse proxy for at least 120 seconds on `/api/studio/assistant` and
+the reverse proxy for at least 210 seconds on `/api/studio/assistant` and
 `/api/studio/assistant/stream` to allow
-the backend's 90-second deadline and response delivery.
+the backend's three-minute deadline and response delivery.
 
 The model receives the graph, including any custom source, the prompt and the
 conversation history explicitly included by the client. It receives no session

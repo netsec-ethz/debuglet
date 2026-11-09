@@ -74,7 +74,7 @@ limited to 12 messages, 8,192 bytes each and 16,384 bytes combined. The complete
 encoded request is at most 4 MiB + 64 KiB. There is at most one active request per
 account and four globally, separately from compiler capacity. Existing account
 admission and a global six requests/minute limit with burst four apply. Excess
-work returns `429` with `Retry-After`. Each request has a 90-second deadline,
+work returns `429` with `Retry-After`. Each request has a three-minute deadline,
 including at most one repair attempt; each provider call allows 16,384 output
 tokens and a 512 KiB response. Replies contain at most 8,192 message bytes and a
 256 KiB document. Disabled service returns `503`, provider failures `502`, invalid
@@ -86,7 +86,14 @@ invalid graphs, and timeout/cancellation. No raw provider error is returned.
 `POST /studio/assistant/stream` accepts the same request and permissions. Its
 `text/event-stream` response contains JSON `data` events: `{type:"stage",stage}`
 for actual `generating`, `validating`, `compiling` or `repairing` boundaries, then
-one `{type:"result",result}` or `{type:"error",status,error}` terminal event. The
+one `{type:"result",result}` or `{type:"error",status,error}` terminal event.
+Responses providers also emit `{type:"provider_progress",phase}` with `accepted`,
+`reasoning` or `output`. Reasoning events contain only provider-supplied
+`summary_delta` text, bounded to 8 KiB per attempt; raw reasoning is never exposed.
+Output events contain cumulative `output_bytes` for received function arguments,
+not a percentage or a partial graph. Progress resets on `generating` and `repairing`.
+Providers may omit summaries or remain silent while reasoning; no progress is
+invented during those intervals. The
 result is the ordinary assistant response and error uses the safe API error
 envelope. Admission errors retain their normal HTTP status before streaming
 starts. Disconnecting cancels the request. JSON and streaming calls share capacity

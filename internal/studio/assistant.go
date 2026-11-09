@@ -22,7 +22,7 @@ import (
 
 const (
 	AssistantRequestLimit  = (4 << 20) + (64 << 10)
-	AssistantTimeout       = 90 * time.Second
+	AssistantTimeout       = 3 * time.Minute
 	assistantDocumentLimit = 256 << 10
 	assistantResponseLimit = 512 << 10
 	assistantTextLimit     = 8192
@@ -207,9 +207,28 @@ func (a *Assistant) ReplyChecked(ctx context.Context, request AssistantRequest, 
 // ReplyObserved reports actual processing boundaries. An observer error stops
 // the request, so a disconnected client does not keep generating a proposal.
 func (a *Assistant) ReplyObserved(ctx context.Context, request AssistantRequest, check AssistantCompileCheck, observe func(string) error) (AssistantResponse, error) {
+	return a.ReplyProgress(ctx, request, check, func(progress AssistantProgress) error {
+		if observe != nil && progress.Stage != "" {
+			return observe(progress.Stage)
+		}
+		return nil
+	})
+}
+
+// AssistantProgress carries processing boundaries or allowlisted provider facts.
+// SummaryDelta is a provider-supplied summary, never raw reasoning or source.
+type AssistantProgress struct {
+	Stage        string
+	Phase        string
+	SummaryDelta string
+	OutputBytes  int
+}
+
+// ReplyProgress adds optional provider progress without exposing a partial graph.
+func (a *Assistant) ReplyProgress(ctx context.Context, request AssistantRequest, check AssistantCompileCheck, observe func(AssistantProgress) error) (AssistantResponse, error) {
 	notify := func(stage string) error {
 		if observe != nil {
-			return observe(stage)
+			return observe(AssistantProgress{Stage: stage})
 		}
 		return nil
 	}
@@ -251,7 +270,7 @@ func (a *Assistant) ReplyObserved(ctx context.Context, request AssistantRequest,
 		if err := notify(stage); err != nil {
 			return AssistantResponse{}, err
 		}
-		answer, err := a.complete(ctx, messages, request.Kind, request.AllowCode)
+		answer, err := a.complete(ctx, messages, request.Kind, request.AllowCode, observe)
 		if err != nil {
 			return AssistantResponse{}, err
 		}
@@ -423,7 +442,7 @@ func assistantHasCustomCode(kind string, document json.RawMessage) bool {
 	return false
 }
 
-func (a *Assistant) complete(ctx context.Context, messages []assistantModelMessage, kind string, allowCode bool) (assistantModelMessage, error) {
+func (a *Assistant) complete(ctx context.Context, messages []assistantModelMessage, kind string, allowCode bool, observe func(AssistantProgress) error) (assistantModelMessage, error) {
 	var empty assistantModelMessage
 	tool := map[string]any{"type": "function", "function": map[string]any{
 		"name": "propose_document", "description": "Propose one complete editable document of the same kind, ask for clarification, or offer to convert a workflow to a coordinated experiment.",
@@ -444,7 +463,7 @@ func (a *Assistant) complete(ctx context.Context, messages []assistantModelMessa
 		function["description"] = "Propose complete function replacements for the explicitly selected Go program, preserving its saved visual source."
 	}
 	if a.responsesAPI {
-		return a.completeResponses(ctx, messages, tool["function"].(map[string]any))
+		return a.completeResponses(ctx, messages, tool["function"].(map[string]any), observe)
 	}
 	payload := map[string]any{"model": a.model, "messages": messages, "tools": []any{tool}, "tool_choice": "auto", "stream": false, a.tokenLimitField: 16384}
 	if a.strictSchema {
@@ -479,6 +498,22 @@ func (a *Assistant) complete(ctx context.Context, messages []assistantModelMessa
 // postAssistant applies the same deadlines, response limits and sanitized HTTP
 // errors to both provider protocols.
 func (a *Assistant) postAssistant(ctx context.Context, payload map[string]any) ([]byte, error) {
+	response, err := a.requestAssistant(ctx, payload)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(response.Body, assistantResponseLimit+1))
+	if ctx.Err() != nil {
+		return nil, assistantContextError(ctx)
+	}
+	if err != nil || len(data) > assistantResponseLimit {
+		return nil, assistantError("invalid_response", 0)
+	}
+	return data, nil
+}
+
+func (a *Assistant) requestAssistant(ctx context.Context, payload map[string]any) (*http.Response, error) {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return nil, assistantError("invalid_response", 0)
@@ -489,6 +524,9 @@ func (a *Assistant) postAssistant(ctx context.Context, payload map[string]any) (
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	if payload["stream"] == true {
+		req.Header.Set("Accept", "text/event-stream")
+	}
 	req.Header.Set("Authorization", "Bearer "+a.key)
 	response, err := a.client.Do(req)
 	if err != nil {
@@ -497,8 +535,8 @@ func (a *Assistant) postAssistant(ctx context.Context, payload map[string]any) (
 		}
 		return nil, assistantError("provider_unavailable", 0)
 	}
-	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		response.Body.Close()
 		code := "provider_unavailable"
 		if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
 			code = "provider_auth"
@@ -508,14 +546,7 @@ func (a *Assistant) postAssistant(ctx context.Context, payload map[string]any) (
 		}
 		return nil, assistantError(code, response.StatusCode)
 	}
-	data, err = io.ReadAll(io.LimitReader(response.Body, assistantResponseLimit+1))
-	if ctx.Err() != nil {
-		return nil, assistantContextError(ctx)
-	}
-	if err != nil || len(data) > assistantResponseLimit {
-		return nil, assistantError("invalid_response", 0)
-	}
-	return data, nil
+	return response, nil
 }
 
 func assistantValidateDocument(kind string, data json.RawMessage) (json.RawMessage, error) {

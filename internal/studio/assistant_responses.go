@@ -10,7 +10,7 @@ import (
 
 // completeResponses adapts the provider protocol only. The existing proposal
 // validator, compiler check and single correction still decide what is accepted.
-func (a *Assistant) completeResponses(ctx context.Context, messages []assistantModelMessage, function map[string]any) (assistantModelMessage, error) {
+func (a *Assistant) completeResponses(ctx context.Context, messages []assistantModelMessage, function map[string]any, observe func(AssistantProgress) error) (assistantModelMessage, error) {
 	var empty assistantModelMessage
 	input := make([]any, 0, len(messages))
 	for _, message := range messages {
@@ -35,15 +35,27 @@ func (a *Assistant) completeResponses(ctx context.Context, messages []assistantM
 		"model": a.model, "input": input, "tools": []any{tool},
 		"tool_choice":         map[string]any{"type": "function", "name": "propose_document"},
 		"parallel_tool_calls": false, "max_output_tokens": 16384,
-		"store": false, "stream": false, "include": []string{"reasoning.encrypted_content"},
+		"store": false, "stream": true, "include": []string{"reasoning.encrypted_content"},
 	}
+	reasoning := map[string]any{"summary": "auto"}
 	if a.reasoningEffort != "" {
-		payload["reasoning"] = map[string]any{"effort": a.reasoningEffort}
+		reasoning["effort"] = a.reasoningEffort
 	}
-	data, err := a.postAssistant(ctx, payload)
+	payload["reasoning"] = reasoning
+	response, err := a.requestAssistant(ctx, payload)
 	if err != nil {
 		return empty, err
 	}
+	defer response.Body.Close()
+	data, err := assistantReadResponseStream(ctx, response.Body, observe)
+	if err != nil {
+		return empty, err
+	}
+	return assistantDecodeResponse(data)
+}
+
+func assistantDecodeResponse(data []byte) (assistantModelMessage, error) {
+	var empty assistantModelMessage
 	var response struct {
 		Status            string `json:"status"`
 		IncompleteDetails struct {

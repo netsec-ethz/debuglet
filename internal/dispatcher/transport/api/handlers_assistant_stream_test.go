@@ -8,13 +8,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/netsec-ethz/debuglet/internal/studio"
 	"github.com/netsec-ethz/debuglet/pkg/workflow"
 )
 
@@ -23,7 +27,7 @@ func assistantStreamEvents(t *testing.T, body []byte) []assistantStreamEvent {
 	contract := oaContract(t)
 	var events []assistantStreamEvent
 	for _, line := range strings.Split(string(body), "\n") {
-		if line == "" {
+		if line == "" || strings.HasPrefix(line, ":") {
 			continue
 		}
 		data, ok := strings.CutPrefix(line, "data: ")
@@ -40,6 +44,44 @@ func assistantStreamEvents(t *testing.T, body []byte) []assistantStreamEvent {
 		events = append(events, event)
 	}
 	return events
+}
+
+func TestAssistantKeepaliveStopsAndJoinsWrites(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	entered, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	stop := startAssistantKeepalive(ctx, time.Millisecond, func() error {
+		calls.Add(1)
+		close(entered)
+		<-release
+		return ctx.Err()
+	})
+	select {
+	case <-entered:
+	case <-time.After(ccRequestBound):
+		t.Fatal("keepalive did not write")
+	}
+	cancel()
+	joined := make(chan struct{})
+	go func() {
+		stop()
+		close(joined)
+	}()
+	select {
+	case <-joined:
+		t.Fatal("keepalive stop returned while a write was still active")
+	default:
+	}
+	close(release)
+	select {
+	case <-joined:
+	case <-time.After(ccRequestBound):
+		t.Fatal("keepalive did not finish after cancellation")
+	}
+	if calls.Load() != 1 {
+		t.Fatal("keepalive wrote again after cancellation")
+	}
 }
 
 func TestAssistantStreamChecksBeforeHeadersAndDoesNotLeakFailures(t *testing.T) {
@@ -97,6 +139,133 @@ func TestAssistantStreamEmitsValidatedResult(t *testing.T) {
 	events := assistantStreamEvents(t, body)
 	if len(events) != 3 || events[0].Stage != "generating" || events[1].Stage != "validating" || events[2].Type != "result" || events[2].Result == nil || len(events[2].Result.Document) == 0 {
 		t.Fatalf("result events: %+v", events)
+	}
+}
+
+func TestAssistantStreamForwardsProviderProgressBeforeCheckedResult(t *testing.T) {
+	const summary = "I am arranging the HTTP check and its result."
+	proposal := communityTestJSON(t, map[string]any{
+		"message": "Ready to review.", "action": "", "edits": nil,
+		"document": map[string]any{
+			"version": 1, "name": "Shared measurement", "entry": "request",
+			"nodes": []any{map[string]any{"id": "request", "block": "http", "inputs_json": `{"url":"https://example.test/"}`, "position": nil}},
+			"edges": []any{}, "groups": []any{}, "custom_blocks": []any{},
+		},
+	})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	finish := func() { releaseOnce.Do(func() { close(release) }) }
+	defer finish()
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		if r.URL.Path != "/v1/responses" || request["stream"] != true || request["store"] != false {
+			t.Error("progress request did not use a stateless Responses stream")
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		emit := func(event map[string]any) {
+			data, err := json.Marshal(event)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
+			w.(http.Flusher).Flush()
+		}
+		reasoning := map[string]any{"type": "reasoning", "id": "rs_private", "summary": []any{}, "encrypted_content": "encrypted-provider-state"}
+		call := map[string]any{"type": "function_call", "id": "fc_proposal", "call_id": "call_proposal", "name": "propose_document", "status": "completed", "arguments": string(proposal)}
+		emit(map[string]any{"type": "response.created", "response": map[string]any{"id": "resp_fixture", "status": "in_progress"}})
+		emit(map[string]any{"type": "response.output_item.added", "output_index": 0, "item": reasoning})
+		emit(map[string]any{"type": "response.reasoning_text.delta", "item_id": "rs_private", "output_index": 0, "delta": "raw-provider-thought"})
+		emit(map[string]any{"type": "response.reasoning_summary_text.delta", "item_id": "rs_private", "output_index": 0, "summary_index": 0, "delta": summary})
+		emit(map[string]any{"type": "response.function_call_arguments.delta", "item_id": "fc_proposal", "output_index": 1, "delta": string(proposal)})
+		select {
+		case <-release:
+			emit(map[string]any{"type": "response.completed", "response": map[string]any{"status": "completed", "output": []any{reasoning, call}}})
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(provider.Close)
+	client, err := studio.NewAssistant(studio.AssistantConfig{Endpoint: provider.URL + "/v1/responses", Model: "test-model", APIKey: "provider-test-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := ccNewFixtureWith(t, Assistant(client))
+	ctx, cancel := context.WithTimeout(f.ctx, ccRequestBound)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, "POST", f.root.URL+"/studio/assistant/stream", bytes.NewReader(assistantBody(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	for name, value := range studioBrowser(t, f) {
+		request.Header.Set(name, value)
+	}
+	response, err := f.root.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK || response.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("unexpected stream response: %d", response.StatusCode)
+	}
+	reader := bufio.NewReader(response.Body)
+	var body bytes.Buffer
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("provider progress was not flushed before completion: %v", err)
+		}
+		body.WriteString(line)
+		data, ok := strings.CutPrefix(line, "data: ")
+		if !ok {
+			continue
+		}
+		var event assistantStreamEvent
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Type == "result" || event.Type == "error" {
+			t.Fatal("stream completed before the provider did")
+		}
+		if event.Type == "provider_progress" && event.Phase == "output" && event.OutputBytes > 0 {
+			break
+		}
+	}
+	finish()
+	if _, err := io.Copy(&body, reader); err != nil {
+		t.Fatal(err)
+	}
+	events := assistantStreamEvents(t, body.Bytes())
+	var phases []string
+	var summaries strings.Builder
+	outputBytes := 0
+	for _, event := range events {
+		if event.Type == "provider_progress" {
+			if len(phases) == 0 || phases[len(phases)-1] != event.Phase {
+				phases = append(phases, event.Phase)
+			}
+			summaries.WriteString(event.SummaryDelta)
+			if event.OutputBytes > outputBytes {
+				outputBytes = event.OutputBytes
+			}
+		}
+	}
+	if strings.Join(phases, ",") != "accepted,reasoning,output" || summaries.String() != summary || outputBytes != len(proposal) {
+		t.Fatalf("progress changed: phases=%v summary=%q bytes=%d", phases, summaries.String(), outputBytes)
+	}
+	last := events[len(events)-1]
+	if events[0].Stage != "generating" || events[len(events)-2].Stage != "validating" || last.Type != "result" || last.Result == nil || len(last.Result.Document) == 0 {
+		t.Fatalf("missing checked terminal result: %+v", events)
+	}
+	for _, private := range []string{"provider-test-secret", "encrypted-provider-state", "raw-provider-thought", "inputs_json", "function_call_arguments"} {
+		if bytes.Contains(body.Bytes(), []byte(private)) {
+			t.Fatalf("stream exposed private or partial provider data: %s", private)
+		}
 	}
 }
 
