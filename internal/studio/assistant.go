@@ -254,12 +254,14 @@ func (a *Assistant) ReplyChecked(ctx context.Context, request AssistantRequest, 
 			err = errors.New("action must be coordinate, for a workflow, without a document; ask the user before converting")
 		}
 		baseDescription := "Edits still target the current document in the user request."
+		completeRepair := false
 		if err == nil && proposed.Edits != nil {
 			failureCode = "invalid_graph"
 			proposed.Document, err = assistantApplyEdits(request.Kind, editBase, *proposed.Edits)
 		}
 		if err == nil && len(proposed.Document) > 0 {
 			failureCode = "invalid_graph"
+			completeRepair = a.strictSchema && proposed.Edits == nil
 			if a.strictSchema && proposed.Edits == nil {
 				proposed.Document, err = assistantDecodeWireDocument(request.Kind, proposed.Document)
 			}
@@ -271,6 +273,9 @@ func (a *Assistant) ReplyChecked(ctx context.Context, request AssistantRequest, 
 				proposed.Document, err = assistantValidateDocument(request.Kind, proposed.Document)
 				if err == nil {
 					err = assistantValidateReachability(request.Kind, request.Document, proposed.Document)
+				}
+				if err == nil {
+					completeRepair = false // A compiler-only correction can stay incremental.
 				}
 				if err == nil && check != nil && assistantHasCustomCode(request.Kind, proposed.Document) {
 					diagnostic, checkErr := check(ctx, request.Kind, proposed.Document)
@@ -300,6 +305,9 @@ func (a *Assistant) ReplyChecked(ctx context.Context, request AssistantRequest, 
 		instruction := "Return a corrected complete document."
 		if a.strictSchema {
 			instruction = baseDescription + " Return edits for the failing parts, or a corrected complete document."
+			if completeRepair {
+				instruction = "Return a corrected complete compact document with edits null. Preserve all requested measurements and report actions; repair their bindings and control paths instead of deleting them."
+			}
 		}
 		messages = append(messages, answer, assistantModelMessage{Role: "tool", ToolCallID: call.ID,
 			Content: "The edit was not applied. " + instruction + " Diagnostics: " + assistantFeedback(err)})

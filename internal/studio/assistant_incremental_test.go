@@ -34,8 +34,8 @@ func TestAssistantCorrectionEditsRejectedCandidate(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(body.Messages[len(body.Messages)-1].Content, "target the rejected proposal") {
-			t.Error("correction base is ambiguous")
+		if !strings.Contains(body.Messages[len(body.Messages)-1].Content, "corrected complete compact document") {
+			t.Error("structural correction does not request a complete proposal")
 		}
 		entry := "pause"
 		assistantToolReply(w, map[string]any{"message": "Corrected entry", "edits": assistantEdits{Workflows: []assistantWorkflowEdits{{Entry: &entry}}}})

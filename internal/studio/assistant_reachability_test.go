@@ -113,7 +113,7 @@ func TestAssistantRepairsDisconnectedActions(t *testing.T) {
 						t.Fatal(err)
 					}
 					feedback := body.Messages[len(body.Messages)-1].Content
-					if !strings.Contains(feedback, "compare") || !strings.Contains(feedback, "table") || !strings.Contains(feedback, "Edits now target the rejected proposal") || kind == "experiment" && !strings.Contains(feedback, `"participant":"A"`) {
+					if !strings.Contains(feedback, "compare") || !strings.Contains(feedback, "table") || !strings.Contains(feedback, "corrected complete compact document") || kind == "experiment" && !strings.Contains(feedback, `"participant":"A"`) {
 						t.Errorf("missing scoped reachability or repair base: %s", feedback)
 					}
 					participant := ""
