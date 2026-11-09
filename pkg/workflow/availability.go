@@ -14,18 +14,16 @@ import (
 // blocks. Boolean action outputs are independent unless the same output is
 // tested again; relationships hidden in custom Go are not inferred.
 //
-// Loops, manual Go, unsupported predicates and exhausted exploration are left
-// to the existing validator/runtime. This deliberately incomplete check must
-// not be used as a guarantee that an arbitrary workflow will execute correctly.
+// Each supported control path is checked up to its first loop, including the
+// loop's inputs. Loop bodies and continuations, manual Go, unsupported predicates
+// and exhausted exploration are left to the existing validator/runtime. This
+// deliberately incomplete check is not a guarantee of correct execution.
 func ValidateOutputAvailability(w Workflow) []Diagnostic {
 	if w.GoCode != nil || len(Validate(w)) != 0 {
 		return nil
 	}
 	a := outputAvailability{nodes: map[string]Node{}, catalog: catalogFor(w), data: map[Endpoint]Endpoint{}, control: map[Endpoint]string{}, budget: 4096}
 	for _, n := range w.Nodes {
-		if loopBlock(n.Block) {
-			return nil
-		}
 		a.nodes[n.ID] = n
 	}
 	for _, e := range w.Edges {
@@ -75,6 +73,11 @@ func (a *outputAvailability) visit(id string, ready map[string]bool, facts map[E
 				return // The generated program stops at this failed input.
 			}
 		}
+	}
+	if loopBlock(n.Block) {
+		// Generation evaluates these inputs before entering the loop. Do not
+		// infer which outputs survive its body, or follow its done continuation.
+		return
 	}
 	ready = maps.Clone(ready)
 	ready[id] = true
