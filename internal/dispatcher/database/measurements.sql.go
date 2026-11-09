@@ -13,14 +13,15 @@ import (
 )
 
 const listMeasurements = `-- name: ListMeasurements :many
-SELECT s.id, CAST(s.label AS TEXT) AS label, CAST(s.state AS TEXT) AS state,
+SELECT s.id, CAST(COALESCE(NULLIF(trim(json_extract(source.document, '$.name')), ''), s.label) AS TEXT) AS label, CAST(s.state AS TEXT) AS state,
     CAST(s.children AS INTEGER) AS children, first_run.start_time AS scheduled_start
 FROM measurement_summaries s JOIN debuglets first_run ON first_run.id =
     (SELECT first.id FROM debuglets first WHERE first.transaction_id=s.id ORDER BY first.start_time, first.id LIMIT 1)
+LEFT JOIN measurement_sources source ON source.measurement_id = s.id
 WHERE EXISTS (SELECT 1 FROM debuglets d JOIN debuglet_users du ON du.debuglet_id = d.id
     JOIN users u ON u.id = du.user_id WHERE d.transaction_id = s.id AND u.uuid = ?1)
 AND (?2 = '' OR s.state = ?2)
-AND instr(lower(s.id || ' ' || s.label), lower(?3)) > 0
+AND instr(lower(s.id || ' ' || COALESCE(NULLIF(trim(json_extract(source.document, '$.name')), ''), s.label)), lower(?3)) > 0
 ORDER BY s.sequence DESC LIMIT ?5 OFFSET ?4
 `
 
@@ -78,9 +79,10 @@ func (q *Queries) ListMeasurements(ctx context.Context, arg ListMeasurementsPara
 const measurementCounts = `-- name: MeasurementCounts :many
 SELECT CAST(s.state AS TEXT) AS state, COUNT(*) AS count
 FROM measurement_summaries s
+LEFT JOIN measurement_sources source ON source.measurement_id = s.id
 WHERE EXISTS (SELECT 1 FROM debuglets d JOIN debuglet_users du ON du.debuglet_id = d.id
     JOIN users u ON u.id = du.user_id WHERE d.transaction_id = s.id AND u.uuid = ?1)
-AND instr(lower(s.id || ' ' || s.label), lower(?2)) > 0
+AND instr(lower(s.id || ' ' || COALESCE(NULLIF(trim(json_extract(source.document, '$.name')), ''), s.label)), lower(?2)) > 0
 GROUP BY s.state
 `
 

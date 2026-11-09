@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/daemonlog"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher"
@@ -162,10 +163,16 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 				_, err := h.dispatcher.Payment.RefundUnadmittedTransaction(id, ctx)
 				return err
 			}
+			refundCtx := c.Request().Context()
 			if errors.Is(err, dispatcher.ErrAdmissionCommitted) {
 				refund = h.dispatcher.Payment.RefundTransaction
+				// An accepted batch can finish delivery after its browser leaves.
+				// A genuine delivery failure must settle its refund independently.
+				var cancel context.CancelFunc
+				refundCtx, cancel = context.WithTimeout(context.WithoutCancel(refundCtx), 5*time.Second)
+				defer cancel()
 			}
-			if err2 := refund(transactionId, c.Request().Context()); err2 != nil {
+			if err2 := refund(transactionId, refundCtx); err2 != nil {
 				h.logger.Warn("Failed to refund transaction", zap.String("ID", daemonlog.Identifier(transactionId)))
 				h.logger.Debug("Private request diagnostic", zap.String("ID", daemonlog.Identifier(transactionId)), zap.String("error", requestDiagnostic(c, err2, req.AuthKey)))
 			}

@@ -421,6 +421,10 @@ unused community deposits.
 
 API 1.12 adds account-owned `GET /measurements` and `GET /measurements/{id}`.
 A batch keeps its transaction ID and ordered child run IDs across refreshes.
+Once admission commits, closing or refreshing the browser does not cancel its
+executor uploads. Delivery has a one-minute server deadline; executor session
+loss or dispatcher shutdown still stops it. Use explicit cancellation to stop
+accepted work. Before admission commits, a disconnected request admits nothing.
 Its paginated child list contains lightweight references; each child’s full
 configuration is read separately.
 Listing supports pagination, label/ID search and outcome filters with counts.
