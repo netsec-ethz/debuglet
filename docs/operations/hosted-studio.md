@@ -164,11 +164,15 @@ The normal build and submission actions remain separate. No provider is
 selected or enabled by default. Verify the endpoint and model supplied for your
 provider account before enabling it.
 
-For `api.openai.com`, proposals use a strict graph scaffold and one required
-function call. Built-in block names come from the current catalog; custom nodes
-explicitly reference their workflow's custom definitions. Literal input maps and custom port defaults travel as JSON strings
-inside that scaffold, then are decoded into the ordinary editor format. Other
-compatible endpoints retain the ordinary document tool format. Strict output
+For `api.openai.com`, complete proposals use a compact format and one required
+function call. Each block carries typed input bindings and explicit control
+successors; the server expands these into the ordinary editor's data and control
+wires. Built-in names and input schemas come from the current catalog. Custom
+nodes explicitly reference their workflow's typed definitions and visible Go
+bodies. Arbitrary JSON literals and custom port defaults use encoded JSON strings.
+Small edits retain the existing atomic node-and-edge operations. Neither format
+changes saved experiments or executor behavior. Other compatible endpoints retain
+the ordinary document tool format. Strict output
 constrains the shape; it does not establish correct wiring or measurement
 semantics. Every proposed graph passes validation and Go source generation,
 including every participant in a coordinated experiment. Assistant proposals also
