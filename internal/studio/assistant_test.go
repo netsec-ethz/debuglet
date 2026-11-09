@@ -347,7 +347,7 @@ func TestAssistantCoordinateOfferRequiresConfirmation(t *testing.T) {
 			return
 		}
 		actions := payload.Tools[0].Function.Parameters.Properties["action"].Enum
-		if len(actions) != 1 || actions[0] != "coordinate" {
+		if len(actions) != 2 || actions[0] != "coordinate" || actions[1] != "code" {
 			t.Errorf("provider action choices: %v", actions)
 		}
 		assistantToolReply(w, map[string]any{"message": "Make this a coordinated experiment so the probes can exchange results?", "action": "coordinate"})
@@ -377,7 +377,7 @@ func TestAssistantRejectsInvalidActionsAndAllowsOneCorrection(t *testing.T) {
 				count := calls.Add(1)
 				if count == 2 {
 					data, _ := io.ReadAll(r.Body)
-					if !bytes.Contains(data, []byte("ask the user before converting")) {
+					if !bytes.Contains(data, []byte("wait for the user's explicit choice")) {
 						t.Error("missing action correction feedback")
 					}
 					if test.repair {

@@ -34,7 +34,7 @@ Compiled Studio bundles may set `require_scion` and
 the executor's local setup; discover destination paths during the run. A SCION
 listener also requires `listen_scion` in the submitted run policy.
 
-## Experiment assistance (API 1.29)
+## Experiment assistance (API 1.33)
 
 `GET /studio/assistant` returns `{"enabled": false}` until a model provider is
 configured, or `{"enabled": true, "model": "…"}`. It requires an account and
@@ -49,10 +49,19 @@ when an edit is proposed, `document` in the same graph format and kind. A reply
 without `document` asks for clarification, or offers `action: "coordinate"` when
 a workflow needs coordinated participants. This action never includes a document;
 the caller asks for confirmation before converting the existing workflow and
-continuing with `kind: "experiment"`. Proposed documents pass the existing graph
-validator before being returned. Incomplete input drafts are allowed.
-The caller decides whether to apply the proposal; nothing is compiled, run or
-charged as a measurement by this operation.
+continuing with `kind: "experiment"`. A reply can instead offer `action: "code"`
+with an explanation and no document. Only after user confirmation should the caller
+resubmit with optional `allow_code: true` (omitted means false). This mode replaces
+managed Go functions in existing programs, preserving the visual source and
+participant/channel topology. The provider receives the actual generated source
+context; proposals must compile before return. It cannot add imports or replace
+managed startup. Manual Go requires this opt-in on later requests too.
+
+Visual proposals pass graph and output-availability checks and show at most ten
+immediate cards at every group level. Incomplete input drafts are allowed.
+The caller decides whether to apply the proposal; nothing is run or charged as
+a measurement by this operation. Custom blocks and Go proposals are compiled
+for correctness; built-in-only proposals are not.
 
 The configured model receives the supplied prompt, history and document,
 including custom block source. The dispatcher does not include account
@@ -73,6 +82,15 @@ or incomplete proposals `422`, and timeout/cancellation `504`. The draft remains
 unchanged on failure. API 1.32 adds an optional `reason` to the normal error
 envelope, distinguishing provider credentials or usage limits, incomplete output,
 invalid graphs, and timeout/cancellation. No raw provider error is returned.
+
+`POST /studio/assistant/stream` accepts the same request and permissions. Its
+`text/event-stream` response contains JSON `data` events: `{type:"stage",stage}`
+for actual `generating`, `validating`, `compiling` or `repairing` boundaries, then
+one `{type:"result",result}` or `{type:"error",status,error}` terminal event. The
+result is the ordinary assistant response and error uses the safe API error
+envelope. Admission errors retain their normal HTTP status before streaming
+starts. Disconnecting cancels the request. JSON and streaming calls share capacity
+and deadlines; the original JSON endpoint remains available.
 
 See [operator configuration](operations/hosted-studio.md#optional-experiment-assistant)
 for provider setup and spending controls.

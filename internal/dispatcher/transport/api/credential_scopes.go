@@ -35,6 +35,7 @@ var credentialRouteScopes = map[string]string{
 	"POST /measurements/:id/source":                               "measurements:write",
 	"GET /studio/assistant":                                       "measurements:read",
 	"POST /studio/assistant":                                      "measurements:write",
+	"POST /studio/assistant/stream":                               "measurements:write",
 	"GET /studio/catalog":                                         "measurements:read",
 	"POST /studio/validate":                                       "measurements:write",
 	"POST /studio/build":                                          "measurements:write",

@@ -31,8 +31,10 @@ remain explicit actions. Ordinary editing works when assistance is unavailable.
 Custom blocks carry a visible **Custom** label, typed inputs and outputs, a
 description and inspectable Go source. The hosted assistant checks their code
 with the compiler before offering a proposal. This catches build errors, not
-network failures or an incorrect experiment design. Expand grouped stages to
-inspect the measurements and their control flow before running them.
+network failures or an incorrect experiment design. AI proposals show at most ten cards at each level. Double-click a grouped stage
+to inspect its blocks or smaller groups without hiding the underlying
+measurements. Progress labels report actual generation, validation, compilation
+and correction stages; they do not expose the model’s internal reasoning.
 
 Conditions, calculations and repeats execute inside the compiled WASI program.
 The dispatcher coordinates experiment readiness and stores results; it does not
@@ -61,8 +63,13 @@ Choose **Edit Go** to change these functions directly. The original block diagra
 is kept, but arbitrary Go edits cannot be converted back into blocks. The editor
 warns when code and diagram diverge. **Restore blocks** explicitly discards the
 manual functions and resumes visual editing; saving a draft, template or bundle
-preserves manual edits. The AI assistant edits blocks, so restore blocks before
-using it on a program with manual Go.
+preserves manual edits. The assistant uses built-in blocks first, then typed custom
+blocks for missing operations. If a task needs closely coupled Go logic, it can
+offer **Go authoring** with an explanation. Only accepting that offer enables
+function edits; the saved block diagram remains intact. Existing manual Go also
+requires this explicit choice before the assistant can edit it. Function proposals
+compile before review, but still need a runtime test. Large experiments should
+use groups; their block count alone is not a reason to switch to Go.
 
 The code editor accepts function declarations, including the generated entry
 function. Imports, `main`, runtime identity and coordinated readiness stay

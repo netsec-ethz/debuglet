@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.32"
+  version: "1.33"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Run reads require ownership, operator authority or explicit community sharing to a current member; payment orders and run mutations remain owner-scoped. A hidden resource answers 404. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -10133,6 +10133,135 @@ paths:
             "application/json":
               "schema":
                 "$ref": "#/components/schemas/Error"
+  "/studio/assistant/stream":
+    "post":
+      "operationId": "streamStudioAssistant"
+      "summary": "Stream actual assistant stages and its checked proposal."
+      "description": "Uses the same request, authentication, CSRF, capacity, rate limits and 90-second deadline as POST /studio/assistant. After admission, sends text/event-stream records whose data is one StudioAssistantStreamEvent JSON object. Stage events reflect actual generation, validation, optional compilation and correction; they do not describe provider internals. One terminal result or sanitized error ends the stream. Failures before streaming use ordinary JSON status responses. Canceling the connection cancels the request. No event is an execution or submission, and an incomplete stream must not be applied. Responses are not cached or replayed."
+      "parameters":
+        -
+          "name": "Debuglet-API-Version"
+          "in": "header"
+          "required": false
+          "schema":
+            "type": "string"
+        -
+          "name": "X-Debuglet-CSRF"
+          "in": "header"
+          "required": false
+          "description": "Required for cookie-authenticated POST requests."
+          "schema":
+            "type": "string"
+      "requestBody":
+        "required": true
+        "content":
+          "application/json":
+            "schema":
+              "$ref": "#/components/schemas/StudioAssistantRequest"
+      "responses":
+        "200":
+          "description": "Server-sent events. Each data field is a StudioAssistantStreamEvent; one terminal result or error completes the stream."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "text/event-stream":
+              "schema":
+                "type": "string"
+        "400":
+          "description": "Malformed input, query, encoded path or unsupported API version."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "401":
+          "description": "An authenticated account is required."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "403":
+          "description": "Missing CSRF proof or credential scope."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "413":
+          "description": "The encoded request exceeds the operation body limit."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "415":
+          "description": "Body must be uncompressed application/json."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "429":
+          "description": "Account admission, assistant or compiler capacity, or global request rate exhausted. Retry-After gives seconds."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+            "Retry-After":
+              "description": "Suggested seconds before retrying."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "500":
+          "description": "Request admission failed."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
+        "503":
+          "description": "Assistant is disabled or the hosted compiler could not check custom code."
+          "headers":
+            "Debuglet-API-Version":
+              "description": "Contract version this dispatcher implements."
+              "schema":
+                "type": "string"
+          "content":
+            "application/json":
+              "schema":
+                "$ref": "#/components/schemas/Error"
   "/studio/catalog":
     "get":
       "operationId": "getStudioCatalog"
@@ -15755,6 +15884,43 @@ components:
             "$ref": "#/components/schemas/StudioChannel"
           "nullable": true
       "description": "Participant context injected by the experiment builder. Source participants must omit it; it does not grant executor or network permissions."
+    "StudioAssistantStreamEvent":
+      "oneOf":
+        -
+          "type": "object"
+          "additionalProperties": false
+          "required": ["type", "stage"]
+          "properties":
+            "type":
+              "type": "string"
+              "enum": ["stage"]
+            "stage":
+              "type": "string"
+              "enum": ["generating", "validating", "compiling", "repairing"]
+        -
+          "type": "object"
+          "additionalProperties": false
+          "required": ["type", "result"]
+          "properties":
+            "type":
+              "type": "string"
+              "enum": ["result"]
+            "result":
+              "$ref": "#/components/schemas/StudioAssistantResponse"
+        -
+          "type": "object"
+          "additionalProperties": false
+          "required": ["type", "status", "error"]
+          "properties":
+            "type":
+              "type": "string"
+              "enum": ["error"]
+            "status":
+              "type": "integer"
+              "minimum": 400
+              "maximum": 599
+            "error":
+              "$ref": "#/components/schemas/Error"
     "StudioAssistantAvailability":
       "type": "object"
       "required":
@@ -15798,6 +15964,9 @@ components:
           "description": "An editable graph of the specified kind, at most 256 KiB. Incomplete graph fields are allowed so the assistant can repair a draft; unknown fields are rejected by the graph decoder."
         "message":
           "type": "string"
+        "allow_code":
+          "type": "boolean"
+          "description": "Explicit user choice to author managed Go functions while preserving the saved visual graph. Omitted means false."
         "history":
           "type": "array"
           "items":
@@ -15810,6 +15979,10 @@ components:
       "properties":
         "message":
           "type": "string"
+        "action":
+          "type": "string"
+          "enum": ["coordinate", "code"]
+          "description": "Offer a mode change without a document; the user must accept before conversion or Go authoring."
         "document":
           "oneOf":
             -

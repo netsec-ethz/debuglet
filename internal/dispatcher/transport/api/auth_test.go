@@ -738,6 +738,7 @@ var authAccessMatrix = map[string]authRoutePolicy{
 
 	"GET /studio/assistant":                                       {anonymous: http.StatusUnauthorized, target: "/studio/assistant"},
 	"POST /studio/assistant":                                      {anonymous: http.StatusUnauthorized, target: "/studio/assistant", body: []byte(`{}`)},
+	"POST /studio/assistant/stream":                               {anonymous: http.StatusUnauthorized, target: "/studio/assistant/stream", body: []byte(`{}`)},
 	"GET /studio/catalog":                                         {anonymous: http.StatusUnauthorized, target: "/studio/catalog"},
 	"POST /studio/validate":                                       {anonymous: http.StatusUnauthorized, target: "/studio/validate", body: []byte(`{}`)},
 	"POST /studio/build":                                          {anonymous: http.StatusUnauthorized, target: "/studio/build", body: []byte(`{}`)},

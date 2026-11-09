@@ -127,28 +127,8 @@ func Validate(w Workflow) []Diagnostic {
 			add(n.ID, "", "position must be finite")
 		}
 	}
-	groupIDs, groupedNodes := map[string]bool{}, map[string]bool{}
-	for _, g := range w.Groups {
-		if !identifier.MatchString(g.ID) || groupIDs[g.ID] || nodes[g.ID].ID != "" {
-			add("", "", "group id must be valid and distinct from node and group ids")
-		}
-		groupIDs[g.ID] = true
-		if strings.TrimSpace(g.Label) == "" || len(g.Label) > 128 {
-			add("", "", "group needs a label of at most 128 bytes")
-		}
-		if len(g.NodeIDs) < 2 || len(g.NodeIDs) > 128 {
-			add("", "", "group must contain 2–128 nodes")
-		}
-		for _, id := range g.NodeIDs {
-			if _, exists := nodes[id]; !exists || groupedNodes[id] {
-				add(id, "", "group members must be existing nodes and belong to only one group")
-			}
-			groupedNodes[id] = true
-		}
-		if g.Position != nil && (math.IsNaN(g.Position.X) || math.IsInf(g.Position.X, 0) || math.IsNaN(g.Position.Y) || math.IsInf(g.Position.Y, 0)) {
-			add("", "", "group position must be finite")
-		}
-	}
+	_, groupDiagnostics := workflowGroupTree(w)
+	ds = append(ds, groupDiagnostics...)
 	entry, ok := nodes[w.Entry]
 	if !ok {
 		add("", "", "entry must name a node")

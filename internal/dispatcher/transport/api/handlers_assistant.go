@@ -5,7 +5,9 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"mime"
 	"net/http"
 	"time"
@@ -33,6 +35,7 @@ func Assistant(client *studio.Assistant) Option {
 func (h *Handler) registerAssistantRoutes(e *echo.Echo) {
 	e.GET("/studio/assistant", h.assistantAvailability)
 	e.POST("/studio/assistant", h.assistantReply)
+	e.POST("/studio/assistant/stream", h.assistantReplyStream)
 }
 
 func assistantRoute(c echo.Context) error {
@@ -61,6 +64,14 @@ func (h *Handler) assistantAvailability(c echo.Context) error {
 }
 
 func (h *Handler) assistantReply(c echo.Context) error {
+	return h.assistantReplyWithProgress(c, false)
+}
+
+func (h *Handler) assistantReplyStream(c echo.Context) error {
+	return h.assistantReplyWithProgress(c, true)
+}
+
+func (h *Handler) assistantReplyWithProgress(c echo.Context, stream bool) error {
 	account, err := requireAccount(c)
 	if err != nil {
 		return err
@@ -104,6 +115,9 @@ func (h *Handler) assistantReply(c echo.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), studio.AssistantTimeout)
 	defer cancel()
+	if stream {
+		return h.streamAssistant(c, ctx, cancel, input, h.assistantCompileCheck(account.UserUUID))
+	}
 	result, err := h.assistant.client.ReplyChecked(ctx, input, h.assistantCompileCheck(account.UserUUID))
 	if err != nil {
 		var compilerFailure *echo.HTTPError
@@ -118,6 +132,60 @@ func (h *Handler) assistantReply(c echo.Context) error {
 	_ = controller.SetWriteDeadline(time.Now().Add(30 * time.Second))
 	defer controller.SetWriteDeadline(time.Time{})
 	return c.JSON(http.StatusOK, result)
+}
+
+// Progress is emitted by the generation/validation pipeline itself. The final
+// proposal has the same checks and shape as the ordinary JSON response.
+type assistantStreamEvent struct {
+	Type   string                    `json:"type"`
+	Stage  string                    `json:"stage,omitempty"`
+	Result *studio.AssistantResponse `json:"result,omitempty"`
+	Error  *ErrorResponse            `json:"error,omitempty"`
+	Status int                       `json:"status,omitempty"`
+}
+
+func (h *Handler) streamAssistant(c echo.Context, ctx context.Context, cancel context.CancelFunc, input studio.AssistantRequest, check studio.AssistantCompileCheck) error {
+	c.Response().Header().Set("Content-Type", "text/event-stream")
+	c.Response().Header().Set("X-Accel-Buffering", "no")
+	controller := http.NewResponseController(c.Response().Writer)
+	writeFailed := false
+	send := func(event assistantStreamEvent) error {
+		if err := c.Request().Context().Err(); err != nil {
+			return err
+		}
+		data, err := json.Marshal(event)
+		if err != nil {
+			return err
+		}
+		_ = controller.SetWriteDeadline(time.Now().Add(30 * time.Second))
+		defer controller.SetWriteDeadline(time.Time{})
+		if _, err = fmt.Fprintf(c.Response(), "data: %s\n\n", data); err == nil {
+			err = controller.Flush()
+		}
+		if err != nil {
+			writeFailed = true
+			cancel()
+		}
+		return err
+	}
+	result, err := h.assistant.client.ReplyObserved(ctx, input, check, func(stage string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return send(assistantStreamEvent{Type: "stage", Stage: stage})
+	})
+	if writeFailed || c.Request().Context().Err() != nil {
+		return nil // A disconnected reader must not leave provider work running.
+	}
+	if err != nil {
+		var public *echo.HTTPError
+		if !errors.As(err, &public) {
+			public = assistantFailure(err, ctx.Err())
+		}
+		status, body, _ := errorEnvelope(public)
+		return send(assistantStreamEvent{Type: "error", Error: &body, Status: status})
+	}
+	return send(assistantStreamEvent{Type: "result", Result: &result})
 }
 
 func assistantFailure(err, contextErr error) *echo.HTTPError {
