@@ -189,8 +189,10 @@ accepted source again. A rejected graph gets at most one correction
 within the same 90-second deadline; truncated output is rejected without another
 provider call. For small changes, the model can return only changed nodes and
 connections. The dispatcher applies these edits to the supplied snapshot and
-validates the complete result before returning ordinary editor JSON. Corrections
-can edit the rejected proposal without generating the entire graph again.
+validates the complete result before returning ordinary editor JSON. Structural
+errors in full proposals request a complete corrected compact document. Scoped
+edits and custom-code compilation failures can correct the rejected proposal
+without generating the entire graph again.
 Edits can replace experiment channels and update their sending/receiving nodes
 atomically, including when correcting channel identifiers or directions.
 Participant membership and visual group structure still use complete document
