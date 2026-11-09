@@ -28,7 +28,9 @@ func (e *Executor) initialConnectivityReport() *pb.ConnectivityReport {
 }
 
 // probeConnectivity is called only by the serialized heartbeat loop. The
-// temporary listeners remain bound until the matching heartbeat returns, then
+// capability report supplies its cadence; a second timer here could discard a
+// fresh report when probe duration or heartbeat timing varies slightly.
+// The temporary listeners remain bound until the matching heartbeat returns, then
 // finish joins their responders and releases their actual pool reservations.
 func (e *Executor) probeConnectivity(ctx context.Context, binding controlsession.Binding, vantage *pb.VantagePointReport) func() {
 	e.observeAddresses(ctx, binding)
@@ -36,25 +38,16 @@ func (e *Executor) probeConnectivity(ctx context.Context, binding controlsession
 		return func() {}
 	}
 	vantage.AddressCheck = e.addressSelfCheck()
-	now := time.Now()
 	cfg := e.cfg.Connectivity
-	e.capabilityMu.Lock()
-	if now.Before(e.connectivityNext) {
-		e.capabilityMu.Unlock()
-		return func() {}
-	}
 	if cfg.Listeners {
 		select {
 		case e.listenerSetup <- struct{}{}:
 		default:
 			// A run is setting up its listeners. Keep the prior observation;
 			// skipping this sample must not publish a new successful proof.
-			e.capabilityMu.Unlock()
 			return func() {}
 		}
 	}
-	e.connectivityNext = now.Add(30 * time.Second)
-	e.capabilityMu.Unlock()
 	report := &pb.ConnectivityReport{ListenersEnabled: cfg.Listeners}
 	vantage.Connectivity = report
 	var wg sync.WaitGroup

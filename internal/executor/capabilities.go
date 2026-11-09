@@ -37,7 +37,10 @@ import (
 // tagging mode is likewise sent on the next heartbeat. Both reports come from
 // the same probe and are sent, or omitted, together.
 func (e *Executor) capabilityReport(ctx context.Context, initial bool) (*pb.ExecutorCapabilities, *pb.VantagePointReport) {
-	now := time.Now()
+	return e.capabilityReportAt(ctx, initial, time.Now())
+}
+
+func (e *Executor) capabilityReportAt(ctx context.Context, initial bool, now time.Time) (*pb.ExecutorCapabilities, *pb.VantagePointReport) {
 	e.disclosureDelivery.checkClock(e.teslaSchedule, now)
 	tagging := e.tagging()
 	attribution := e.attribution(now, tagging)

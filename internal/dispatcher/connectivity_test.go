@@ -154,3 +154,45 @@ func TestCapabilityAdmissionKeepsUnmeasuredLegacyAndRejectsExpiredMeasured(t *te
 		t.Fatalf("stale family admitted: %v", err)
 	}
 }
+
+func TestConnectivityAcceptsReportArrivalJitterWithoutExtendingExpiry(t *testing.T) {
+	listener, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := bytes.Repeat([]byte{7}, connectivity.TokenSize)
+	defer connectivity.ServeTCP(listener, token)()
+	port := listener.Addr().(*net.TCPAddr).Port
+	host := "127.0.0.1"
+	owner := registryOwner(t, "network")
+	defer owner.Retire()
+	entry := &executorEntry{owner: owner, RegisteredExecutor: &RegisteredExecutor{
+		publicHost: &host,
+		display:    config.ExecutorDisplay{ConnectivityHost: host, ConnectivityPorts: strconv.Itoa(port)},
+	}}
+	d := &Dispatcher{executors: map[string]*executorEntry{"network": entry}}
+	report := &pb.ConnectivityReport{ListenersEnabled: true, Listeners: []*pb.ListenerChallenge{{Transport: "tcp", Port: uint32(port), Token: token}}}
+	base := time.Now()
+	var previous *wire.Connectivity
+	// 15s heartbeats produce reports every 30–45s. A shorter network delay
+	// makes the second arrival just under 30s after the first; it is still a
+	// fresh proof, not an abusive duplicate.
+	for _, ms := range []int{42, 30022, 60042, 105042, 135022} {
+		now := base.Add(time.Duration(ms) * time.Millisecond)
+		if previous != nil && !previous.TCPListener.FreshReachable(now) {
+			t.Fatalf("healthy cadence expired before arrival at %s", now.Sub(base))
+		}
+		observed := d.observeConnectivity(t.Context(), owner, report, now)
+		if observed == nil || !observed.TCPListener.FreshReachable(now) {
+			t.Fatalf("fresh controlled proof discarded at %s: %+v", now.Sub(base), observed)
+		}
+		proof := observed.TCPListener
+		if *proof.ExpiresAt-*proof.ObservedAt != 90 || proof.FreshReachable(now.Add(90*time.Second)) {
+			t.Fatal("reachability expiry must remain 90 seconds")
+		}
+		if duplicate := d.observeConnectivity(t.Context(), owner, report, now.Add(time.Second)); duplicate != nil {
+			t.Fatal("rapid duplicate bypassed the dispatcher probe bound")
+		}
+		previous = observed
+	}
+}
