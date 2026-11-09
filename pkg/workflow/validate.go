@@ -65,6 +65,9 @@ func Validate(w Workflow) []Diagnostic {
 		if strings.TrimSpace(b.Label) == "" || len(b.Label) > 128 {
 			add("", "", "custom block needs a label of at most 128 characters")
 		}
+		if len(b.Description) > 1024 {
+			add("", "", "custom block description exceeds 1024 bytes")
+		}
 		for _, ports := range [][]Port{b.Inputs, b.Outputs} {
 			seen := map[string]bool{}
 			if len(ports) > 32 {
@@ -91,7 +94,7 @@ func Validate(w Workflow) []Diagnostic {
 		if err := validateCustom(b.Code); err != nil {
 			add("", "", fmt.Sprintf("custom block %s: %v", b.ID, err))
 		}
-		catalog[b.ID] = Block{b.ID, b.Label, "Custom", "", false, b.Inputs, b.Outputs, []string{"next"}}
+		catalog[b.ID] = Block{b.ID, b.Label, "Custom", b.Description, false, b.Inputs, b.Outputs, []string{"next"}}
 	}
 	nodes := map[string]Node{}
 	for _, n := range w.Nodes {

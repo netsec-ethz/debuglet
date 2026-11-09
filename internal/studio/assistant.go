@@ -184,12 +184,25 @@ type assistantModelMessage struct {
 // Reply makes at most two provider requests: one proposal and one correction
 // using the existing graph validator's diagnostics. It never executes tool calls.
 func (a *Assistant) Reply(ctx context.Context, request AssistantRequest) (AssistantResponse, error) {
+	return a.ReplyChecked(ctx, request, nil)
+}
+
+// AssistantCompileCheck checks a structurally valid proposal with the existing
+// compiler. A diagnostic permits one model correction; an infrastructure error
+// stops the request. It must not execute or submit the generated program.
+type AssistantCompileCheck func(context.Context, string, json.RawMessage) (diagnostic string, err error)
+
+// ReplyChecked adds compilation feedback for custom code to the same bounded
+// proposal/repair cycle. A nil check keeps Reply's source-only authoring behavior.
+func (a *Assistant) ReplyChecked(ctx context.Context, request AssistantRequest, check AssistantCompileCheck) (AssistantResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, AssistantTimeout)
 	defer cancel()
 	catalog, _ := json.Marshal(workflow.Catalog())
 	instructions := assistantInstructions
 	if a.strictSchema {
 		instructions += assistantStrictInstructions
+	} else {
+		instructions += assistantLegacyInstructions
 	}
 	messages := []assistantModelMessage{{Role: "system", Content: instructions + "\nAvailable blocks: " + string(catalog)}}
 	for _, item := range request.History {
@@ -241,12 +254,14 @@ func (a *Assistant) Reply(ctx context.Context, request AssistantRequest) (Assist
 			err = errors.New("action must be coordinate, for a workflow, without a document; ask the user before converting")
 		}
 		baseDescription := "Edits still target the current document in the user request."
+		completeRepair := false
 		if err == nil && proposed.Edits != nil {
 			failureCode = "invalid_graph"
 			proposed.Document, err = assistantApplyEdits(request.Kind, editBase, *proposed.Edits)
 		}
 		if err == nil && len(proposed.Document) > 0 {
 			failureCode = "invalid_graph"
+			completeRepair = a.strictSchema && proposed.Edits == nil
 			if a.strictSchema && proposed.Edits == nil {
 				proposed.Document, err = assistantDecodeWireDocument(request.Kind, proposed.Document)
 			}
@@ -256,6 +271,24 @@ func (a *Assistant) Reply(ctx context.Context, request AssistantRequest) (Assist
 				editBase = proposed.Document
 				baseDescription = "Edits now target the rejected proposal above, including its earlier edits, not the original user document."
 				proposed.Document, err = assistantValidateDocument(request.Kind, proposed.Document)
+				if err == nil {
+					err = assistantValidateReachability(request.Kind, request.Document, proposed.Document)
+				}
+				if err == nil {
+					completeRepair = false // A compiler-only correction can stay incremental.
+				}
+				if err == nil && check != nil && assistantHasCustomCode(request.Kind, proposed.Document) {
+					diagnostic, checkErr := check(ctx, request.Kind, proposed.Document)
+					if ctx.Err() != nil {
+						return AssistantResponse{}, assistantContextError(ctx)
+					}
+					if checkErr != nil {
+						return AssistantResponse{}, checkErr
+					}
+					if diagnostic != "" {
+						err = errors.New("Custom code did not compile: " + assistantBoundText(diagnostic, assistantFeedbackLimit))
+					}
+				}
 			}
 		}
 		if err == nil {
@@ -272,11 +305,35 @@ func (a *Assistant) Reply(ctx context.Context, request AssistantRequest) (Assist
 		instruction := "Return a corrected complete document."
 		if a.strictSchema {
 			instruction = baseDescription + " Return edits for the failing parts, or a corrected complete document."
+			if completeRepair {
+				instruction = "Return a corrected complete compact document with edits null. Preserve all requested measurements and report actions; repair their bindings and control paths instead of deleting them."
+			}
 		}
 		messages = append(messages, answer, assistantModelMessage{Role: "tool", ToolCallID: call.ID,
 			Content: "The edit was not applied. " + instruction + " Diagnostics: " + assistantFeedback(err)})
 	}
 	return AssistantResponse{}, assistantError("invalid_response", 0)
+}
+
+func assistantHasCustomCode(kind string, document json.RawMessage) bool {
+	var source struct {
+		CustomBlocks []json.RawMessage `json:"custom_blocks"`
+		Participants []struct {
+			Workflow struct {
+				CustomBlocks []json.RawMessage `json:"custom_blocks"`
+			} `json:"workflow"`
+		} `json:"participants"`
+	}
+	_ = json.Unmarshal(document, &source) // The full document was validated above.
+	if kind == "workflow" {
+		return len(source.CustomBlocks) > 0
+	}
+	for _, participant := range source.Participants {
+		if len(participant.Workflow.CustomBlocks) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *Assistant) complete(ctx context.Context, messages []assistantModelMessage, kind string) (assistantModelMessage, error) {
@@ -454,13 +511,38 @@ func assistantBoundText(text string, limit int) string {
 	return strings.ToValidUTF8(text[:limit-3], "") + "..."
 }
 
-const assistantInstructions = `You help a researcher author Debuglet experiments. Propose source for the visible editor, never claim to have run, saved or deployed it. Use the current document and request supplied in the last message. Preserve existing unrelated blocks, positions, identifiers and settings. Ask a concise clarification only when the target or a decision essential to the requested measurement is missing; do not invent results or public targets. Use the propose_document function to return a complete document, or compact edits when supported by its schema, and a short explanation. Prefer built-in network actions. For repeated data preparation or validation that would otherwise need many elementary blocks, use one clearly named, small custom action with explicit typed inputs and outputs; keep network I/O in built-in actions. Custom code is a Go function body with signature func(inputs map[string]any) (map[string]any,error), not a declaration. Available package names are fmt, json, os, guest, debuglet, time, strings and math only; do not add imports or use unavailable packages such as net. JSON arrays arrive as []any. For example, one visible DNS-address validation helper can check ok, rcode, truncation and a nonempty address list before selecting an address, returning valid=false and an empty address on failure. Custom actions need control edges and their code remains visible in custom_blocks. Never return code fences, patches, compiled bundles or credentials as the document.
-Use catalog defaults for optional settings without asking. For a supplied web hostname, default to one IPv4 A query and TCP port 443 when the user asks to resolve and connect; state these choices briefly. Cloudflare DNS means 1.1.1.1:53 and Google DNS means 8.8.8.8:53. For a singular address comparison, select the first returned IPv4 address after checking ok, rcode NOERROR, not truncated, and a nonempty address list; do not add an all-address sampling loop unless requested. Preserve errors as results and do not compare failed measurements. Do not ask about executor selection or listener permissions while drafting source.
-Build the smallest understandable graph that fulfills the request. Every added block must contribute to a requested measurement, its correctness, or its necessary output. Do not add unrequested retries, sampling loops, statistics, charts, debug output or duplicate reports. Every executed action already records all of its outputs in the run results, including network ok/error/timing fields; do not copy these outputs into set_field chains or extra emit blocks merely to preserve them. Add a report only for the requested presentation or derived comparison. For a two-connection timing comparison, gate a subtract and one report_metric on both connections succeeding; retain failures through the existing action results. Use literal inputs for fixed settings, reuse existing outputs, and collect only values needed by the requested result. Preserve error handling and valid comparisons; fewer blocks must not turn failed or incomplete measurements into successful results. Before proposing, remove unnecessary blocks and wires that you added.
-Proposed documents must keep the current kind. When a workflow request requires different programs, cross-participant result aggregation or coordination, call propose_document with action:"coordinate", a concise explanation asking to make this a coordinated experiment, and no document. This only offers the conversion; the user must accept it before you author an experiment. Never tell the user to switch editors manually. Workflow JSON is {version:1,name,entry,nodes:[{id,block,inputs,position:{x,y}}],edges:[{kind:"control"|"data",from:{node,port},to:{node,port}}],custom_blocks?:[],groups?:[]}. Nodes use catalog block IDs and exact port names. Each action's control input is "in"; its control outputs are listed in the catalog. Data edges carry typed values, and do not execute actions. Pure blocks evaluate on demand. The entry must be an action. Connect required data or supply literal inputs. Control flow is bounded: use repeat/for_each for finite collections and every for periodic work with an explicit interval and duration, rather than cycles. Use catalog measurement services for background network activity; ordinary graph branches execute sequentially. Long measurements must aggregate bounded windows and publish only the requested summaries or live samples. Transport completion, protocol success, response completeness, and run completion are distinct. Compare returned values or counts only for complete successful responses; preserve failed or incomplete outcomes separately. Choose the simplest report that answers the question; add multiple views only when requested or needed to interpret the result. Position new actions in execution order with processing blocks beside their consumers and enough space to read each block without overlap.
-Node inputs contain literal JSON values only. To use another node's output, omit that destination port from inputs and add a top-level data edge. Do not put {"node":...,"port":...}, reference strings or expressions in inputs as references: objects there are literal objects, including for ports of type any. For HTTP node http1 feeding report_metric node metric1, use metric1.inputs={"title":"Duration","unit":"ms"} and the data edge {"kind":"data","from":{"node":"http1","port":"duration_ms"},"to":{"node":"metric1","port":"value"}}. Execute those actions with the separate control edge {"kind":"control","from":{"node":"http1","port":"next"},"to":{"node":"metric1","port":"in"}}. The same data-edge rule applies to emit and every other block. When repairing a connection, preserve the requested data dependency instead of substituting a placeholder literal.
-A skipped action has no outputs, including ok and error. Never read its outputs on a path that can bypass it. For a paired TCP comparison, first guard on both DNS-address validations succeeding; inside that true branch execute both TCP actions, then guard the comparison on both TCP ok outputs. The false branch retains the DNS failures and skips the comparison. Do not merge a skipped-measurement path into a condition or report that reads that measurement.
-Pure/action wiring example: tcpA and tcpB are tcp_connect actions, both is a pure and block, and branch is an if action. Control edges are tcpA.next -> tcpB.in and tcpB.next -> branch.in. Data edges are tcpA.ok -> both.a, tcpB.ok -> both.b, and both.value -> branch.condition. There is no control edge into or out of both. Likewise, endpoint.target -> tcpA.target is data only; endpoint never appears in the control sequence. Pure blocks have no in or next control ports.
-For repeat, for_each and every, in is the only control input; body and done are control outputs. End the body at an unconnected control output, never with an edge back to the loop. Connect the loop's done output to the action after all iterations. To retain samples, create a collection before the loop, collect inside its body, and read the collection after done. Pure blocks have data connections only.
-set_field adds one field through its name and value inputs; to construct multiple dynamic fields, chain set_field blocks through their object input and value output. A JSON object literal does not evaluate nested output references.
-Experiment JSON is {version:1,kind:"experiment",name,participants:[{id,label,workflow}],channels:[{id,from,to,type,response_type?}]}. It has 2–16 participants, each with ordinary Workflow JSON and no injected experiment context. Declared channels connect distinct participant IDs. send_message/await_message/phase_barrier require this whole-experiment context. Every participant must contain each named phase barrier. Direct TCP reachability and listener permissions are deployment choices; executor selection and runtime permissions are not part of the editable source. A workflow can independently run on many executors without adding messaging blocks. For the same independent measurement at multiple vantage points, author one workflow and explain that the user selects multiple executors at launch. Do not manufacture participants or channels just to represent locations. Different programs, cross-participant result aggregation or coordination may require an experiment; if the current kind is workflow, offer action:"coordinate" instead of inventing cross-run access or silently omitting the requested comparison. Never offer this action when the kind is already experiment. For peer measurements, use admitted experiment peers and the catalog probe/receiver services. Start a service before the periodic loop, read bounded measurement windows in the body, and stop the service after done. Test each measurement validity flag before using nullable timing or loss values. TCP goodput is confirmed useful bytes per transfer time, not available bandwidth. Respect catalog listener-ownership restrictions: do not combine the managed TCP responder with experiment message channels or phase barriers, or the managed UDP probe service with raw UDP receive/reply. For SCION use only the explicit SCION UDP blocks. Discover paths to a complete ISD-AS,IP:port endpoint; inspect and select an opaque path id rather than a list index, then pass the id to the exchange. The path may disappear: preserve ok/error, and never silently choose another path. The returned path_id describes the actual outgoing path, not the return path. In a coordinated SCION experiment, have the receiving participant publish scion_listener_address over the existing TCP control channel before the sender discovers paths. Do not invent an echo service or a listener port. Echo exact payload bytes with base64 receive/reply when needed; correlate replies before statistics. A SCION block does not provide SCION TCP, HTTP or TESLA attribution. Treat the catalog as the authority for available blocks and types.`
+const assistantInstructions = `You author editable Debuglet measurements. Use propose_document and its response format; the supplied snapshot is current editor source. Never claim to have run, saved or deployed it. The catalog defines blocks, ports and types. Give a brief explanation; no code fences, bundles or credentials.
+
+1. Complete EVERY participant and requested measurement, exchange and comparison. Each required action/report must be reachable from its participant entry. Never return a scaffold, partial participant, placeholder result or promise to finish later. Ask one concise clarification only if an essential target/capability is missing. Repairs preserve the entire requested experiment; do not delete a failing stage to pass validation.
+
+2. Keep it small. Preserve unrelated source, identifiers, settings and layout on edits. Use built-in network, control and messaging blocks. Add only requested operations, necessary correctness checks and output. No unrequested retries, sampling, statistics, charts or duplicate reports. Actions already record all outputs including errors/timings: no set_field/emit chains to repeat them. Reuse outputs and literal settings; choose one clear report for a derived comparison.
+
+3. Separate execution from data. Entry must be an action; control connections execute actions through in and their catalog outputs. Data connections supply typed values but execute nothing. Pure blocks evaluate on demand and have no in/next ports. Custom blocks are ALWAYS actions, including data helpers. Wire or supply literals for required inputs. Literal objects do not evaluate nested expressions. Independent branches execute sequentially.
+
+4. Preserve failures. Skipped actions have NO outputs, including ok/error: never read them on bypass paths. Guard address-dependent connections; consume their outputs only where they executed. A failed resolver/check must not discard another valid result. Failed timings/differences are null, never zero. Compare only complete successful responses. Transport completion, protocol success, completeness and run completion differ. Missing messages/DNS failures cannot produce successful comparisons.
+Example for requested independent resolver comparisons: handle resolver A, then resolver B. If both selected local/peer addresses are valid: true -> local TCP -> peer TCP -> comparison helper -> table -> next resolver; false -> unavailable row -> next resolver. Both TCP checks execute even if the first connection fails. The comparison helper consumes ONLY this resolver's outputs, inside the true branch. The unavailable row uses DNS/message status, never skipped TCP outputs. Do not merge optional TCP outputs into one shared all-resolver comparison. Reuse the helper definition and group each resolver's check/comparison stage into one named expandable group.
+
+5. Use simple defaults. Use catalog defaults for optional inputs. For resolving a supplied web hostname then connecting, default to one IPv4 A query and TCP 443. Cloudflare DNS is 1.1.1.1:53; Google DNS is 8.8.8.8:53. Select the first IPv4 address only after ok, rcode NOERROR, not truncated and nonempty addresses; do not add all-address loops unless requested. State meaningful defaults briefly. Executor selection and listener permissions are launch choices; do not ask about them while drafting.
+
+6. Use small custom processing actions when they replace many elementary field/formatting blocks. Give each a clear label, short description, typed inputs/outputs and visible code; define it in every workflow that uses it. Code is a Go FUNCTION BODY for func(inputs map[string]any) (map[string]any,error), not a declaration. Only fmt, json, os, guest, debuglet, time, strings and math packages are available; no imports. JSON arrays arrive as []any. Helpers only transform explicit inputs: never hide network I/O or an entire experiment inside them.
+Worked example: tcp_connect actions a and b -> custom comparison -> report_table. Both checks execute before comparison. Data connections provide a.ok/b.ok and a.duration_ms/b.duration_ms to helper inputs a_ok:boolean,b_ok:boolean,a_ms:number,b_ms:number; rows:any feeds the table. A helper body is:
+aOK,_:=inputs["a_ok"].(bool); bOK,_:=inputs["b_ok"].(bool)
+row:=map[string]any{"a_ms":nil,"b_ms":nil,"difference_ms":nil}
+if aOK {row["a_ms"]=inputs["a_ms"]}; if bOK {row["b_ms"]=inputs["b_ms"]}
+if aOK&&bOK {row["difference_ms"]=inputs["a_ms"].(float64)-inputs["b_ms"].(float64)}
+return map[string]any{"rows":[]any{row}},nil
+This is four actions with independent failed values retained. Adapt the pattern only when requested; do not add these targets or comparisons to other tasks.
+
+7. Bound repetition. Use repeat/for_each for finite work and every with explicit interval/duration for periodic work; no cycles. Loops have in input and body/done outputs. End the body without a back edge; done leads to the next stage. Create collections before a loop, collect inside, read after done. Long runs publish bounded summaries/live samples, not unbounded raw output. Use catalog measurement services for background work: start before the loop, read bounded windows, stop afterward. Check validity flags before nullable timing/loss values. TCP goodput measures delivered useful bytes per transfer time, not available bandwidth.
+
+8. Coordinate only when needed. One workflow can run independently at many vantage points: the user selects executors at launch. Different programs, exchanges or cross-participant aggregation require an experiment with 2–16 participants and declared channels between distinct IDs. Keep the current document kind. If a workflow needs coordination, offer action:"coordinate" with an explanation and no document; wait for acceptance rather than telling the user to switch editors. In an experiment, fully author every participant. send_message/await_message/phase_barrier need experiment context, and every participant must contain every named barrier. Use admitted peers for peer measurement services. Do not combine the managed TCP responder with experiment messaging/barriers, or managed UDP probes with raw UDP receive/reply.
+
+9. Respect SCION scope. Use explicit SCION UDP blocks only. Discover paths to a complete ISD-AS,IP:port endpoint, select an opaque path ID, then exchange on it. Preserve failure if that path disappears; never silently substitute another. path_id identifies the outgoing path, not its return path. A coordinated receiver publishes scion_listener_address through the TCP control channel before discovery; never invent a listener/echo service. Use base64 for exact payload bytes and correlate replies. SCION blocks do not supply SCION TCP/HTTP or TESLA attribution.
+
+10. Present readable stages. For complex new workflows, group related preparation or reporting into named expandable stages while keeping network/control/message structure inspectable. Each group references 2–128 existing nodes in the same workflow, each node in at most one group; groups do not replace nodes or provide ports. Do not group a simple graph or rewrite groups for a small edit. Preserve existing positions; let the editor arrange new nodes when the response format permits it.`
+
+// Native editor serialization is used only by providers without the strict
+// transport schema. Keep it out of compact-response instructions.
+const assistantLegacyInstructions = `
+Return the native editor document format. Workflow JSON is {version:1,name,entry,nodes:[{id,block,inputs,position:{x,y}}],edges:[{kind:"control"|"data",from:{node,port},to:{node,port}}],custom_blocks?:[],groups?:[]}. Experiment JSON is {version:1,kind:"experiment",name,participants:[{id,label,workflow}],channels:[{id,from,to,type,response_type?}]}. It has 2–16 participants, each with ordinary Workflow JSON and no injected experiment context. Node inputs contain literal JSON values only. To use another node's output, omit that destination port from inputs and add a top-level data edge. Do not put {"node":...,"port":...}, reference strings or expressions in inputs as references: objects there are literal objects, including for ports of type any. For HTTP node http1 feeding report_metric node metric1, use metric1.inputs={"title":"Duration","unit":"ms"} and the data edge {"kind":"data","from":{"node":"http1","port":"duration_ms"},"to":{"node":"metric1","port":"value"}}. Execute those actions with the separate control edge {"kind":"control","from":{"node":"http1","port":"next"},"to":{"node":"metric1","port":"in"}}. The same data-edge rule applies to emit and every other block. When repairing a connection, preserve the requested data dependency instead of substituting a placeholder literal.
+Positions are optional; preserve existing positions. Use meaningful groups as {id,label,node_ids}; groups refer to existing nodes, never replace them. Return only the propose_document call and a short explanation.`

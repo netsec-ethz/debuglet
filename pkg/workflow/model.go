@@ -67,11 +67,12 @@ type Block struct {
 // CustomBlock is a Go function body, compiled inside the same guest as its callers.
 // It is an action: data connections alone never cause it to execute.
 type CustomBlock struct {
-	ID      string `json:"id"`
-	Label   string `json:"label"`
-	Inputs  []Port `json:"inputs"`
-	Outputs []Port `json:"outputs"`
-	Code    string `json:"code"`
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+	Inputs      []Port `json:"inputs"`
+	Outputs     []Port `json:"outputs"`
+	Code        string `json:"code"`
 }
 type Diagnostic struct {
 	Node    string `json:"node,omitempty"`

@@ -9975,7 +9975,7 @@ paths:
     "post":
       "operationId": "askStudioAssistant"
       "summary": "Propose an editable workflow or experiment."
-      "description": "Added in API 1.29. Requires an account and measurements:write scope; cookie sessions require CSRF. Accepts existing editable graph JSON, including incomplete drafts, and returns either a validated same-kind document or clarification without a document. No compilation, execution, submission or payment occurs. The configured provider receives the prompt, supplied history and document; it receives no account credentials. Maximum encoded body 4259840 bytes, document 256 KiB, message 8192 UTF-8 bytes, history 12 messages and 16384 UTF-8 bytes total. One request per account and four globally may be active, separately from compiler capacity. Account admission and a global six requests/minute rate with burst four apply. Deadline is 90 seconds including at most one repair request; provider responses are capped at 512 KiB and 16384 output tokens per call. Upstream errors are sanitized. Responses are not cached."
+      "description": "Added in API 1.29. Requires an account and measurements:write scope; cookie sessions require CSRF. Accepts existing editable graph JSON, including incomplete drafts, and returns either a validated same-kind document or clarification without a document. Proposals containing custom Go are compiled through the existing hosted worker before acceptance; compiler diagnostics can use the same single correction attempt. No execution, submission or payment occurs. The configured provider receives the prompt, supplied history and document; it receives no account credentials. Maximum encoded body 4259840 bytes, document 256 KiB, message 8192 UTF-8 bytes, history 12 messages and 16384 UTF-8 bytes total. One request per account and four globally may be active; custom-code checks also acquire the ordinary compiler capacity. Account admission and a global six requests/minute rate with burst four apply. Deadline is 90 seconds including at most one repair request; provider responses are capped at 512 KiB and 16384 output tokens per call. Upstream errors are sanitized. Responses are not cached."
       "parameters":
         -
           "name": "Debuglet-API-Version"
@@ -10075,7 +10075,7 @@ paths:
               "schema":
                 "$ref": "#/components/schemas/Error"
         "429":
-          "description": "Account admission, assistant capacity or global request rate exhausted. Retry-After gives seconds."
+          "description": "Account admission, assistant or compiler capacity, or global request rate exhausted. Retry-After gives seconds."
           "headers":
             "Debuglet-API-Version":
               "description": "Contract version this dispatcher implements."
@@ -10112,7 +10112,7 @@ paths:
               "schema":
                 "$ref": "#/components/schemas/Error"
         "503":
-          "description": "Assistant is disabled."
+          "description": "Assistant is disabled or the hosted compiler could not check custom code."
           "headers":
             "Debuglet-API-Version":
               "description": "Contract version this dispatcher implements."
@@ -11829,6 +11829,8 @@ components:
             - "provider_auth"
             - "provider_rate_limit"
             - "provider_unavailable"
+            - "compiler_busy"
+            - "compiler_unavailable"
             - "output_truncated"
             - "invalid_response"
             - "invalid_graph"

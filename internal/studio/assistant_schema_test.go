@@ -30,7 +30,7 @@ func assistantWireFixture(t *testing.T, wf workflow.Workflow) assistantWireWorkf
 		return out
 	}
 	for _, b := range wf.CustomBlocks {
-		wire.CustomBlocks = append(wire.CustomBlocks, assistantWireBlock{ID: b.ID, Label: b.Label, Inputs: ports(b.Inputs), Outputs: ports(b.Outputs), Code: b.Code})
+		wire.CustomBlocks = append(wire.CustomBlocks, assistantWireBlock{ID: b.ID, Label: b.Label, Description: b.Description, Inputs: ports(b.Inputs), Outputs: ports(b.Outputs), Code: b.Code})
 	}
 	for _, n := range wf.Nodes {
 		inputs := n.Inputs
@@ -86,6 +86,7 @@ func TestAssistantStrictProposalNormalizesLiteralInputsAndMetadata(t *testing.T)
 	wf := sampleWorkflow()
 	wf.Nodes[0].Position = &workflow.Position{X: 20, Y: 40}
 	wf.CustomBlocks = []workflow.CustomBlock{{ID: "prepare", Label: "Prepare result", Inputs: []workflow.Port{{Name: "value", Type: "object", Default: map[string]any{"values": []any{true, float64(2)}}}}, Outputs: []workflow.Port{{Name: "value", Type: "object"}}, Code: "return map[string]any{\"value\":inputs[\"value\"]},nil"}}
+	wf.CustomBlocks[0].Description = "Pass the object through without changing its fields."
 	wf.Nodes[0].Inputs["value"] = map[string]any{"nested": []any{true, float64(3), "literal"}}
 	wf.Nodes = append(wf.Nodes, workflow.Node{ID: "pause", Block: "wait", Inputs: map[string]any{"duration_ms": float64(1)}})
 	wf.Edges = append(wf.Edges, workflow.Edge{Kind: "control", From: workflow.Endpoint{Node: "result", Port: "next"}, To: workflow.Endpoint{Node: "pause", Port: "in"}})
@@ -209,6 +210,9 @@ func TestAssistantStrictExperimentRoundTrip(t *testing.T) {
 	schema := assistantDocumentSchema("experiment")
 	participants := schema["properties"].(map[string]any)["document"].(map[string]any)["properties"].(map[string]any)["participants"].(map[string]any)
 	graph := participants["items"].(map[string]any)["properties"].(map[string]any)["workflow"].(map[string]any)
+	if graph["$ref"] == "#/$defs/compact_workflow" {
+		graph = schema["$defs"].(map[string]any)["compact_workflow"].(map[string]any)
+	}
 	if graph["type"] != "object" {
 		t.Fatal("participant workflow must not be nullable")
 	}

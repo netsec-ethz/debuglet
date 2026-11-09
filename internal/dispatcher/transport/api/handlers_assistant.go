@@ -22,8 +22,8 @@ type assistantState struct {
 	requests *rate.Limiter
 }
 
-// Assistant is independent of compiler availability. Its provider connection
-// receives source explicitly sent by the caller, never account credentials.
+// Assistant availability is independent of the compiler; proposals containing
+// custom code require it. The provider receives source, never account credentials.
 func Assistant(client *studio.Assistant) Option {
 	return func(h *Handler) {
 		h.assistant = assistantState{client: client, slots: studioProxy{active: make(map[uuid.UUID]bool)}, requests: rate.NewLimiter(rate.Every(10*time.Second), 4)}
@@ -104,8 +104,15 @@ func (h *Handler) assistantReply(c echo.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), studio.AssistantTimeout)
 	defer cancel()
-	result, err := h.assistant.client.Reply(ctx, input)
+	result, err := h.assistant.client.ReplyChecked(ctx, input, h.assistantCompileCheck(account.UserUUID))
 	if err != nil {
+		var compilerFailure *echo.HTTPError
+		if errors.As(err, &compilerFailure) {
+			if compilerFailure.Code == http.StatusTooManyRequests {
+				c.Response().Header().Set("Retry-After", "1")
+			}
+			return compilerFailure
+		}
 		return assistantFailure(err, ctx.Err())
 	}
 	_ = controller.SetWriteDeadline(time.Now().Add(30 * time.Second))

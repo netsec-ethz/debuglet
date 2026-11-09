@@ -128,8 +128,8 @@ func TestAssistantRepairsChannelsWithIncrementalReply(t *testing.T) {
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
-		} else if !strings.Contains(request.Messages[len(request.Messages)-1].Content, "Edits now target the rejected proposal") {
-			t.Error("correction does not identify the rejected proposal as its base")
+		} else if !strings.Contains(request.Messages[len(request.Messages)-1].Content, "corrected complete compact document") {
+			t.Error("structural correction does not request a complete proposal")
 		}
 		assistantToolReply(w, map[string]any{"message": "Corrected channel directions.", "action": "", "document": nil, "edits": edits})
 	})

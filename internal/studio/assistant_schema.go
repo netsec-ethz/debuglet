@@ -11,10 +11,8 @@ import (
 	"github.com/netsec-ethz/debuglet/pkg/workflow"
 )
 
-// OpenAI strict schemas forbid open-ended object properties. Keep the graph
-// scaffold typed, and encode only the literal input maps and custom port defaults as
-// JSON strings. These are decoded and validated before returning normal editor
-// JSON. Other compatible providers continue using the existing document format.
+// Strict providers author compact, catalog-typed graphs. Legacy incremental
+// edits retain their edge semantics. Both decode into normal editor JSON.
 func assistantDocumentSchema(kind string) map[string]any {
 	str := func() map[string]any { return map[string]any{"type": "string"} }
 	array := func(items any) map[string]any { return map[string]any{"type": "array", "items": items} }
@@ -39,13 +37,8 @@ func assistantDocumentSchema(kind string) map[string]any {
 	}
 	nodeSchema := map[string]any{"anyOf": []any{node(false), node(true)}}
 	edgeSchema := assistantSchemaObject(map[string]any{"kind": map[string]any{"type": "string", "enum": []string{"control", "data"}}, "from": endpoint, "to": endpoint})
-	customSchema := assistantSchemaObject(map[string]any{"id": str(), "label": str(), "inputs": array(port), "outputs": array(port), "code": str()})
-	graph := assistantSchemaObject(map[string]any{
-		"version": map[string]any{"type": "integer", "enum": []int{1}}, "name": str(), "entry": str(),
-		"nodes": array(nodeSchema), "edges": array(edgeSchema),
-		"custom_blocks": array(customSchema),
-		"groups":        array(assistantSchemaObject(map[string]any{"id": str(), "label": str(), "node_ids": array(str()), "position": position})),
-	})
+	customSchema := assistantSchemaObject(map[string]any{"id": str(), "label": str(), "description": map[string]any{"type": "string", "description": "Briefly explain the custom block's purpose and handling of unavailable inputs; at most 1024 UTF-8 bytes. Empty is allowed."}, "inputs": array(port), "outputs": array(port), "code": str()})
+	graph, definitions := assistantCompactSchema(position, customSchema)
 	document := graph
 	channel := assistantSchemaObject(map[string]any{
 		"id":   map[string]any{"type": "string", "description": "Unique across the experiment. Opposite one-way directions need distinct IDs, for example a_to_b and b_to_a."},
@@ -56,7 +49,7 @@ func assistantDocumentSchema(kind string) map[string]any {
 		document = assistantSchemaObject(map[string]any{
 			"version": map[string]any{"type": "integer", "enum": []int{1}},
 			"kind":    map[string]any{"type": "string", "enum": []string{"experiment"}}, "name": str(),
-			"participants": array(assistantSchemaObject(map[string]any{"id": str(), "label": str(), "workflow": graph})),
+			"participants": array(assistantSchemaObject(map[string]any{"id": str(), "label": str(), "workflow": map[string]any{"$ref": "#/$defs/compact_workflow"}})),
 			"channels":     array(channel),
 		})
 	}
@@ -75,10 +68,12 @@ func assistantDocumentSchema(kind string) map[string]any {
 		})),
 	})
 	edits["type"] = []string{"object", "null"}
-	return assistantSchemaObject(map[string]any{
+	schema := assistantSchemaObject(map[string]any{
 		"message": str(), "document": document, "edits": edits,
 		"action": map[string]any{"type": "string", "enum": []string{"", "coordinate"}, "description": "Use coordinate only to offer workflow conversion; otherwise use an empty string. Use null document for a clarification or conversion offer."},
 	})
+	schema["$defs"] = definitions
+	return schema
 }
 
 func assistantSchemaObject(properties map[string]any) map[string]any {
@@ -91,6 +86,7 @@ func assistantSchemaObject(properties map[string]any) map[string]any {
 }
 
 type assistantWireWorkflow struct {
+	Format       string               `json:"format,omitempty"`
 	Version      int                  `json:"version"`
 	Name         string               `json:"name"`
 	Entry        string               `json:"entry"`
@@ -104,12 +100,17 @@ type assistantWireNode struct {
 	ID          string             `json:"id"`
 	Block       string             `json:"block,omitempty"`
 	CustomBlock string             `json:"custom_block,omitempty"`
-	InputsJSON  string             `json:"inputs_json"`
+	InputsJSON  string             `json:"inputs_json,omitempty"`
+	Inputs      json.RawMessage    `json:"inputs,omitempty"`
+	Control     map[string]*string `json:"control,omitempty"`
 	Position    *workflow.Position `json:"position"`
 }
 
 func (n assistantWireNode) document() (workflow.Node, error) {
 	node := workflow.Node{ID: n.ID, Block: n.Block, Position: n.Position}
+	if len(n.Inputs) != 0 || n.Control != nil {
+		return node, fmt.Errorf("node %s: incremental edits use inputs_json and explicit edges", assistantBoundText(n.ID, 128))
+	}
 	if (n.Block == "") == (n.CustomBlock == "") {
 		return node, fmt.Errorf("node %s: choose exactly one built-in block or custom_block reference", assistantBoundText(n.ID, 128))
 	}
@@ -133,11 +134,12 @@ func (n assistantWireNode) document() (workflow.Node, error) {
 }
 
 type assistantWireBlock struct {
-	ID      string              `json:"id"`
-	Label   string              `json:"label"`
-	Inputs  []assistantWirePort `json:"inputs"`
-	Outputs []assistantWirePort `json:"outputs"`
-	Code    string              `json:"code"`
+	ID          string              `json:"id"`
+	Label       string              `json:"label"`
+	Description string              `json:"description"`
+	Inputs      []assistantWirePort `json:"inputs"`
+	Outputs     []assistantWirePort `json:"outputs"`
+	Code        string              `json:"code"`
 }
 
 type assistantWirePort struct {
@@ -159,6 +161,12 @@ func assistantDecodePorts(wire []assistantWirePort) ([]workflow.Port, error) {
 }
 
 func (w assistantWireWorkflow) document() (workflow.Workflow, error) {
+	if w.Format == "compact" {
+		return w.compactDocument()
+	}
+	if w.Format != "" {
+		return workflow.Workflow{}, fmt.Errorf("unknown assistant workflow format")
+	}
 	doc := workflow.Workflow{Version: w.Version, Name: w.Name, Entry: w.Entry, Edges: w.Edges, Nodes: []workflow.Node{}, Groups: w.Groups}
 	for _, n := range w.Nodes {
 		node, err := n.document()
@@ -186,7 +194,7 @@ func (b assistantWireBlock) document() (workflow.CustomBlock, error) {
 	if err != nil {
 		return workflow.CustomBlock{}, err
 	}
-	return workflow.CustomBlock{ID: b.ID, Label: b.Label, Inputs: inputs, Outputs: outputs, Code: b.Code}, nil
+	return workflow.CustomBlock{ID: b.ID, Label: b.Label, Description: b.Description, Inputs: inputs, Outputs: outputs, Code: b.Code}, nil
 }
 
 func assistantDecodeWireDocument(kind string, raw json.RawMessage) (json.RawMessage, error) {
@@ -227,4 +235,8 @@ func assistantDecodeWireDocument(kind string, raw json.RawMessage) (json.RawMess
 }
 
 const assistantStrictInstructions = `
-The propose_document schema uses a transport encoding: replace each node's inputs object with inputs_json, a JSON-encoded object string. A built-in node uses block from the exact catalog enum. A custom node uses custom_block instead, referring to an explicitly defined custom_blocks ID in its workflow. Never reference an undeclared helper. Custom port defaults use default_json, a JSON-encoded value string ("null" when absent). Use empty arrays for absent custom_blocks and groups; do not copy catalog-only fields such as category or pure into custom definitions. Everything else keeps the described graph semantics. Use null position for new nodes (the editor lays them out); preserve existing positions. Use an empty action string for ordinary edits. Return exactly one non-null document or edits; both are null only for clarification or a coordinate offer. Prefer edits for changes to an existing graph and for corrections. edits.name renames the top-level document; each edits.workflows item targets an existing participant (empty participant for a workflow). Null name/entry preserve them. upsert_nodes replaces the complete listed node, preserving its position when null; include all its current literal inputs, not just changed ones. remove_nodes deletes those nodes, their incident edges and group membership. remove_edges removes exact existing connections; add_edges adds only new connections. upsert_custom_blocks replaces a complete helper definition. Use empty arrays for unchanged collections; do not resend unaffected nodes or edges. Never edit the same participant twice. edits.channels=null preserves channels; an array replaces the complete experiment channel list, including removal with []. Correct channel IDs or directions together with affected send_message/await_message nodes in the same edit. A workflow requires channels=null. Use document for creating participants or group structure. Edits initially target the current user document; a correction tool message explicitly names its new base. Example: changing only node tcp target means edits.workflows=[{participant:"",name:null,entry:null,upsert_nodes:[{id:"tcp",block:"tcp_connect",inputs_json:"{\"target\":\"1.1.1.1:443\",\"timeout_ms\":2000}",position:null}],remove_nodes:[],add_edges:[],remove_edges:[],upsert_custom_blocks:[]}], with edits.name=null, edits.channels=null and document=null. Return only the tool call, with a brief explanation of any defaults. The server decodes these JSON strings and validates the full graph; a schema-valid response can still have invalid graph semantics.`
+The current editor document uses canonical nodes and edges. For a complete proposal, return the compact transport format in the tool schema instead: every workflow has format:"compact", version:1, name, entry, nodes, custom_blocks and groups, with no edges array. Experiment participants and channels retain their documented meaning; each participant contains a compact workflow.
+Built-in node inputs is an object with the exact catalog input keys. A scalar literal is written directly, such as target:"example.org:443" or count:3. Typed strings/numbers lists are direct arrays. To connect an output, write {from:"node_id.output_port"} at the consuming input. To supply an arbitrary object or any-valued array literal, write {json:"<JSON-encoded literal>"}; its contents are never evaluated as references. Null at an optional input means omit it and use the catalog default. Every required input needs a literal or reference; for a required any-valued literal null use {json:"null"}. Include all schema input keys, using null for optional defaults.
+Each node's control object contains exactly its catalog control outputs, mapped to the next action's node ID or null to end that branch. An ordinary action uses control:{next:"following_action"}; if uses control:{true:"on_true",false:"on_false"}; loops use control:{body:"first_body_action",done:"after_loop"}. A pure node has control:{}. Array order and data references never execute actions or imply control edges. Example: {id:"tcp",block:"tcp_connect",inputs:{target:{from:"endpoint.target"},timeout_ms:null},control:{next:"report"},position:null}. The server expands input references and control successors into canonical edges before validation.
+A custom node uses custom_block instead of block and inputs:[{port:"input_name",value:<literal-or-reference binding>}], with control:{next:<node ID or null>}. Include every required custom input once. Custom definitions remain explicit in custom_blocks with id, label, description, inputs, outputs and Go code; their port defaults use default_json ("null" when absent). Custom definitions belong to each workflow using them. Use empty arrays for absent custom_blocks/groups. Use position:null for new nodes and preserve existing positions.
+Compact encoding applies only to complete document proposals. Incremental edits deliberately retain the existing encoding: upsert_nodes uses inputs_json containing literal inputs only, and add_edges/remove_edges explicitly change connections. Never use compact inputs/control inside edits. Use an empty action string for ordinary edits. Return exactly one non-null document or edits; both are null only for clarification or a coordinate offer. Use a complete compact document for a new experiment or a complete replacement of a blank/scaffold document. Prefer legacy edits only for scoped modifications to an existing graph and for corrections; do not build a whole new experiment through verbose upsert_nodes/add_edges. edits.name renames the top-level document; each edits.workflows item targets an existing participant (empty participant for a workflow). Null name/entry preserve them. upsert_nodes replaces the complete listed node, preserving its position when null; include all its current literal inputs, not just changed ones. remove_nodes deletes those nodes, their incident edges and group membership. remove_edges removes exact existing connections; add_edges adds only new connections. upsert_custom_blocks replaces a complete helper definition. Use empty arrays for unchanged collections; do not resend unaffected nodes or edges. Never edit the same participant twice. edits.channels=null preserves channels; an array replaces the complete experiment channel list, including removal with []. Correct channel IDs or directions together with affected send_message/await_message nodes in the same edit. A workflow requires channels=null. Use document for creating participants or group structure. Edits initially target the current user document; a correction tool message explicitly names its new base. Example: changing only node tcp target means edits.workflows=[{participant:"",name:null,entry:null,upsert_nodes:[{id:"tcp",block:"tcp_connect",inputs_json:"{\"target\":\"1.1.1.1:443\",\"timeout_ms\":2000}",position:null}],remove_nodes:[],add_edges:[],remove_edges:[],upsert_custom_blocks:[]}], with edits.name=null, edits.channels=null and document=null. Return only the tool call, with a brief explanation of any defaults. The server decodes these JSON strings and validates the full graph; a schema-valid response can still have invalid graph semantics.`

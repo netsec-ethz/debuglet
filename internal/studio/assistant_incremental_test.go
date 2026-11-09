@@ -34,8 +34,8 @@ func TestAssistantCorrectionEditsRejectedCandidate(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(body.Messages[len(body.Messages)-1].Content, "target the rejected proposal") {
-			t.Error("correction base is ambiguous")
+		if !strings.Contains(body.Messages[len(body.Messages)-1].Content, "corrected complete compact document") {
+			t.Error("structural correction does not request a complete proposal")
 		}
 		entry := "pause"
 		assistantToolReply(w, map[string]any{"message": "Corrected entry", "edits": assistantEdits{Workflows: []assistantWorkflowEdits{{Entry: &entry}}}})
@@ -73,13 +73,16 @@ func TestAssistantBuiltInChoicesAndExplicitCustomReferences(t *testing.T) {
 	schema := assistantDocumentSchema("workflow")
 	graph := schema["properties"].(map[string]any)["document"].(map[string]any)
 	nodes := graph["properties"].(map[string]any)["nodes"].(map[string]any)
-	variants := nodes["items"].(map[string]any)["anyOf"].([]any)
-	choices := variants[0].(map[string]any)["properties"].(map[string]any)["block"].(map[string]any)["enum"].([]string)
-	if len(choices) != len(workflow.Catalog()) {
+	if nodes["items"].(map[string]any)["$ref"] != "#/$defs/compact_node" {
+		t.Fatal("node definitions must be shared")
+	}
+	variants := schema["$defs"].(map[string]any)["compact_node"].(map[string]any)["anyOf"].([]any)
+	if len(variants) != len(workflow.Catalog())+1 {
 		t.Fatal("schema catalog drift")
 	}
 	for i, block := range workflow.Catalog() {
-		if choices[i] != block.ID {
+		choices := variants[i].(map[string]any)["properties"].(map[string]any)["block"].(map[string]any)["enum"].([]string)
+		if len(choices) != 1 || choices[0] != block.ID {
 			t.Fatal("catalog order changed")
 		}
 	}

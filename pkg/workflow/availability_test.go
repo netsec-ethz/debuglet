@@ -131,6 +131,44 @@ func TestOutputAvailabilityLeavesUnsupportedPredicatesAndLoopsAlone(t *testing.T
 	availabilityCheck(t, iterationWorkflow([]any{"one", "two"}), "", "")
 }
 
+func TestOutputAvailabilityChecksPrefixUntilLoop(t *testing.T) {
+	for _, scenario := range []string{"unused", "after prefix", "other branch", "loop input", "after loop"} {
+		t.Run(scenario, func(t *testing.T) {
+			w := availabilityWorkflow()
+			w.Nodes = append(w.Nodes,
+				Node{ID: "loop", Block: "repeat", Inputs: map[string]any{"count": float64(2)}},
+				Node{ID: "body", Block: "emit", Inputs: map[string]any{"name": "iteration", "value": true}},
+			)
+			w.Edges = append(w.Edges, edge("control", "loop", "body", "body", "in"))
+			node, port := "report", "value"
+			switch scenario {
+			case "after prefix":
+				w.Edges = append(w.Edges, edge("control", "report", "next", "loop", "in"))
+			case "other branch":
+				w.Entry = "start"
+				w.Nodes = append(w.Nodes,
+					Node{ID: "start", Block: "tcp_connect", Inputs: map[string]any{"target": "start.example:443"}},
+					Node{ID: "choose", Block: "if"},
+				)
+				w.Edges = append(w.Edges,
+					edge("control", "start", "next", "choose", "in"), edge("data", "start", "ok", "choose", "condition"),
+					edge("control", "choose", "false", "loop", "in"), edge("control", "choose", "true", "first", "in"),
+				)
+			case "loop input":
+				w.Entry = "loop"
+				delete(w.Nodes[len(w.Nodes)-2].Inputs, "count")
+				w.Edges = append(w.Edges, edge("data", "local", "duration_ms", "loop", "count"))
+				node, port = "loop", "count"
+			case "after loop":
+				w.Entry = "loop"
+				w.Edges = append(w.Edges, edge("control", "loop", "done", "first", "in"))
+				node, port = "", "" // No claim about paths after an unmodeled loop.
+			}
+			availabilityCheck(t, w, node, port)
+		})
+	}
+}
+
 func TestOutputAvailabilityPrunesLiteralBranchesAndIgnoresUnusedNodes(t *testing.T) {
 	w := availabilityWorkflow()
 	w.Nodes = append(w.Nodes, Node{ID: "literal", Block: "constant", Inputs: map[string]any{"value": true}})

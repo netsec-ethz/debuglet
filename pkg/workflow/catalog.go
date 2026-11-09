@@ -13,8 +13,8 @@ func Catalog() []Block {
 		{"http", "HTTP request", "Network", "Send one HTTP request. ok describes transport completion; compare status to choose an HTTP success policy. Body encoding is text (UTF-8), hex, or base64; decoded body bytes are sent unchanged. Request headers are string values. Response headers use lowercase names and lists of values. Redirects are returned, not followed.", false, []Port{input("url", "string"), optional("method", "string", "GET"), optional("body", "string", ""), optional("encoding", "string", "text"), optional("headers", "object", map[string]any{}), optional("timeout_ms", "number", float64(2000))}, []Port{output("ok", "boolean"), output("error", "string"), output("status", "number"), output("body", "string"), output("headers", "object"), output("duration_ms", "number")}, []string{"next"}},
 		{"tcp_connect", "TCP connect", "Network", "Measure one TCP connection to host:port.", false, []Port{input("target", "string"), optional("timeout_ms", "number", float64(2000))}, []Port{output("ok", "boolean"), output("error", "string"), output("duration_ms", "number")}, []string{"next"}},
 		{"ping", "Ping", "Network", "Send up to ten ICMPv4 echo requests. rtts_ms contains successful replies; loss is a percentage.", false, []Port{input("target", "string"), optional("count", "number", float64(3)), optional("timeout_ms", "number", float64(2000))}, []Port{output("ok", "boolean"), output("error", "string"), output("rtts_ms", "numbers"), output("sent", "number"), output("received", "number"), output("loss", "number")}, []string{"next"}},
-		{"send_message", "Send message", "Experiment", "Send a bounded plaintext JSON message to a participant. Success means the socket write completed, not that the peer processed it. Requires an experiment.", false, []Port{input("destination", "string"), input("channel", "string"), input("value", "any"), optional("request_id", "string", ""), optional("timeout_ms", "number", float64(2000))}, []Port{output("ok", "boolean"), output("error", "string"), output("request_id", "string")}, []string{"next"}},
-		{"await_message", "Await message", "Experiment", "Wait for one selected incoming message or reply until its deadline. Test ok before using value. Requires an experiment.", false, []Port{input("source", "string"), input("channel", "string"), optional("request_id", "string", ""), optional("timeout_ms", "number", float64(2000))}, []Port{output("ok", "boolean"), output("error", "string"), output("value", "any"), output("request_id", "string"), output("source", "string")}, []string{"next"}},
+		{"send_message", "Send message", "Experiment", "Send a bounded plaintext JSON message to a participant. Leave request_id empty for a new message/request; when replying, use the request_id output from the earlier Await. Success means the socket write completed, not that the peer processed it. Requires an experiment.", false, []Port{input("destination", "string"), input("channel", "string"), input("value", "any"), optional("request_id", "string", ""), optional("timeout_ms", "number", float64(2000))}, []Port{output("ok", "boolean"), output("error", "string"), output("request_id", "string")}, []string{"next"}},
+		{"await_message", "Await message", "Experiment", "Wait for one selected incoming message or reply until its deadline. Leave request_id empty for a new incoming message/request; when awaiting a reply, use the request_id output from the earlier Send. Test ok before using value. Requires an experiment.", false, []Port{input("source", "string"), input("channel", "string"), optional("request_id", "string", ""), optional("timeout_ms", "number", float64(2000))}, []Port{output("ok", "boolean"), output("error", "string"), output("value", "any"), output("request_id", "string"), output("source", "string")}, []string{"next"}},
 
 		{"constant", "Constant", "Data", "Provide a JSON value.", true, []Port{input("value", "any")}, []Port{output("value", "any")}, []string{}},
 		{"field", "Get field", "Data", "Read one named field from an object; missing fields are errors.", true, []Port{input("object", "object"), input("name", "string")}, []Port{output("value", "any")}, []string{}},
@@ -62,7 +62,11 @@ func catalogFor(w Workflow) map[string]Block {
 		m[b.ID] = b
 	}
 	for _, b := range w.CustomBlocks {
-		m[b.ID] = Block{b.ID, b.Label, "Custom", "Custom Go action", false, b.Inputs, b.Outputs, []string{"next"}}
+		description := b.Description
+		if description == "" {
+			description = "Custom Go action"
+		}
+		m[b.ID] = Block{b.ID, b.Label, "Custom", description, false, b.Inputs, b.Outputs, []string{"next"}}
 	}
 	return m
 }

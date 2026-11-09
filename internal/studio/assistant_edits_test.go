@@ -16,7 +16,7 @@ func TestAssistantEditsPreserveUnrelatedSource(t *testing.T) {
 	wf := sampleWorkflow()
 	wf.Nodes[0].Position = &workflow.Position{X: 18, Y: 27}
 	wf.Nodes = append(wf.Nodes, workflow.Node{ID: "tcp", Block: "tcp_connect", Inputs: map[string]any{"target": "example.test:443", "timeout_ms": float64(2000)}, Position: &workflow.Position{X: 100, Y: 200}})
-	wf.CustomBlocks = []workflow.CustomBlock{{ID: "unused", Label: "Retained helper", Code: "return nil, nil"}}
+	wf.CustomBlocks = []workflow.CustomBlock{{ID: "unused", Label: "Retained helper", Description: "Keep this helper and its documentation when editing other blocks.", Code: "return nil, nil"}}
 	wf.Groups = []workflow.Group{{ID: "saved", Label: "Saved group", NodeIDs: []string{"result", "tcp"}}}
 	raw, _ := json.Marshal(wf)
 	edits := assistantEdits{Workflows: []assistantWorkflowEdits{{UpsertNodes: []assistantWireNode{{ID: "tcp", Block: "tcp_connect", InputsJSON: `{"target":"other.test:443","timeout_ms":2000}`}}}}}

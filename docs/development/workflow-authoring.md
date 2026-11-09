@@ -28,6 +28,12 @@ The prompt, visible source and included conversation are sent to the configured
 model provider. Review the proposal on the canvas; building and submitting a run
 remain explicit actions. Ordinary editing works when assistance is unavailable.
 
+Custom blocks carry a visible **Custom** label, typed inputs and outputs, a
+description and inspectable Go source. The hosted assistant checks their code
+with the compiler before offering a proposal. This catches build errors, not
+network failures or an incorrect experiment design. Expand grouped stages to
+inspect the measurements and their control flow before running them.
+
 Conditions, calculations and repeats execute inside the compiled WASI program.
 The dispatcher coordinates experiment readiness and stores results; it does not
 compile source or orchestrate individual blocks. See the
