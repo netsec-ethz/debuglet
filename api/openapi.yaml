@@ -9975,7 +9975,7 @@ paths:
     "post":
       "operationId": "askStudioAssistant"
       "summary": "Propose an editable workflow or experiment."
-      "description": "Added in API 1.29. Requires an account and measurements:write scope; cookie sessions require CSRF. Accepts existing editable graph JSON, including incomplete drafts, and returns either a validated same-kind document or clarification without a document. Proposals containing custom Go are compiled through the existing hosted worker before acceptance; compiler diagnostics can use the same single correction attempt. No execution, submission or payment occurs. The configured provider receives the prompt, supplied history and document; it receives no account credentials. Maximum encoded body 4259840 bytes, document 256 KiB, message 8192 UTF-8 bytes, history 12 messages and 16384 UTF-8 bytes total. One request per account and four globally may be active; custom-code checks also acquire the ordinary compiler capacity. Account admission and a global six requests/minute rate with burst four apply. Deadline is 90 seconds including at most one repair request; provider responses are capped at 512 KiB and 16384 output tokens per call. Upstream errors are sanitized. Responses are not cached."
+      "description": "Added in API 1.29. Requires an account and measurements:write scope; cookie sessions require CSRF. Accepts existing editable graph JSON, including incomplete drafts, and returns either a validated same-kind document or clarification without a document. Proposals containing custom Go are compiled through the existing hosted worker before acceptance; compiler diagnostics can use the same single correction attempt. No execution, submission or payment occurs. The configured provider receives the prompt, supplied history and document; it receives no account credentials. Maximum encoded body 4259840 bytes, document 256 KiB, message 8192 UTF-8 bytes, history 12 messages and 16384 UTF-8 bytes total. One request per account and four globally may be active; custom-code checks also acquire the ordinary compiler capacity. Account admission and a global six requests/minute rate with burst four apply. Deadline is three minutes including at most one repair request; provider responses are capped at 512 KiB and 16384 output tokens per call. Upstream errors are sanitized. Responses are not cached."
       "parameters":
         -
           "name": "Debuglet-API-Version"
@@ -10136,8 +10136,8 @@ paths:
   "/studio/assistant/stream":
     "post":
       "operationId": "streamStudioAssistant"
-      "summary": "Stream actual assistant stages and its checked proposal."
-      "description": "Uses the same request, authentication, CSRF, capacity, rate limits and 90-second deadline as POST /studio/assistant. After admission, sends text/event-stream records whose data is one StudioAssistantStreamEvent JSON object. Stage events reflect actual generation, validation, optional compilation and correction; they do not describe provider internals. One terminal result or sanitized error ends the stream. Failures before streaming use ordinary JSON status responses. Canceling the connection cancels the request. No event is an execution or submission, and an incomplete stream must not be applied. Responses are not cached or replayed."
+      "summary": "Stream actual assistant progress and its checked proposal."
+      "description": "Uses the same request, authentication, CSRF, capacity, rate limits and three-minute deadline as POST /studio/assistant. After admission, sends text/event-stream records whose data is one StudioAssistantStreamEvent JSON object. Stage events reflect actual generation, validation, optional compilation and correction. Provider progress, when available, reports request acceptance, displayable reasoning-summary deltas and generated output byte counts; it never includes raw reasoning, encrypted state or partial proposal content. One terminal result or sanitized error ends the stream. Failures before streaming use ordinary JSON status responses. Canceling the connection cancels the request. No event is an execution or submission, and an incomplete stream must not be applied. Responses are not cached or replayed."
       "parameters":
         -
           "name": "Debuglet-API-Version"
@@ -15897,6 +15897,24 @@ components:
             "stage":
               "type": "string"
               "enum": ["generating", "validating", "compiling", "repairing"]
+        -
+          "type": "object"
+          "additionalProperties": false
+          "required": ["type", "phase"]
+          "properties":
+            "type":
+              "type": "string"
+              "enum": ["provider_progress"]
+            "phase":
+              "type": "string"
+              "enum": ["accepted", "reasoning", "output"]
+            "summary_delta":
+              "type": "string"
+              "description": "Provider public summary delta, bounded to 8192 UTF-8 bytes across one attempt."
+            "output_bytes":
+              "type": "integer"
+              "minimum": 0
+              "maximum": 524288
         -
           "type": "object"
           "additionalProperties": false

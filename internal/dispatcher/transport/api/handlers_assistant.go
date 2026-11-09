@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -141,11 +142,14 @@ func (h *Handler) assistantReplyWithProgress(c echo.Context, stream bool) error 
 // Progress is emitted by the generation/validation pipeline itself. The final
 // proposal has the same checks and shape as the ordinary JSON response.
 type assistantStreamEvent struct {
-	Type   string                    `json:"type"`
-	Stage  string                    `json:"stage,omitempty"`
-	Result *studio.AssistantResponse `json:"result,omitempty"`
-	Error  *ErrorResponse            `json:"error,omitempty"`
-	Status int                       `json:"status,omitempty"`
+	Type         string                    `json:"type"`
+	Stage        string                    `json:"stage,omitempty"`
+	Phase        string                    `json:"phase,omitempty"`
+	SummaryDelta string                    `json:"summary_delta,omitempty"`
+	OutputBytes  int                       `json:"output_bytes,omitempty"`
+	Result       *studio.AssistantResponse `json:"result,omitempty"`
+	Error        *ErrorResponse            `json:"error,omitempty"`
+	Status       int                       `json:"status,omitempty"`
 }
 
 func (h *Handler) streamAssistant(c echo.Context, ctx context.Context, cancel context.CancelFunc, input studio.AssistantRequest, check studio.AssistantCompileCheck) error {
@@ -153,18 +157,18 @@ func (h *Handler) streamAssistant(c echo.Context, ctx context.Context, cancel co
 	c.Response().Header().Set("Content-Type", "text/event-stream")
 	c.Response().Header().Set("X-Accel-Buffering", "no")
 	controller := http.NewResponseController(c.Response().Writer)
+	var writeMu sync.Mutex
 	writeFailed := false
-	send := func(event assistantStreamEvent) error {
+	write := func(record string) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
 		if err := c.Request().Context().Err(); err != nil {
-			return err
-		}
-		data, err := json.Marshal(event)
-		if err != nil {
 			return err
 		}
 		_ = controller.SetWriteDeadline(time.Now().Add(30 * time.Second))
 		defer controller.SetWriteDeadline(time.Time{})
-		if _, err = fmt.Fprintf(c.Response(), "data: %s\n\n", data); err == nil {
+		_, err := fmt.Fprint(c.Response(), record)
+		if err == nil {
 			err = controller.Flush()
 		}
 		if err != nil {
@@ -173,12 +177,26 @@ func (h *Handler) streamAssistant(c echo.Context, ctx context.Context, cancel co
 		}
 		return err
 	}
-	result, err := h.assistant.client.ReplyObserved(ctx, input, check, func(stage string) error {
+	send := func(event assistantStreamEvent) error {
+		data, err := json.Marshal(event)
+		if err != nil {
+			return err
+		}
+		return write("data: " + string(data) + "\n\n")
+	}
+	stopKeepalive := startAssistantKeepalive(ctx, 15*time.Second, func() error {
+		return write(": keepalive\n\n")
+	})
+	result, err := h.assistant.client.ReplyProgress(ctx, input, check, func(progress studio.AssistantProgress) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		return send(assistantStreamEvent{Type: "stage", Stage: stage})
+		if progress.Stage != "" {
+			return send(assistantStreamEvent{Type: "stage", Stage: progress.Stage})
+		}
+		return send(assistantStreamEvent{Type: "provider_progress", Phase: progress.Phase, SummaryDelta: progress.SummaryDelta, OutputBytes: progress.OutputBytes})
 	})
+	stopKeepalive() // Join all comment writes before examining state or ending the stream.
 	if err != nil {
 		h.logAssistantFailure(c, err, ctx.Err(), time.Since(started))
 	}
@@ -194,6 +212,33 @@ func (h *Handler) streamAssistant(c echo.Context, ctx context.Context, cancel co
 		return send(assistantStreamEvent{Type: "error", Error: &body, Status: status})
 	}
 	return send(assistantStreamEvent{Type: "result", Result: &result})
+}
+
+// SSE comments keep an otherwise idle connection alive without inventing work
+// stages. The returned function waits for any in-flight write to finish.
+func startAssistantKeepalive(ctx context.Context, interval time.Duration, send func() error) func() {
+	stop, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-stop:
+				return
+			case <-ticker.C:
+				if err := send(); err != nil {
+					return
+				}
+			}
+		}
+	}()
+	return func() {
+		close(stop)
+		<-done
+	}
 }
 
 // Streaming failures happen after the HTTP response has begun, so they cannot
