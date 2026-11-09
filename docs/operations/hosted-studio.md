@@ -158,8 +158,9 @@ workflow/experiment build and ordinary run/share/re-run through the browser.
 The assistant runs in the dispatcher and uses an operator-selected Chat
 Completions endpoint with function calling, including OpenAI and compatible
 providers such as GLM. The current adapter does not support the Responses API.
-The compiler sandbox remains offline. The assistant only proposes editable
-source; the normal build and submission actions remain separate. No provider is
+The compiler sandbox remains offline. The assistant proposes editable source;
+custom Go is checked with the same hosted compiler before the proposal is returned.
+The normal build and submission actions remain separate. No provider is
 selected or enabled by default. Verify the endpoint and model supplied for your
 provider account before enabling it.
 
@@ -172,8 +173,13 @@ constrains the shape; it does not establish correct wiring or measurement
 semantics. Every proposed graph passes validation and Go source generation,
 including every participant in a coordinated experiment. Assistant proposals also
 check whether action outputs are available along supported loop-free control
-paths; loops and custom conditions still need review. Build still compiles
-the generated program separately. A rejected graph gets at most one correction
+paths; loops and custom conditions still need review. For proposals containing
+custom blocks, actual compilation errors also feed the one correction attempt.
+The compiler shares the normal per-account/global capacity limits, and a busy or
+unavailable compiler leaves the draft unchanged. Built-in-only drafts do not
+need the compiler at this stage. Compilation proves neither runtime success nor
+network reachability. The check does not retain a bundle, so Build compiles the
+accepted source again. A rejected graph gets at most one correction
 within the same 90-second deadline; truncated output is rejected without another
 provider call. For small changes, the model can return only changed nodes and
 connections. The dispatcher applies these edits to the supplied snapshot and

@@ -184,6 +184,17 @@ type assistantModelMessage struct {
 // Reply makes at most two provider requests: one proposal and one correction
 // using the existing graph validator's diagnostics. It never executes tool calls.
 func (a *Assistant) Reply(ctx context.Context, request AssistantRequest) (AssistantResponse, error) {
+	return a.ReplyChecked(ctx, request, nil)
+}
+
+// AssistantCompileCheck checks a structurally valid proposal with the existing
+// compiler. A diagnostic permits one model correction; an infrastructure error
+// stops the request. It must not execute or submit the generated program.
+type AssistantCompileCheck func(context.Context, string, json.RawMessage) (diagnostic string, err error)
+
+// ReplyChecked adds compilation feedback for custom code to the same bounded
+// proposal/repair cycle. A nil check keeps Reply's source-only authoring behavior.
+func (a *Assistant) ReplyChecked(ctx context.Context, request AssistantRequest, check AssistantCompileCheck) (AssistantResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, AssistantTimeout)
 	defer cancel()
 	catalog, _ := json.Marshal(workflow.Catalog())
@@ -256,6 +267,18 @@ func (a *Assistant) Reply(ctx context.Context, request AssistantRequest) (Assist
 				editBase = proposed.Document
 				baseDescription = "Edits now target the rejected proposal above, including its earlier edits, not the original user document."
 				proposed.Document, err = assistantValidateDocument(request.Kind, proposed.Document)
+				if err == nil && check != nil && assistantHasCustomCode(request.Kind, proposed.Document) {
+					diagnostic, checkErr := check(ctx, request.Kind, proposed.Document)
+					if ctx.Err() != nil {
+						return AssistantResponse{}, assistantContextError(ctx)
+					}
+					if checkErr != nil {
+						return AssistantResponse{}, checkErr
+					}
+					if diagnostic != "" {
+						err = errors.New("Custom code did not compile: " + assistantBoundText(diagnostic, assistantFeedbackLimit))
+					}
+				}
 			}
 		}
 		if err == nil {
@@ -277,6 +300,27 @@ func (a *Assistant) Reply(ctx context.Context, request AssistantRequest) (Assist
 			Content: "The edit was not applied. " + instruction + " Diagnostics: " + assistantFeedback(err)})
 	}
 	return AssistantResponse{}, assistantError("invalid_response", 0)
+}
+
+func assistantHasCustomCode(kind string, document json.RawMessage) bool {
+	var source struct {
+		CustomBlocks []json.RawMessage `json:"custom_blocks"`
+		Participants []struct {
+			Workflow struct {
+				CustomBlocks []json.RawMessage `json:"custom_blocks"`
+			} `json:"workflow"`
+		} `json:"participants"`
+	}
+	_ = json.Unmarshal(document, &source) // The full document was validated above.
+	if kind == "workflow" {
+		return len(source.CustomBlocks) > 0
+	}
+	for _, participant := range source.Participants {
+		if len(participant.Workflow.CustomBlocks) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *Assistant) complete(ctx context.Context, messages []assistantModelMessage, kind string) (assistantModelMessage, error) {
