@@ -317,13 +317,66 @@ func TestAssistantBoundsValidationFeedback(t *testing.T) {
 	}
 }
 
-func TestAssistantClarificationDoesNotChangeDocument(t *testing.T) {
-	client := assistantFixture(t, func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"Which DNS resolver should this use?"}}]}`)
+func TestAssistantClarificationPreservesDraftAndFollowupContext(t *testing.T) {
+	original := workflow.Experiment{Version: 1, Kind: "experiment", Name: "Three probes", Channels: []workflow.Channel{}, Participants: []workflow.Participant{
+		{ID: "one", Workflow: sampleWorkflow()}, {ID: "two", Workflow: sampleWorkflow()}, {ID: "three", Workflow: sampleWorkflow()},
+	}}
+	request := assistantInput(t, "experiment", original)
+	request.Message = "Replace each program with one TCP connection measurement from these three vantage points."
+	question := "Which target hostname should the three probes connect to?"
+	var calls atomic.Int32
+	client := assistantFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []assistantModelMessage `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if calls.Add(1) == 1 {
+			assistantToolReply(w, map[string]any{"message": question, "action": "", "document": nil, "edits": nil})
+			return
+		}
+		if len(body.Messages) != 4 || body.Messages[1].Role != "user" || body.Messages[1].Content != request.History[0].Content || body.Messages[2].Role != "assistant" || body.Messages[2].Content != question {
+			t.Error("clarification follow-up lost the original request or question")
+		}
+		var input struct {
+			Kind     string          `json:"kind"`
+			Request  string          `json:"request"`
+			Document json.RawMessage `json:"document"`
+		}
+		if err := json.Unmarshal([]byte(body.Messages[3].Content), &input); err != nil || input.Kind != "experiment" || input.Request != "example.test" || !bytes.Equal(input.Document, request.Document) {
+			t.Error("follow-up lost the latest answer or current draft")
+		}
+		participants := []any{}
+		for _, p := range original.Participants {
+			wf := workflow.Workflow{Version: 1, Name: "TCP connection", Entry: "tcp", Nodes: []workflow.Node{{ID: "tcp", Block: "tcp_connect", Inputs: map[string]any{"target": input.Request + ":443"}}}, Edges: []workflow.Edge{}}
+			participants = append(participants, map[string]any{"id": p.ID, "workflow": assistantWireFixture(t, wf)})
+		}
+		assistantToolReply(w, map[string]any{"message": "All three probes connect to example.test:443.", "document": map[string]any{"version": 1, "kind": "experiment", "name": "Three TCP probes", "participants": participants, "channels": []any{}}})
 	})
-	result, err := client.Reply(t.Context(), assistantInput(t, "workflow", sampleWorkflow()))
-	if err != nil || result.Message != "Which DNS resolver should this use?" || len(result.Document) != 0 {
-		t.Fatalf("clarification: %#v %v", result, err)
+	client.strictSchema = true
+	before := bytes.Clone(request.Document)
+	reply, err := client.Reply(t.Context(), request)
+	if err != nil || reply.Message != question || len(reply.Document) != 0 || !bytes.Equal(request.Document, before) {
+		t.Fatalf("clarification changed the draft: %+v %v", reply, err)
+	}
+	request.History = []AssistantMessage{{Role: "user", Content: request.Message}, {Role: "assistant", Content: reply.Message}}
+	request.Message = "example.test"
+	reply, err = client.Reply(t.Context(), request)
+	if err != nil || calls.Load() != 2 || len(reply.Document) == 0 {
+		t.Fatalf("answered clarification did not produce a proposal: %+v %v", reply, err)
+	}
+	result, err := DecodeExperiment(bytes.NewReader(reply.Document))
+	if err != nil || len(result.Participants) != 3 {
+		t.Fatalf("incomplete proposal: %v", err)
+	}
+	for _, p := range result.Participants {
+		if len(p.Workflow.Nodes) != 1 || p.Workflow.Nodes[0].Inputs["target"] != "example.test:443" {
+			t.Fatal("follow-up dropped a requested measurement")
+		}
+	}
+	if !bytes.Equal(request.Document, before) {
+		t.Fatal("proposal overwrote the draft before acceptance")
 	}
 }
 
