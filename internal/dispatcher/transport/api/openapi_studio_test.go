@@ -83,6 +83,32 @@ func TestContractStudioCatalog(t *testing.T) {
 	oaCheckResponse(t, c, http.MethodGet, "/studio/catalog", http.StatusOK, data)
 }
 
+func TestContractStudioCustomDescriptions(t *testing.T) {
+	contract := oaContract(t)
+	wf := communityTestWorkflow()
+	wf.CustomBlocks = []workflow.CustomBlock{{ID: "custom", Label: "Custom", Code: "return nil, nil"}}
+	for _, description := range []string{"", "Explain the custom calculation."} {
+		wf.CustomBlocks[0].Description = description
+		experiment := workflow.Experiment{Version: 1, Kind: "experiment", Name: "Custom experiment", Participants: []workflow.Participant{{ID: "a", Workflow: wf}, {ID: "b", Workflow: wf}}, Channels: []workflow.Channel{}}
+		for path, document := range map[string]any{
+			"/studio/validate": wf, "/studio/build": wf,
+			"/studio/experiments/validate": experiment, "/studio/experiments/build": experiment,
+		} {
+			body, err := json.Marshal(document)
+			if err != nil {
+				t.Fatal(err)
+			}
+			operation, _, err := contract.operation(http.MethodPost, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, problem := range contract.validateJSON(jsonSchema(operation, "requestBody"), body, path) {
+				t.Error(problem)
+			}
+		}
+	}
+}
+
 func TestContractStudioGoPreviews(t *testing.T) {
 	contract := oaContract(t)
 	wf := communityTestWorkflow()

@@ -360,11 +360,17 @@ func TestWorkerBuildsExistingBundleFormats(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := NewWorkerHandler(builder)
-	wf, _ := json.Marshal(sampleWorkflow())
+	document := sampleWorkflow()
+	const description = "Keep this explanation with the editable source."
+	document.CustomBlocks = []workflow.CustomBlock{{ID: "custom", Label: "Custom", Description: description, Code: "return nil, nil"}}
+	wf, _ := json.Marshal(document)
 	response := workerRequest(handler, "POST", "/studio/build", wf)
 	var bundle Bundle
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &bundle) != nil || !bytes.HasPrefix(bundle.Wasm, []byte{0, 'a', 's', 'm'}) || bundle.WasmSHA256 != digest(bundle.Wasm) {
 		t.Fatalf("workflow build returned %d: %.1024s", response.Code, response.Body)
+	}
+	if len(bundle.Workflow.CustomBlocks) != 1 || bundle.Workflow.CustomBlocks[0].Description != description || !strings.Contains(bundle.WorkflowJSON, description) {
+		t.Fatal("workflow build lost the custom block description")
 	}
 	experiment, err := os.ReadFile("../../examples/workflows/experiments/three-node.json")
 	if err != nil {

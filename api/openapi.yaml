@@ -15679,6 +15679,9 @@ components:
           "type": "string"
         "label":
           "type": "string"
+        "description":
+          "type": "string"
+          "description": "Optional explanation of the custom block. Limited to 1024 UTF-8 bytes by workflow validation."
         "inputs":
           "type": "array"
           "items":
