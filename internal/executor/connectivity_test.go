@@ -76,7 +76,9 @@ func TestConnectivityListenerReservationsReturnAfterHeartbeat(t *testing.T) {
 
 func TestConnectivityFollowsCapabilityCadenceWithHeartbeatJitter(t *testing.T) {
 	e := newFixtureExecutor(t, fixtureConfig(), nil, newFixtureMemoryStorage(t))
-	base := time.Now()
+	// Start beyond epoch zero: attribution becoming available intentionally
+	// triggers an extra immediate report on hosts that support packet tagging.
+	base := time.Now().Add(time.Minute)
 	lastReport := time.Time{}
 	reports := 0
 	// A 15s heartbeat can arrive just before its next 30s report deadline.
