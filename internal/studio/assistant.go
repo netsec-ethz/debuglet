@@ -269,6 +269,9 @@ func (a *Assistant) ReplyChecked(ctx context.Context, request AssistantRequest, 
 				editBase = proposed.Document
 				baseDescription = "Edits now target the rejected proposal above, including its earlier edits, not the original user document."
 				proposed.Document, err = assistantValidateDocument(request.Kind, proposed.Document)
+				if err == nil {
+					err = assistantValidateReachability(request.Kind, request.Document, proposed.Document)
+				}
 				if err == nil && check != nil && assistantHasCustomCode(request.Kind, proposed.Document) {
 					diagnostic, checkErr := check(ctx, request.Kind, proposed.Document)
 					if ctx.Err() != nil {
