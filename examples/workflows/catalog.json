@@ -160,7 +160,7 @@
     "id": "send_message",
     "label": "Send message",
     "category": "Experiment",
-    "description": "Send a bounded plaintext JSON message to a participant. Success means the socket write completed, not that the peer processed it. Requires an experiment.",
+    "description": "Send a bounded plaintext JSON message to a participant. Leave request_id empty for a new message/request; when replying, use the request_id output from the earlier Await. Success means the socket write completed, not that the peer processed it. Requires an experiment.",
     "pure": false,
     "inputs": [
       {
@@ -211,7 +211,7 @@
     "id": "await_message",
     "label": "Await message",
     "category": "Experiment",
-    "description": "Wait for one selected incoming message or reply until its deadline. Test ok before using value. Requires an experiment.",
+    "description": "Wait for one selected incoming message or reply until its deadline. Leave request_id empty for a new incoming message/request; when awaiting a reply, use the request_id output from the earlier Send. Test ok before using value. Requires an experiment.",
     "pure": false,
     "inputs": [
       {
