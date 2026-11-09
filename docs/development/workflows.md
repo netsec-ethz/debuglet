@@ -247,11 +247,18 @@ Saved groups are templates: inserting one copies its nodes, internal wires and
 custom block definitions, so editing an instance does not change other instances.
 
 The portable workflow keeps these ordinary nodes and wires, plus optional
-`groups` metadata containing `id`, `label`, `node_ids` and `position`. Grouping
-does not introduce a function call or change execution order. Metadata is retained
-in compiled bundles and included in the workflow checksum. Groups currently
-contain at least two nodes and cannot overlap or nest; ungrouping preserves the
-underlying program.
+`groups` metadata containing `id`, `label`, `node_ids` and `position`. Each group
+lists all its leaf nodes, including those inside smaller groups. A group's parent
+is the smallest group strictly containing those nodes. Groups must contain at
+least two nodes; equal membership or partial overlap is invalid. This supports
+nested views without changing the graph's execution order or introducing function
+calls. Ungrouping preserves the underlying program. Metadata is retained in
+compiled bundles and included in the workflow checksum.
+
+AI-generated views are checked for at most ten immediate blocks or subgroups at
+each level. This presentation limit does not prevent larger manually edited
+views. `workflow.ValidatePresentation` checks this separately from execution
+validation.
 
 ## Experiments with several executors
 

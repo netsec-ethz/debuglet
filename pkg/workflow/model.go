@@ -20,6 +20,9 @@ type Workflow struct {
 }
 
 // Group folds ordinary nodes in the editor without changing their execution.
+// NodeIDs contains every leaf node, including nodes in nested groups. Strict
+// containment determines the hierarchy; equal or partially overlapping sets
+// are invalid.
 type Group struct {
 	ID       string    `json:"id"`
 	Label    string    `json:"label"`
