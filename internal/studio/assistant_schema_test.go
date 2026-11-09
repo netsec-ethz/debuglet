@@ -121,13 +121,17 @@ func TestAssistantStrictProposalNormalizesLiteralInputsAndMetadata(t *testing.T)
 }
 
 func TestAssistantStrictClarificationAndCoordinateHaveNoDocument(t *testing.T) {
-	for _, action := range []string{"", "coordinate"} {
+	for _, action := range []string{"clarify", "coordinate"} {
 		client := assistantFixture(t, func(w http.ResponseWriter, _ *http.Request) {
 			assistantToolReply(w, map[string]any{"message": "Which target?", "action": action, "document": nil})
 		})
 		client.strictSchema = true
 		result, err := client.Reply(t.Context(), assistantInput(t, "workflow", sampleWorkflow()))
-		if err != nil || result.Action != action || len(result.Document) != 0 {
+		wantAction := action
+		if action == "clarify" {
+			wantAction = ""
+		}
+		if err != nil || result.Action != wantAction || len(result.Document) != 0 {
 			t.Fatalf("unexpected clarification: %+v %v", result, err)
 		}
 	}

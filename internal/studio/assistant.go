@@ -251,7 +251,7 @@ func (a *Assistant) ReplyObserved(ctx context.Context, request AssistantRequest,
 			return AssistantResponse{}, err
 		}
 		if len(answer.ToolCalls) == 0 {
-			if strings.TrimSpace(answer.Content) == "" || len(answer.Content) > assistantTextLimit {
+			if a.strictSchema || strings.TrimSpace(answer.Content) == "" || len(answer.Content) > assistantTextLimit {
 				return AssistantResponse{}, assistantError("invalid_response", 0)
 			}
 			return AssistantResponse{Message: answer.Content}, nil
@@ -288,11 +288,23 @@ func (a *Assistant) ReplyObserved(ctx context.Context, request AssistantRequest,
 		if err == nil && proposed.Edits != nil && (!a.strictSchema || len(proposed.Document) != 0) {
 			err = errors.New("return either edits or a document, not both; edits require the strict provider schema")
 		}
-		if err == nil && proposed.Action != "" &&
-			((proposed.Action != "coordinate" && proposed.Action != "code") ||
-				(proposed.Action == "coordinate" && request.Kind != "workflow") ||
-				len(proposed.Document) != 0 || proposed.Edits != nil || len(proposed.Code) != 0 || request.AllowCode) {
-			err = errors.New("offer coordinate for a workflow or code without any document or edits; wait for the user's explicit choice")
+		if err == nil {
+			hasProposal := len(proposed.Document) != 0 || proposed.Edits != nil || len(proposed.Code) != 0
+			switch proposed.Action {
+			case "":
+				if !hasProposal {
+					err = errors.New("empty proposal: return the complete requested document, substantive edits or approved code now; use action clarify only when an essential unanswered requirement prevents authoring")
+				}
+			case "clarify":
+				if hasProposal {
+					err = errors.New("a clarification asks one essential question without changing the document")
+				}
+			default:
+				if (proposed.Action != "coordinate" && proposed.Action != "code") ||
+					(proposed.Action == "coordinate" && request.Kind != "workflow") || hasProposal || request.AllowCode {
+					err = errors.New("offer coordinate for a workflow or code without any document or edits; wait for the user's explicit choice")
+				}
+			}
 		}
 		if err == nil && request.AllowCode && (len(proposed.Document) != 0 || proposed.Edits != nil) {
 			err = errors.New("Go mode replaces functions through code only; the saved visual graph must remain unchanged")
@@ -356,6 +368,10 @@ func (a *Assistant) ReplyObserved(ctx context.Context, request AssistantRequest,
 			}
 		}
 		if err == nil {
+			// Clarification is a provider outcome, not a public editor action.
+			if proposed.Action == "clarify" {
+				proposed.Action = ""
+			}
 			return proposed.AssistantResponse, nil
 		}
 		if attempt == 1 {
@@ -408,7 +424,7 @@ func (a *Assistant) complete(ctx context.Context, messages []assistantModelMessa
 		"name": "propose_document", "description": "Propose one complete editable document of the same kind, ask for clarification, or offer to convert a workflow to a coordinated experiment.",
 		"parameters": map[string]any{"type": "object", "properties": map[string]any{
 			"message": map[string]any{"type": "string"}, "document": map[string]any{"type": "object"},
-			"action": map[string]any{"type": "string", "enum": []string{"coordinate", "code"}, "description": "Offer coordinated or Go authoring without a document; the user must accept first."},
+			"action": map[string]any{"type": "string", "enum": []string{"clarify", "coordinate", "code"}, "description": "Use clarify for one essential unanswered question, or offer coordinated/Go authoring without a document; offers require user acceptance."},
 		}, "required": []string{"message"}, "additionalProperties": false},
 	}}
 	if a.strictSchema {
@@ -587,7 +603,7 @@ func assistantBoundText(text string, limit int) string {
 
 const assistantInstructions = `You author editable Debuglet measurements. Use propose_document and its response format; the supplied snapshot is current editor source. Never claim to have run, saved or deployed it. The catalog defines blocks, ports and types. Give a brief explanation; no code fences, bundles or credentials.
 
-1. Complete EVERY participant and requested measurement, exchange and comparison. Each required action/report must be reachable from its participant entry. Never return a scaffold, partial participant, placeholder result or promise to finish later. Ask one concise clarification only if an essential target/capability is missing. Repairs preserve the entire requested experiment; do not delete a failing stage to pass validation.
+1. For every request to create or change an experiment, return the complete document or substantive edits in propose_document in this same response. A message with no document or edits is only for a necessary clarification or an explicit coordinate/code consent offer, never an acknowledgment such as "I will build it". Complete EVERY participant and requested measurement, exchange and comparison. Each required action/report must be reachable from its participant entry. Never return a scaffold, partial participant, placeholder result or promise to finish later. Ask one concise clarification only if an essential target/capability is missing: use action:"clarify" with null document/edits and state the missing requirement as a question. Use an empty action only with an actual proposal; never label an acknowledgment or a plan as clarification. When the user answers a clarification, resume the original unfinished request from the conversation and return the complete graph proposal in this response. Do not return only an acknowledgment, a summary of agreed settings or a promise to build next; ask again only if another essential requirement truly remains missing. Repairs preserve the entire requested experiment; do not delete a failing stage to pass validation.
 
 2. Keep it small. Preserve unrelated source, identifiers, settings and layout on edits. Use built-in network, control and messaging blocks. Add only requested operations, necessary correctness checks and output. No unrequested retries, sampling, statistics, charts or duplicate reports. Actions already record all outputs including errors/timings: no set_field/emit chains to repeat them. Reuse outputs and literal settings; choose one clear report for a derived comparison.
 
@@ -596,7 +612,7 @@ const assistantInstructions = `You author editable Debuglet measurements. Use pr
 4. Preserve failures. Skipped actions have NO outputs, including ok/error: never read them on bypass paths. Guard address-dependent connections; consume their outputs only where they executed. A failed resolver/check must not discard another valid result. Failed timings/differences are null, never zero. Compare only complete successful responses. Transport completion, protocol success, completeness and run completion differ. Missing messages/DNS failures cannot produce successful comparisons.
 Example for requested independent resolver comparisons: handle resolver A, then resolver B. If both selected local/peer addresses are valid: true -> local TCP -> peer TCP -> comparison helper -> table -> next resolver; false -> unavailable row -> next resolver. Both TCP checks execute even if the first connection fails. The comparison helper consumes ONLY this resolver's outputs, inside the true branch. The unavailable row uses DNS/message status, never skipped TCP outputs. Do not merge optional TCP outputs into one shared all-resolver comparison. Reuse the helper definition and group each resolver's check/comparison stage into one named expandable group.
 
-5. Use simple defaults. Use catalog defaults for optional inputs. For resolving a supplied web hostname then connecting, default to one IPv4 A query and TCP 443. Cloudflare DNS is 1.1.1.1:53; Google DNS is 8.8.8.8:53. Select the first IPv4 address only after ok, rcode NOERROR, not truncated and nonempty addresses; do not add all-address loops unless requested. State meaningful defaults briefly. Executor selection and listener permissions are launch choices; do not ask about them while drafting.
+5. Use simple defaults. Use catalog defaults for optional inputs. For resolving a supplied web hostname then connecting, default to one IPv4 A query and TCP 443. Cloudflare DNS is 1.1.1.1:53; Google DNS is 8.8.8.8:53. Select the first IPv4 address only after ok, rcode NOERROR, not truncated and nonempty addresses; do not add all-address loops unless requested. State meaningful defaults briefly. Executor selection, listener permissions and listener address/port allocation are launch choices. Initial experiment readiness and reservation/start times are managed by the runtime and launch setup, outside the editable graph; they are not drafting blockers. Do not ask about these settings while drafting. Add phase_barrier only for explicitly requested additional synchronization during the measurement, never to implement the managed initial readiness.
 
 6. Use small custom processing actions when they replace many elementary field/formatting blocks. Give each a clear label, short description, typed inputs/outputs and visible code; define it in every workflow that uses it. Code is a Go FUNCTION BODY for func(inputs map[string]any) (map[string]any,error), not a declaration. Only fmt, json, os, guest, debuglet, time, strings and math packages are available; no imports. JSON arrays arrive as []any. Prefer helpers that only transform explicit inputs. If a genuinely missing operation needs custom network I/O, make it a clearly named, described custom action with typed inputs/outputs and bounded runtime; never disguise it as processing or hide an entire experiment inside one block. If tightly coupled sockets/state/concurrency would be clearer in Go functions, explain the missing capability and offer action:"code" with no document. Do not switch to code because the graph is large; grouping is for size. Wait for allow_code:true before returning any Go override.
 Worked example: tcp_connect actions a and b -> custom comparison -> report_table. Both checks execute before comparison. Data connections provide a.ok/b.ok and a.duration_ms/b.duration_ms to helper inputs a_ok:boolean,b_ok:boolean,a_ms:number,b_ms:number; rows:any feeds the table. A helper body is:
