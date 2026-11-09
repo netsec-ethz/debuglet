@@ -30,8 +30,15 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// submissionUploadTimeout bounds delivery after admission independently of the
+// HTTP connection. Closing the browser is not a cancellation of accepted work.
+const submissionUploadTimeout = time.Minute
+
 func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.DebugletSpec, userID *uuid.UUID) (uuid.UUIDs, error) {
-	g, subCtx := errgroup.WithContext(ctx)
+	return d.submitDebuglets(ctx, specs, userID, submissionUploadTimeout)
+}
+
+func (d *Dispatcher) submitDebuglets(ctx context.Context, specs []models.DebugletSpec, userID *uuid.UUID, uploadTimeout time.Duration) (uuid.UUIDs, error) {
 	// debuglet IDs in the same order as the submission
 	debugletIDS := make(uuid.UUIDs, len(specs))
 	selected := make([]*submissionOwner, len(specs))
@@ -249,6 +256,13 @@ func (d *Dispatcher) SubmitDebuglets(ctx context.Context, specs []models.Debugle
 	}
 
 	d.mu.Unlock()
+	// The transaction committed the batch, its orders and reservations. From
+	// here delivery belongs to the dispatcher, not the browser connection.
+	// Each upload still holds a session mutation, so retirement and shutdown
+	// cancel and join it. An expired delivery budget uses normal batch cleanup.
+	uploadCtx, cancelUpload := context.WithTimeout(context.WithoutCancel(ctx), uploadTimeout)
+	defer cancelUpload()
+	g, subCtx := errgroup.WithContext(uploadCtx)
 	for i := range sreqs {
 		fields := daemonlog.RunFields(ctx, debugletIDS[i], specs[i].ExecutorID, selected[i].owner.Binding())
 		if userID != nil {
@@ -497,8 +511,13 @@ type submissionOwner struct {
 
 func (d *Dispatcher) uploadToExecutor(requestCtx, batchCtx context.Context, selected *submissionOwner, i int, debugletID uuid.UUID, spec models.DebugletSpec) func() error {
 	return func() (uploadErr error) {
-		ctx, finish := mutationCallContext(batchCtx, selected.mutation)
-		defer finish()
+		var finish func()
+		defer func() {
+			if finish != nil {
+				finish()
+			}
+		}()
+		ctx := batchCtx
 		started := time.Now()
 		stage := "session_lookup"
 		fields := daemonlog.RunFields(ctx, debugletID, spec.ExecutorID, selected.owner.Binding())
@@ -513,6 +532,17 @@ func (d *Dispatcher) uploadToExecutor(requestCtx, batchCtx context.Context, sele
 			failure = append(failure, zap.String("request_context_code", status.FromContextError(requestCtx.Err()).Code().String()))
 			d.logger.Warn("Run upload failed", failure...)
 		}()
+		// Admission followed the request until its commit. Fork that owned
+		// operation onto the bounded delivery context, even if the caller has
+		// since disconnected. Session retirement still cancels the child.
+		admission := selected.mutation
+		mutation, err := admission.Fork(batchCtx)
+		if err != nil {
+			return err
+		}
+		selected.mutation = mutation
+		admission.Finish()
+		ctx, finish = mutationCallContext(batchCtx, mutation)
 		d.logger.Debug("Uploading to executor", fields...)
 		client, ok := d.Bidi.GetClientFor(selected.owner)
 		if !ok {
