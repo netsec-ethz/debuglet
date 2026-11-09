@@ -63,11 +63,10 @@ import (
 )
 
 type Executor struct {
-	capabilityMu     sync.Mutex
-	capabilityNext   time.Time
-	connectivityNext time.Time
-	addressNext      time.Time
-	addressCheck     *protocol.AddressSelfCheck
+	capabilityMu   sync.Mutex
+	capabilityNext time.Time
+	addressNext    time.Time
+	addressCheck   *protocol.AddressSelfCheck
 	// capabilityReason is the attribution reason of the last report sent.
 	capabilityReason string
 	// capabilityTagging is the tagging mode of the last report sent.

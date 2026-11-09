@@ -196,8 +196,8 @@ func TestConnectivitySkipsBusyListenerSetup(t *testing.T) {
 	}
 	vantage := &pb.VantagePointReport{Listeners: []string{"tcp"}}
 	e.probeConnectivity(t.Context(), spec.Binding, vantage)()
-	if vantage.Connectivity != nil || !e.connectivityNext.IsZero() {
-		t.Fatal("skipped proof replaced the prior observation or delayed the next sample")
+	if vantage.Connectivity != nil {
+		t.Fatal("skipped proof replaced the prior observation")
 	}
 	close(release)
 	select {

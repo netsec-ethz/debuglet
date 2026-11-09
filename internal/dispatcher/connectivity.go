@@ -140,7 +140,9 @@ func (d *Dispatcher) observeConnectivity(ctx context.Context, owner *rpc.Session
 		d.mu.Unlock()
 		return nil
 	}
-	entry.connectivityNext = now.Add(30 * time.Second)
+	// Executors normally report every 30s. Leave arrival-jitter headroom so
+	// this abuse bound does not discard alternating fresh reports at 29.99s.
+	entry.connectivityNext = now.Add(15 * time.Second)
 	target, receipts, advertised, source := entry.display, entry.reflections, entry.PublicHost(), entry.sourceIp
 	d.mu.Unlock()
 	out := &wire.Connectivity{SchemaVersion: 1, IPv4: egressObservation(report.Ipv4, receipts[0], now), IPv6: egressObservation(report.Ipv6, receipts[1], now),
