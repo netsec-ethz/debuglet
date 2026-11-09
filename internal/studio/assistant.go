@@ -225,7 +225,14 @@ type AssistantProgress struct {
 }
 
 // ReplyProgress adds optional provider progress without exposing a partial graph.
-func (a *Assistant) ReplyProgress(ctx context.Context, request AssistantRequest, check AssistantCompileCheck, observe func(AssistantProgress) error) (AssistantResponse, error) {
+func (a *Assistant) ReplyProgress(ctx context.Context, request AssistantRequest, check AssistantCompileCheck, observe func(AssistantProgress) error) (response AssistantResponse, replyErr error) {
+	var rejected []AssistantValidationDiagnostic
+	defer func() {
+		var failure *AssistantError
+		if errors.As(replyErr, &failure) {
+			failure.validation = rejected
+		}
+	}()
 	notify := func(stage string) error {
 		if observe != nil {
 			return observe(AssistantProgress{Stage: stage})
@@ -302,6 +309,7 @@ func (a *Assistant) ReplyProgress(ctx context.Context, request AssistantRequest,
 			Code  []assistantCodeEdit `json:"code,omitempty"`
 		}
 		failureCode := "invalid_response"
+		validationStage := "validating"
 		err = assistantDecode(arguments, &proposed)
 		if a.strictSchema && bytes.Equal(bytes.TrimSpace(proposed.Document), []byte("null")) {
 			proposed.Document = nil
@@ -378,6 +386,7 @@ func (a *Assistant) ReplyProgress(ctx context.Context, request AssistantRequest,
 					if observeErr := notify("compiling"); observeErr != nil {
 						return AssistantResponse{}, observeErr
 					}
+					validationStage = "compiling"
 					diagnostic, checkErr := check(ctx, request.Kind, proposed.Document)
 					if ctx.Err() != nil {
 						return AssistantResponse{}, assistantContextError(ctx)
@@ -398,6 +407,13 @@ func (a *Assistant) ReplyProgress(ctx context.Context, request AssistantRequest,
 			}
 			return proposed.AssistantResponse, nil
 		}
+		// Retain only local validation feedback, never the proposal, prompt or
+		// provider response. Keep both attempts when the correction also fails.
+		detail := err.Error()
+		if a.key != "" {
+			detail = strings.ReplaceAll(detail, a.key, "[redacted]")
+		}
+		rejected = append(rejected, AssistantValidationDiagnostic{Attempt: attempt + 1, Stage: validationStage, Diagnostic: assistantFeedback(errors.New(detail))})
 		if attempt == 1 {
 			return AssistantResponse{}, assistantError(failureCode, 0)
 		}

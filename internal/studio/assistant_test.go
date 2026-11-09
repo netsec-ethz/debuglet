@@ -265,6 +265,20 @@ func TestAssistantRepairsInvalidProposalOnlyOnce(t *testing.T) {
 			if calls.Load() != 2 || (repair && (err != nil || len(result.Document) == 0)) || (!repair && (!errors.Is(err, ErrAssistantInvalidReply) || len(result.Document) != 0)) {
 				t.Fatalf("calls=%d document=%d err=%v", calls.Load(), len(result.Document), err)
 			}
+			if !repair {
+				var failure *AssistantError
+				if !errors.As(err, &failure) || len(failure.ValidationDiagnostics()) != 2 {
+					t.Fatal("lost the first or final rejected graph diagnostic")
+				}
+				for i, diagnostic := range failure.ValidationDiagnostics() {
+					if diagnostic.Attempt != i+1 || diagnostic.Stage != "validating" || !strings.Contains(diagnostic.Diagnostic, "control connections contain a cycle") {
+						t.Fatalf("wrong private graph diagnostic: %+v", diagnostic)
+					}
+				}
+				if strings.Contains(err.Error(), "control connections contain a cycle") {
+					t.Fatal("private validation feedback became the public error")
+				}
+			}
 			encoded, _ := json.Marshal(result)
 			if bytes.Contains(encoded, []byte("private provider context")) {
 				t.Fatal("provider reasoning leaked into result")

@@ -12,6 +12,20 @@ type AssistantError struct {
 	Message        string
 	ProviderStatus int
 	cause          error
+	validation     []AssistantValidationDiagnostic
+}
+
+// AssistantValidationDiagnostic is bounded local feedback for operator logs.
+// It is never included in the public error, a graph response or a provider body.
+type AssistantValidationDiagnostic struct {
+	Attempt    int
+	Stage      string
+	Diagnostic string
+}
+
+// ValidationDiagnostics returns a copy so a caller cannot change retained feedback.
+func (e *AssistantError) ValidationDiagnostics() []AssistantValidationDiagnostic {
+	return append([]AssistantValidationDiagnostic(nil), e.validation...)
 }
 
 func (e *AssistantError) Error() string { return e.Message }

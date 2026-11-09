@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -80,6 +81,65 @@ func TestAssistantDiagnosticRejectsUnboundedErrorFields(t *testing.T) {
 		fields := entry.ContextMap()
 		if len(fields) != 4 || fields["provider_status"] != int64(0) || (fields["reason"] != "canceled" && fields["reason"] != "unknown") {
 			t.Fatalf("unbounded diagnostic: %+v", fields)
+		}
+	}
+}
+
+func TestAssistantLogsPrivateValidationFeedbackOnBothRoutes(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		document := communityTestWorkflow()
+		document.Entry = "missing"
+		proposal, err := json.Marshal(map[string]any{"message": "private generated explanation", "document": document})
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		studioJSON(w, 200, map[string]any{"choices": []any{map[string]any{"finish_reason": "tool_calls", "message": map[string]any{"role": "assistant", "reasoning_content": "private provider reasoning", "tool_calls": []any{map[string]any{"id": "proposal", "type": "function", "function": map[string]any{"name": "propose_document", "arguments": string(proposal)}}}}}}})
+	}))
+	defer provider.Close()
+	assistant, err := studio.NewAssistant(studio.AssistantConfig{Endpoint: provider.URL, Model: "test-model", APIKey: "provider-test-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	core, logs := observer.New(zap.DebugLevel)
+	logger := zap.New(core)
+	f := ccNewFixtureLogged(t, logger, Assistant(assistant))
+	f.root.Config.Handler.(*echo.Echo).Use(RequestLog(logger))
+	browser := studioBrowser(t, f)
+	for _, route := range []string{"/studio/assistant", "/studio/assistant/stream"} {
+		status, _, body, response := authRequest(t, f, http.MethodPost, route, assistantBody(t), browser)
+		want := http.StatusUnprocessableEntity
+		if strings.HasSuffix(route, "/stream") {
+			want = http.StatusOK
+			events := assistantStreamEvents(t, body)
+			last := events[len(events)-1]
+			if last.Error == nil || last.Error.Reason != "invalid_graph" {
+				t.Fatalf("lost classified stream failure: %+v", last)
+			}
+		}
+		if status != want || strings.Contains(string(body), "missing") || !strings.Contains(string(body), "invalid_graph") {
+			t.Fatalf("public validation failure changed: status=%d", status)
+		}
+		id := response.Header.Get(echo.HeaderXRequestID)
+		seen := 0
+		for _, entry := range logs.FilterMessage("Assistant proposal rejected").All() {
+			fields := entry.ContextMap()
+			if fields["request_id"] != id {
+				continue
+			}
+			seen++
+			diagnostic, ok := fields["diagnostic"].(string)
+			if len(fields) != 4 || fields["attempt"] != int64(seen) || fields["stage"] != "validating" || !ok || !strings.Contains(diagnostic, "entry") || len(diagnostic) > 4096 {
+				t.Fatalf("missing correlated validation detail: %+v", fields)
+			}
+			for _, forbidden := range []string{"private generated explanation", "private provider reasoning", "provider-test-secret", "Explain the current graph"} {
+				if strings.Contains(diagnostic, forbidden) {
+					t.Fatal("non-diagnostic content entered the private log")
+				}
+			}
+		}
+		if seen != 2 {
+			t.Fatalf("wanted both rejected attempts for request, got %d", seen)
 		}
 	}
 }
