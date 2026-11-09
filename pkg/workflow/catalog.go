@@ -62,7 +62,11 @@ func catalogFor(w Workflow) map[string]Block {
 		m[b.ID] = b
 	}
 	for _, b := range w.CustomBlocks {
-		m[b.ID] = Block{b.ID, b.Label, "Custom", "Custom Go action", false, b.Inputs, b.Outputs, []string{"next"}}
+		description := b.Description
+		if description == "" {
+			description = "Custom Go action"
+		}
+		m[b.ID] = Block{b.ID, b.Label, "Custom", description, false, b.Inputs, b.Outputs, []string{"next"}}
 	}
 	return m
 }

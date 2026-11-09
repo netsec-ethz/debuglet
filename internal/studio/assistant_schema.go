@@ -39,7 +39,7 @@ func assistantDocumentSchema(kind string) map[string]any {
 	}
 	nodeSchema := map[string]any{"anyOf": []any{node(false), node(true)}}
 	edgeSchema := assistantSchemaObject(map[string]any{"kind": map[string]any{"type": "string", "enum": []string{"control", "data"}}, "from": endpoint, "to": endpoint})
-	customSchema := assistantSchemaObject(map[string]any{"id": str(), "label": str(), "inputs": array(port), "outputs": array(port), "code": str()})
+	customSchema := assistantSchemaObject(map[string]any{"id": str(), "label": str(), "description": map[string]any{"type": "string", "description": "Briefly explain the custom block's purpose and handling of unavailable inputs; at most 1024 UTF-8 bytes. Empty is allowed."}, "inputs": array(port), "outputs": array(port), "code": str()})
 	graph := assistantSchemaObject(map[string]any{
 		"version": map[string]any{"type": "integer", "enum": []int{1}}, "name": str(), "entry": str(),
 		"nodes": array(nodeSchema), "edges": array(edgeSchema),
@@ -133,11 +133,12 @@ func (n assistantWireNode) document() (workflow.Node, error) {
 }
 
 type assistantWireBlock struct {
-	ID      string              `json:"id"`
-	Label   string              `json:"label"`
-	Inputs  []assistantWirePort `json:"inputs"`
-	Outputs []assistantWirePort `json:"outputs"`
-	Code    string              `json:"code"`
+	ID          string              `json:"id"`
+	Label       string              `json:"label"`
+	Description string              `json:"description"`
+	Inputs      []assistantWirePort `json:"inputs"`
+	Outputs     []assistantWirePort `json:"outputs"`
+	Code        string              `json:"code"`
 }
 
 type assistantWirePort struct {
@@ -186,7 +187,7 @@ func (b assistantWireBlock) document() (workflow.CustomBlock, error) {
 	if err != nil {
 		return workflow.CustomBlock{}, err
 	}
-	return workflow.CustomBlock{ID: b.ID, Label: b.Label, Inputs: inputs, Outputs: outputs, Code: b.Code}, nil
+	return workflow.CustomBlock{ID: b.ID, Label: b.Label, Description: b.Description, Inputs: inputs, Outputs: outputs, Code: b.Code}, nil
 }
 
 func assistantDecodeWireDocument(kind string, raw json.RawMessage) (json.RawMessage, error) {
