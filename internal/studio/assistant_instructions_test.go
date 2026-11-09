@@ -34,9 +34,8 @@ func TestAssistantUsesOneAuthoringEncoding(t *testing.T) {
 				if !strings.Contains(instructions, assistantInstructions) || !strings.Contains(request.Messages[len(request.Messages)-1].Content, `"document":`) {
 					t.Error("missing shared semantics or current editor document")
 				}
-				reply := map[string]any{"message": "Which target?"}
+				reply := map[string]any{"message": "Which target?", "action": "clarify"}
 				if strict {
-					reply["action"] = ""
 					reply["document"] = nil
 				}
 				assistantToolReply(w, reply)

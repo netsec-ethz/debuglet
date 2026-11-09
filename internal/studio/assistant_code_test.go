@@ -34,6 +34,24 @@ func TestAssistantCodeOfferRequiresAChoice(t *testing.T) {
 	}
 }
 
+func TestAssistantGoClarificationRequiresExplicitOutcome(t *testing.T) {
+	var calls atomic.Int32
+	client := assistantFixture(t, func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			assistantToolReply(w, map[string]any{"message": "I will write the function.", "action": "", "code": nil})
+			return
+		}
+		assistantToolReply(w, map[string]any{"message": "Which endpoint should the function contact?", "action": "clarify", "code": nil})
+	})
+	client.strictSchema = true
+	request := assistantInput(t, "workflow", sampleWorkflow())
+	request.AllowCode = true
+	reply, err := client.Reply(t.Context(), request)
+	if err != nil || calls.Load() != 2 || reply.Action != "" || len(reply.Document) != 0 || reply.Message != "Which endpoint should the function contact?" {
+		t.Fatalf("invalid clarification outcome: %+v %v", reply, err)
+	}
+}
+
 func TestAssistantRejectsUnapprovedGoFromBothResponseFormats(t *testing.T) {
 	for _, mode := range []string{"native", "code"} {
 		t.Run(mode, func(t *testing.T) {

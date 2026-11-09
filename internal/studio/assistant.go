@@ -251,7 +251,7 @@ func (a *Assistant) ReplyObserved(ctx context.Context, request AssistantRequest,
 			return AssistantResponse{}, err
 		}
 		if len(answer.ToolCalls) == 0 {
-			if strings.TrimSpace(answer.Content) == "" || len(answer.Content) > assistantTextLimit {
+			if a.strictSchema || strings.TrimSpace(answer.Content) == "" || len(answer.Content) > assistantTextLimit {
 				return AssistantResponse{}, assistantError("invalid_response", 0)
 			}
 			return AssistantResponse{Message: answer.Content}, nil
@@ -288,11 +288,23 @@ func (a *Assistant) ReplyObserved(ctx context.Context, request AssistantRequest,
 		if err == nil && proposed.Edits != nil && (!a.strictSchema || len(proposed.Document) != 0) {
 			err = errors.New("return either edits or a document, not both; edits require the strict provider schema")
 		}
-		if err == nil && proposed.Action != "" &&
-			((proposed.Action != "coordinate" && proposed.Action != "code") ||
-				(proposed.Action == "coordinate" && request.Kind != "workflow") ||
-				len(proposed.Document) != 0 || proposed.Edits != nil || len(proposed.Code) != 0 || request.AllowCode) {
-			err = errors.New("offer coordinate for a workflow or code without any document or edits; wait for the user's explicit choice")
+		if err == nil {
+			hasProposal := len(proposed.Document) != 0 || proposed.Edits != nil || len(proposed.Code) != 0
+			switch proposed.Action {
+			case "":
+				if !hasProposal {
+					err = errors.New("empty proposal: return the complete requested document, substantive edits or approved code now; use action clarify only when an essential unanswered requirement prevents authoring")
+				}
+			case "clarify":
+				if hasProposal {
+					err = errors.New("a clarification asks one essential question without changing the document")
+				}
+			default:
+				if (proposed.Action != "coordinate" && proposed.Action != "code") ||
+					(proposed.Action == "coordinate" && request.Kind != "workflow") || hasProposal || request.AllowCode {
+					err = errors.New("offer coordinate for a workflow or code without any document or edits; wait for the user's explicit choice")
+				}
+			}
 		}
 		if err == nil && request.AllowCode && (len(proposed.Document) != 0 || proposed.Edits != nil) {
 			err = errors.New("Go mode replaces functions through code only; the saved visual graph must remain unchanged")
@@ -356,6 +368,10 @@ func (a *Assistant) ReplyObserved(ctx context.Context, request AssistantRequest,
 			}
 		}
 		if err == nil {
+			// Clarification is a provider outcome, not a public editor action.
+			if proposed.Action == "clarify" {
+				proposed.Action = ""
+			}
 			return proposed.AssistantResponse, nil
 		}
 		if attempt == 1 {
@@ -408,7 +424,7 @@ func (a *Assistant) complete(ctx context.Context, messages []assistantModelMessa
 		"name": "propose_document", "description": "Propose one complete editable document of the same kind, ask for clarification, or offer to convert a workflow to a coordinated experiment.",
 		"parameters": map[string]any{"type": "object", "properties": map[string]any{
 			"message": map[string]any{"type": "string"}, "document": map[string]any{"type": "object"},
-			"action": map[string]any{"type": "string", "enum": []string{"coordinate", "code"}, "description": "Offer coordinated or Go authoring without a document; the user must accept first."},
+			"action": map[string]any{"type": "string", "enum": []string{"clarify", "coordinate", "code"}, "description": "Use clarify for one essential unanswered question, or offer coordinated/Go authoring without a document; offers require user acceptance."},
 		}, "required": []string{"message"}, "additionalProperties": false},
 	}}
 	if a.strictSchema {
@@ -587,7 +603,7 @@ func assistantBoundText(text string, limit int) string {
 
 const assistantInstructions = `You author editable Debuglet measurements. Use propose_document and its response format; the supplied snapshot is current editor source. Never claim to have run, saved or deployed it. The catalog defines blocks, ports and types. Give a brief explanation; no code fences, bundles or credentials.
 
-1. For every request to create or change an experiment, return the complete document or substantive edits in propose_document in this same response. A message with no document or edits is only for a necessary clarification or an explicit coordinate/code consent offer, never an acknowledgment such as "I will build it". Complete EVERY participant and requested measurement, exchange and comparison. Each required action/report must be reachable from its participant entry. Never return a scaffold, partial participant, placeholder result or promise to finish later. Ask one concise clarification only if an essential target/capability is missing. When the user answers a clarification, resume the original unfinished request from the conversation and return the complete graph proposal in this response. Do not return only an acknowledgment, a summary of agreed settings or a promise to build next; ask again only if another essential requirement truly remains missing. Repairs preserve the entire requested experiment; do not delete a failing stage to pass validation.
+1. For every request to create or change an experiment, return the complete document or substantive edits in propose_document in this same response. A message with no document or edits is only for a necessary clarification or an explicit coordinate/code consent offer, never an acknowledgment such as "I will build it". Complete EVERY participant and requested measurement, exchange and comparison. Each required action/report must be reachable from its participant entry. Never return a scaffold, partial participant, placeholder result or promise to finish later. Ask one concise clarification only if an essential target/capability is missing: use action:"clarify" with null document/edits and state the missing requirement as a question. Use an empty action only with an actual proposal; never label an acknowledgment or a plan as clarification. When the user answers a clarification, resume the original unfinished request from the conversation and return the complete graph proposal in this response. Do not return only an acknowledgment, a summary of agreed settings or a promise to build next; ask again only if another essential requirement truly remains missing. Repairs preserve the entire requested experiment; do not delete a failing stage to pass validation.
 
 2. Keep it small. Preserve unrelated source, identifiers, settings and layout on edits. Use built-in network, control and messaging blocks. Add only requested operations, necessary correctness checks and output. No unrequested retries, sampling, statistics, charts or duplicate reports. Actions already record all outputs including errors/timings: no set_field/emit chains to repeat them. Reuse outputs and literal settings; choose one clear report for a derived comparison.
 
