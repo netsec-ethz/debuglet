@@ -31,10 +31,11 @@ func (a *Assistant) completeResponses(ctx context.Context, messages []assistantM
 	for key, value := range function {
 		tool[key] = value
 	}
+	// Responses counts reasoning and the document against the same budget.
 	payload := map[string]any{
 		"model": a.model, "input": input, "tools": []any{tool},
 		"tool_choice":         map[string]any{"type": "function", "name": "propose_document"},
-		"parallel_tool_calls": false, "max_output_tokens": 16384,
+		"parallel_tool_calls": false, "max_output_tokens": 32768,
 		"store": false, "stream": true, "include": []string{"reasoning.encrypted_content"},
 	}
 	reasoning := map[string]any{"summary": "auto"}
