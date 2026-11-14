@@ -301,7 +301,7 @@ func assistantFailure(err, contextErr error) *echo.HTTPError {
 		message = "the AI provider is at its usage limit; try again later"
 	case "output_truncated":
 		status, code = http.StatusUnprocessableEntity, CodeInvalidRequest
-		message = "the AI response was too large to finish; try a smaller experiment or change one part at a time"
+		message = "the AI reached its generation limit before finishing; retry or ask for a smaller change"
 	case "invalid_response", "invalid_graph":
 		status, code = http.StatusUnprocessableEntity, CodeInvalidRequest
 		message = "the AI could not produce a valid experiment; try a smaller change or a template"
