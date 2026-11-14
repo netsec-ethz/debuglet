@@ -5,6 +5,18 @@ then open a focused pull request against `main`. Describe what changes for a
 user, any compatibility impact and how to verify it. Use the
 [security policy](SECURITY.md) for private vulnerability reports.
 
+## Develop with Debuglet
+
+| Goal | First working example |
+| --- | --- |
+| Use the CLI | [Install the full package](README-install.md), run `dbl demo`, then [connect to a dispatcher](docs/cli.md#use-an-account-key-connection). Browser accounts use `dbl login`. |
+| Write a measurement with the Go SDK | [Build and run the hello example](docs/debuglets.md#start-from-an-example). Use the [Go client](docs/client.md) to submit from an application. |
+| Author through MCP | [Build `dbl-studio`](docs/development/workflow-authoring.md#run-the-editor-locally), then [configure your MCP client](docs/development/workflow-authoring.md#connect-an-mcp-client). The MCP tools build and validate; submit through the console or CLI. |
+
+Use matching source and package versions. `dbl-studio` is source-built and is
+not included in the runtime package. TEST examples need no crypto wallet; remote
+runs still need an eligible executor and sufficient TEST allowance if enforced.
+
 ## Find the code
 
 | Change | Start here |
@@ -25,10 +37,12 @@ the visual editor and MCP use the same catalog and compiler.
 
 ## Develop and test
 
-Use Linux amd64 and Go 1.26.10, as pinned in `go.mod` and `mise.toml`.
-From the repository root:
+Use Ubuntu 24.04 amd64 and Go 1.26.10, as pinned in `go.mod` and `mise.toml`.
+Install Git and Make, then:
 
 ```sh
+git clone https://github.com/netsec-ethz/debuglet.git
+cd debuglet
 go mod download
 make test-fast
 ```
