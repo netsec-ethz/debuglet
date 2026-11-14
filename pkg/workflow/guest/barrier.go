@@ -183,7 +183,8 @@ type experimentFrameReceiver struct {
 		io.ReadCloser
 		SetReadDeadline(time.Time) error
 	}
-	reader experimentFrameReader
+	reader  experimentFrameReader
+	expires time.Time
 }
 
 func (e *Experiment) receiveFrame(deadline time.Time) error {
@@ -196,23 +197,39 @@ func (e *Experiment) receiveFrame(deadline time.Time) error {
 		if err != nil {
 			return err
 		}
-		e.receiving = &experimentFrameReceiver{conn: conn}
+		// Allow a short phase's frame to finish in its successor, without
+		// allowing later phase deadlines to renew a stalled sender forever.
+		expires := time.Now().Add(2 * time.Second)
+		if deadline.After(expires) {
+			expires = deadline
+		}
+		e.receiving = &experimentFrameReceiver{conn: conn, expires: expires}
 	}
 	receiver := e.receiving
+	readDeadline := deadline
+	if receiver.expires.Before(readDeadline) {
+		readDeadline = receiver.expires
+	}
 	var frame experimentFrame
 	var size int
-	err := receiver.conn.SetReadDeadline(deadline)
+	err := receiver.conn.SetReadDeadline(readDeadline)
 	if err == nil {
 		frame, size, err = receiver.reader.read(receiver.conn)
 	}
 	var timeout interface{ Timeout() bool }
-	if errors.As(err, &timeout) && timeout.Timeout() {
+	timedOut := errors.As(err, &timeout) && timeout.Timeout()
+	if timedOut && time.Now().Before(receiver.expires) {
 		// An early arrival for another phase may cross this phase's deadline.
 		// Keep its socket and partial frame for the next bounded receive.
 		return err
 	}
 	_ = receiver.conn.Close()
 	e.receiving = nil
+	if timedOut {
+		// Drop an abandoned frame and let the caller's bounded receive loop
+		// accept another peer while its own deadline still permits it.
+		return nil
+	}
 	if err != nil {
 		return err
 	}
