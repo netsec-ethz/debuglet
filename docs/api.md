@@ -26,6 +26,14 @@ curl -s https://dispatcher.example/version
 
 Clients may send `Debuglet-API-Version: major.minor`. Within one API major version, clients must ignore unknown response fields and unknown values in open string fields. Breaking wire changes require a new API major version.
 
+## Starter templates (API 1.34)
+
+The catalogue advertises template version 2, rebuilt with Go 1.26.11. Saved
+version-1 profiles retain their original program and remain editable through
+the API. Each template version accepts only its published program digest.
+Deploy the matching console and dispatcher together; the profile document
+format remains version 1.
+
 ## SCION workflow requirements (API 1.30)
 
 Compiled Studio bundles may set `require_scion` and
@@ -75,7 +83,7 @@ encoded request is at most 4 MiB + 64 KiB. There is at most one active request p
 account and four globally, separately from compiler capacity. Existing account
 admission and a global six requests/minute limit with burst four apply. Excess
 work returns `429` with `Retry-After`. Each request has a three-minute deadline,
-including at most one repair attempt; each provider call allows 16,384 output
+including at most one repair attempt; each provider call allows 32,768 output
 tokens and a 512 KiB response. Replies contain at most 8,192 message bytes and a
 256 KiB document. Disabled service returns `503`, provider failures `502`, invalid
 or incomplete proposals `422`, and timeout/cancellation `504`. The draft remains
