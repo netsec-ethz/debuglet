@@ -225,7 +225,14 @@ type AssistantProgress struct {
 }
 
 // ReplyProgress adds optional provider progress without exposing a partial graph.
-func (a *Assistant) ReplyProgress(ctx context.Context, request AssistantRequest, check AssistantCompileCheck, observe func(AssistantProgress) error) (AssistantResponse, error) {
+func (a *Assistant) ReplyProgress(ctx context.Context, request AssistantRequest, check AssistantCompileCheck, observe func(AssistantProgress) error) (response AssistantResponse, replyErr error) {
+	var rejected []AssistantValidationDiagnostic
+	defer func() {
+		var failure *AssistantError
+		if errors.As(replyErr, &failure) {
+			failure.validation = rejected
+		}
+	}()
 	notify := func(stage string) error {
 		if observe != nil {
 			return observe(AssistantProgress{Stage: stage})
@@ -302,6 +309,7 @@ func (a *Assistant) ReplyProgress(ctx context.Context, request AssistantRequest,
 			Code  []assistantCodeEdit `json:"code,omitempty"`
 		}
 		failureCode := "invalid_response"
+		validationStage := "validating"
 		err = assistantDecode(arguments, &proposed)
 		if a.strictSchema && bytes.Equal(bytes.TrimSpace(proposed.Document), []byte("null")) {
 			proposed.Document = nil
@@ -378,6 +386,7 @@ func (a *Assistant) ReplyProgress(ctx context.Context, request AssistantRequest,
 					if observeErr := notify("compiling"); observeErr != nil {
 						return AssistantResponse{}, observeErr
 					}
+					validationStage = "compiling"
 					diagnostic, checkErr := check(ctx, request.Kind, proposed.Document)
 					if ctx.Err() != nil {
 						return AssistantResponse{}, assistantContextError(ctx)
@@ -398,6 +407,13 @@ func (a *Assistant) ReplyProgress(ctx context.Context, request AssistantRequest,
 			}
 			return proposed.AssistantResponse, nil
 		}
+		// Retain only local validation feedback, never the proposal, prompt or
+		// provider response. Keep both attempts when the correction also fails.
+		detail := err.Error()
+		if a.key != "" {
+			detail = strings.ReplaceAll(detail, a.key, "[redacted]")
+		}
+		rejected = append(rejected, AssistantValidationDiagnostic{Attempt: attempt + 1, Stage: validationStage, Diagnostic: assistantFeedback(errors.New(detail))})
 		if attempt == 1 {
 			return AssistantResponse{}, assistantError(failureCode, 0)
 		}
@@ -658,7 +674,7 @@ const assistantInstructions = `You author editable Debuglet measurements. Use pr
 
 3. Separate execution from data. Entry must be an action; control connections execute actions through in and their catalog outputs. Data connections supply typed values but execute nothing. Pure blocks evaluate on demand and have no in/next ports. Custom blocks are ALWAYS actions, including data helpers. Wire or supply literals for required inputs. Literal objects do not evaluate nested expressions. Independent branches execute sequentially.
 
-4. Preserve failures. Skipped actions have NO outputs, including ok/error: never read them on bypass paths. Guard address-dependent connections; consume their outputs only where they executed. A failed resolver/check must not discard another valid result. Failed timings/differences are null, never zero. Compare only complete successful responses. Transport completion, protocol success, completeness and run completion differ. Missing messages/DNS failures cannot produce successful comparisons.
+4. Preserve failures. Skipped actions have NO outputs, including ok/error: never read them on bypass paths. Guard address-dependent connections; consume their outputs only where they executed. A failed resolver/check must not discard another valid result. Failed timings/differences are null, never zero. Compare only complete successful responses. Transport completion, protocol success, completeness and run completion differ. Missing messages/DNS failures cannot produce successful comparisons. Classify recoverable SDK socket timeouts using debuglet.ErrTimeout (compare its Error() string for network block error outputs), not guessed error text; other failures are not timeouts.
 Example for requested independent resolver comparisons: handle resolver A, then resolver B. If both selected local/peer addresses are valid: true -> local TCP -> peer TCP -> comparison helper -> table -> next resolver; false -> unavailable row -> next resolver. Both TCP checks execute even if the first connection fails. The comparison helper consumes ONLY this resolver's outputs, inside the true branch. The unavailable row uses DNS/message status, never skipped TCP outputs. Do not merge optional TCP outputs into one shared all-resolver comparison. Reuse the helper definition and group each resolver's check/comparison stage into one named expandable group.
 
 5. Use simple defaults. Use catalog defaults for optional inputs. For resolving a supplied web hostname then connecting, default to one IPv4 A query and TCP 443. Cloudflare DNS is 1.1.1.1:53; Google DNS is 8.8.8.8:53. Select the first IPv4 address only after ok, rcode NOERROR, not truncated and nonempty addresses; do not add all-address loops unless requested. State meaningful defaults briefly. Executor selection, listener permissions and listener address/port allocation are launch choices. Initial experiment readiness and reservation/start times are managed by the runtime and launch setup, outside the editable graph; they are not drafting blockers. Do not ask about these settings while drafting. Add phase_barrier only for explicitly requested additional synchronization during the measurement, never to implement the managed initial readiness.

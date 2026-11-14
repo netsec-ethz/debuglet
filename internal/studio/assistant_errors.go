@@ -12,6 +12,20 @@ type AssistantError struct {
 	Message        string
 	ProviderStatus int
 	cause          error
+	validation     []AssistantValidationDiagnostic
+}
+
+// AssistantValidationDiagnostic is bounded local feedback for operator logs.
+// It is never included in the public error, a graph response or a provider body.
+type AssistantValidationDiagnostic struct {
+	Attempt    int
+	Stage      string
+	Diagnostic string
+}
+
+// ValidationDiagnostics returns a copy so a caller cannot change retained feedback.
+func (e *AssistantError) ValidationDiagnostics() []AssistantValidationDiagnostic {
+	return append([]AssistantValidationDiagnostic(nil), e.validation...)
 }
 
 func (e *AssistantError) Error() string { return e.Message }
@@ -30,7 +44,7 @@ func assistantError(code string, status int) *AssistantError {
 		e.Message = "The assistant provider is unavailable. Retry shortly; your draft is unchanged."
 		e.cause = ErrAssistantUnavailable
 	case "output_truncated":
-		e.Message = "The assistant's proposed edit was too long to finish. Ask for a smaller change or one measurement at a time; your draft is unchanged."
+		e.Message = "The assistant reached its generation limit before finishing. Retry, or ask for a smaller change; your draft is unchanged."
 	case "invalid_graph":
 		e.Message = "The assistant could not produce a valid graph after one correction. Try a smaller change or edit the blocks directly; your draft is unchanged."
 	case "deadline_exceeded":

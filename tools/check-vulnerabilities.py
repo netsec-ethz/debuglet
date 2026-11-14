@@ -65,9 +65,9 @@ def check(text, exceptions, today=None):
     if not isinstance(exceptions, list):
         raise ValueError('exceptions must be a list')
     for item in exceptions:
-        if (not isinstance(item, dict) or set(item) != {'id', 'module', 'expires', 'reason', 'review'} or
+        if (not isinstance(item, dict) or set(item) != {'id', 'module', 'version', 'expires', 'reason', 'review'} or
                 not all(nonblank(value) for value in item.values())):
-            raise ValueError('exception requires id, module, expiry, reason and review')
+            raise ValueError('exception requires id, module, version, expiry, reason and review')
         review = urlsplit(item['review'])
         if (not ADVISORY_ID.fullmatch(item['id']) or review.scheme != 'https' or not review.hostname or
                 any(char.isspace() for char in item['review'])):
@@ -75,7 +75,7 @@ def check(text, exceptions, today=None):
         expiry = datetime.date.fromisoformat(item['expires'])
         if expiry < today or expiry > today + datetime.timedelta(days=30):
             raise ValueError('exception expired or exceeds 30 days')
-        key = (item['id'], item['module'])
+        key = (item['id'], item['module'], item['version'])
         if key in allowed:
             raise ValueError('duplicate exception')
         allowed[key] = item
@@ -93,10 +93,10 @@ def check(text, exceptions, today=None):
             raise ValueError('malformed scanner finding')
         for frame in trace:
             if (not isinstance(frame, dict) or not nonblank(frame.get('module')) or
-                    any(key in frame and not nonblank(frame[key]) for key in ('package', 'function'))):
+                    any(key in frame and not nonblank(frame[key]) for key in ('package', 'function', 'version'))):
                 raise ValueError('malformed scanner trace')
         if trace[0].get('function'):
-            exception = allowed.get((finding['osv'], trace[0]['module']))
+            exception = allowed.get((finding['osv'], trace[0]['module'], trace[0].get('version')))
             findings.append(dict(finding, exception=exception))
     return config, findings
 

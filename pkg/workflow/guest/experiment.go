@@ -93,6 +93,7 @@ type Experiment struct {
 	inbox                        []experimentMessage
 	inboxBytes                   int
 	barriers                     map[string]*experimentBarrierState
+	receiving                    *experimentFrameReceiver
 	startTime                    time.Time
 	meshServices                 map[string]*debuglet.MeshService
 }
@@ -485,21 +486,42 @@ func experimentWrite(writer io.Writer, data []byte) error {
 	return nil
 }
 
+// A caller's deadline may interrupt either the header or body. Retain only one
+// bounded frame so the next receive can continue without losing consumed bytes.
+type experimentFrameReader struct {
+	header     [4]byte
+	headerRead int
+	data       []byte
+	dataRead   int
+}
+
 func experimentRead(reader io.Reader) (experimentFrame, int, error) {
+	var state experimentFrameReader
+	return state.read(reader)
+}
+
+func (s *experimentFrameReader) read(reader io.Reader) (experimentFrame, int, error) {
 	var frame experimentFrame
-	var header [4]byte
-	if _, err := io.ReadFull(reader, header[:]); err != nil {
-		return frame, 0, err
+	if s.headerRead < len(s.header) {
+		n, err := io.ReadFull(reader, s.header[s.headerRead:])
+		s.headerRead += n
+		if err != nil {
+			return frame, 0, err
+		}
 	}
-	size := int(binary.BigEndian.Uint32(header[:]))
+	size := int(binary.BigEndian.Uint32(s.header[:]))
 	if size < 1 || size > experimentFrameLimit {
 		return frame, 0, fmt.Errorf("experiment message exceeds the 8 KiB frame limit")
 	}
-	data := make([]byte, size)
-	if _, err := io.ReadFull(reader, data); err != nil {
+	if s.data == nil {
+		s.data = make([]byte, size)
+	}
+	n, err := io.ReadFull(reader, s.data[s.dataRead:])
+	s.dataRead += n
+	if err != nil {
 		return frame, 0, err
 	}
-	err := experimentDecode(data, &frame)
+	err = experimentDecode(s.data, &frame)
 	return frame, size, err
 }
 

@@ -946,7 +946,7 @@
     "id": "repeat",
     "label": "Repeat",
     "category": "Control",
-    "description": "Run the body sequentially up to 100 times, then continue on done. The body ends at an unconnected control output.",
+    "description": "Run the body sequentially up to 100 times, then continue on done. iteration starts at 1 and ends at count; subtract 1 for a zero-based array index. The body ends at an unconnected control output.",
     "pure": false,
     "inputs": [
       {

@@ -11,8 +11,13 @@ in this checkout; check [compatibility](versions.md) before mixing versions.
 | --- | --- |
 | **Run your first experiment** | [Choose a template, select a node and inspect the result](measurements.md#run-your-first-measurement). Then compare several vantage points. |
 | **Host an executor** | [Install and join a dispatcher](operations/executor-onboarding.md), including shell-only setup and a persistent service. |
-| **Build experiments** | [Visual editor, AI assistant and MCP](development/workflow-authoring.md), or [write a debuglet with the Go SDK](debuglets.md). |
-| **Contribute** | [Set up development, find the relevant subsystem and test a change](../CONTRIBUTING.md). |
+| **Develop with Debuglet** | [CLI, Go SDK and MCP examples](../CONTRIBUTING.md#develop-with-debuglet), followed by development setup and contribution checks. |
+
+The supported native package target is **Ubuntu 24.04 amd64**; see
+[current release availability](../README-install.md) before installing.
+TEST runs need no crypto wallet, but can require operator-granted allowance.
+The [visual editor](development/workflow-authoring.md) works without the optional
+beta AI assistant.
 
 ## Using and sharing experiments
 

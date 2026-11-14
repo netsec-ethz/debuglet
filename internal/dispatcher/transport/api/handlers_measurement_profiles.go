@@ -56,7 +56,7 @@ func (h *Handler) GetMeasurementTemplates(c echo.Context) error {
 			required = append(required, "check")
 		}
 		items = append(items, wire.MeasurementTemplate{
-			ID: item.id, Version: 1, Name: item.name, Description: item.description,
+			ID: item.id, Version: wire.ProbeTemplateVersion, Name: item.name, Description: item.description,
 			ProgramSHA256: wire.ProbeSHA256, ProgramAsset: "templates/probe.wasm",
 			Arguments:          wire.TemplateArguments{Type: "object", Properties: properties, Required: required},
 			RequiredTransports: []string{"tcp"},
@@ -124,7 +124,7 @@ func decodeProfile(c echo.Context) (wire.ProfileConfig, string, error) {
 		return invalid("profile program digest does not match its bytes")
 	}
 	if ref := config.Template; ref != nil {
-		if ref.Version != 1 || (ref.ID != "http" && ref.ID != "tcp" && ref.ID != "service") || config.Program.SHA256 != wire.ProbeSHA256 {
+		if !validProfileTemplate(*ref, config.Program.SHA256) {
 			return invalid("template version or program digest does not match the catalogue")
 		}
 	}
@@ -139,6 +139,21 @@ func decodeProfile(c echo.Context) (wire.ProfileConfig, string, error) {
 		return config, "", apiError(http.StatusRequestEntityTooLarge, CodePayloadTooLarge, "profile exceeds 8 MiB")
 	}
 	return config, string(encoded), nil
+}
+
+func validProfileTemplate(ref wire.TemplateReference, digest string) bool {
+	if ref.ID != "http" && ref.ID != "tcp" && ref.ID != "service" {
+		return false
+	}
+	switch ref.Version {
+	case 1:
+		// Saved profiles retain their original program across upgrades.
+		return digest == "0135f2de557856f013e707d35225d3999895e217e55029c5d83cd5d595ffe91b"
+	case wire.ProbeTemplateVersion:
+		return digest == wire.ProbeSHA256
+	default:
+		return false
+	}
 }
 
 func profileDecodeError(err error) error {

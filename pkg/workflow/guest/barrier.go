@@ -4,7 +4,9 @@
 package guest
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 	"time"
@@ -176,20 +178,58 @@ func (e *Experiment) writeFrame(frame experimentFrame, deadline time.Time) error
 	return conn.Close()
 }
 
+type experimentFrameReceiver struct {
+	conn interface {
+		io.ReadCloser
+		SetReadDeadline(time.Time) error
+	}
+	reader  experimentFrameReader
+	expires time.Time
+}
+
 func (e *Experiment) receiveFrame(deadline time.Time) error {
 	remaining := time.Until(deadline)
 	if remaining <= 0 {
 		return debuglet.ErrTimeout
 	}
-	conn, err := debuglet.AcceptTCPTimeout(remaining)
-	if err != nil {
+	if e.receiving == nil {
+		conn, err := debuglet.AcceptTCPTimeout(remaining)
+		if err != nil {
+			return err
+		}
+		// Allow a short phase's frame to finish in its successor, without
+		// allowing later phase deadlines to renew a stalled sender forever.
+		expires := time.Now().Add(2 * time.Second)
+		if deadline.After(expires) {
+			expires = deadline
+		}
+		e.receiving = &experimentFrameReceiver{conn: conn, expires: expires}
+	}
+	receiver := e.receiving
+	readDeadline := deadline
+	if receiver.expires.Before(readDeadline) {
+		readDeadline = receiver.expires
+	}
+	var frame experimentFrame
+	var size int
+	err := receiver.conn.SetReadDeadline(readDeadline)
+	if err == nil {
+		frame, size, err = receiver.reader.read(receiver.conn)
+	}
+	var timeout interface{ Timeout() bool }
+	timedOut := errors.As(err, &timeout) && timeout.Timeout()
+	if timedOut && time.Now().Before(receiver.expires) {
+		// An early arrival for another phase may cross this phase's deadline.
+		// Keep its socket and partial frame for the next bounded receive.
 		return err
 	}
-	defer conn.Close()
-	if err := conn.SetReadDeadline(deadline); err != nil {
-		return err
+	_ = receiver.conn.Close()
+	e.receiving = nil
+	if timedOut {
+		// Drop an abandoned frame and let the caller's bounded receive loop
+		// accept another peer while its own deadline still permits it.
+		return nil
 	}
-	frame, size, err := experimentRead(conn)
 	if err != nil {
 		return err
 	}

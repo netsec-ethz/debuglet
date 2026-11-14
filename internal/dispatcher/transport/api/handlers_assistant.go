@@ -263,6 +263,14 @@ func (h *Handler) logAssistantFailure(c echo.Context, err, contextErr error, ela
 	if errors.As(err, &failure) && failure.ProviderStatus >= 100 && failure.ProviderStatus <= 599 {
 		providerStatus = failure.ProviderStatus
 	}
+	if failure != nil {
+		for _, diagnostic := range failure.ValidationDiagnostics() {
+			h.logger.Warn("Assistant proposal rejected",
+				zap.String("request_id", daemonlog.RequestID(c.Request().Context())),
+				zap.Int("attempt", diagnostic.Attempt), zap.String("stage", diagnostic.Stage),
+				zap.String("diagnostic", diagnostic.Diagnostic))
+		}
+	}
 	h.logger.Warn("Assistant request failed",
 		zap.String("request_id", daemonlog.RequestID(c.Request().Context())),
 		zap.String("reason", reason), zap.Int("provider_status", providerStatus),
@@ -293,7 +301,7 @@ func assistantFailure(err, contextErr error) *echo.HTTPError {
 		message = "the AI provider is at its usage limit; try again later"
 	case "output_truncated":
 		status, code = http.StatusUnprocessableEntity, CodeInvalidRequest
-		message = "the AI response was too large to finish; try a smaller experiment or change one part at a time"
+		message = "the AI reached its generation limit before finishing; retry or ask for a smaller change"
 	case "invalid_response", "invalid_graph":
 		status, code = http.StatusUnprocessableEntity, CodeInvalidRequest
 		message = "the AI could not produce a valid experiment; try a smaller change or a template"

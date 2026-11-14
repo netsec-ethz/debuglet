@@ -107,3 +107,40 @@ func TestAssistantCompilationCancellationDoesNotRepair(t *testing.T) {
 		t.Fatalf("cancellation lost: %v", err)
 	}
 }
+
+func TestAssistantRetainsBoundedPrivateCompilerDiagnostics(t *testing.T) {
+	client := assistantFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		assistantProposal(w, assistantCustomWorkflow())
+	})
+	input := assistantInput(t, "workflow", sampleWorkflow())
+	before := bytes.Clone(input.Document)
+	checks := 0
+	result, err := client.ReplyChecked(t.Context(), input, func(context.Context, string, json.RawMessage) (string, error) {
+		checks++
+		if checks == 1 {
+			return "first compiler diagnostic", nil
+		}
+		return "final fixture-secret diagnostic " + strings.Repeat("x", assistantFeedbackLimit), nil
+	})
+	var failure *AssistantError
+	if checks != 2 || !errors.As(err, &failure) || len(result.Document) != 0 || !bytes.Equal(input.Document, before) {
+		t.Fatalf("correction limit or draft protection changed: %v", err)
+	}
+	diagnostics := failure.ValidationDiagnostics()
+	if len(diagnostics) != 2 || !strings.Contains(diagnostics[0].Diagnostic, "first compiler diagnostic") || !strings.Contains(diagnostics[1].Diagnostic, "final [redacted] diagnostic") {
+		t.Fatalf("lost separate compiler feedback: %+v", diagnostics)
+	}
+	for i, diagnostic := range diagnostics {
+		if diagnostic.Attempt != i+1 || diagnostic.Stage != "compiling" || len(diagnostic.Diagnostic) > assistantFeedbackLimit || strings.Contains(diagnostic.Diagnostic, "fixture-secret") {
+			t.Fatalf("unsafe compiler diagnostic: %+v", diagnostic)
+		}
+	}
+	diagnostics[0].Diagnostic = "changed"
+	if failure.ValidationDiagnostics()[0].Diagnostic == "changed" {
+		t.Fatal("caller mutated retained feedback")
+	}
+	public, _ := json.Marshal(failure)
+	if bytes.Contains(public, []byte("compiler diagnostic")) || strings.Contains(err.Error(), "compiler diagnostic") {
+		t.Fatal("private diagnostics leaked into public error serialization")
+	}
+}

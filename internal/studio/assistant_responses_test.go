@@ -62,7 +62,7 @@ func TestAssistantResponsesRequestAndProposal(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body["store"] != false || body["stream"] != true || body["parallel_tool_calls"] != false || body["max_output_tokens"] != float64(16384) {
+		if body["store"] != false || body["stream"] != true || body["parallel_tool_calls"] != false || body["max_output_tokens"] != float64(32768) {
 			t.Error("missing bounded stateless Responses settings")
 		}
 		if body["reasoning"].(map[string]any)["effort"] != "high" || body["reasoning"].(map[string]any)["summary"] != "auto" || !reflect.DeepEqual(body["include"], []any{"reasoning.encrypted_content"}) {

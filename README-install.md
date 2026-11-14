@@ -2,8 +2,9 @@
 
 To create and run experiments, open the [Debuglet console](https://debuglet.netsec.ethz.ch/console/).
 You only need a local package to host an executor, use the CLI, or run the local
-demo. MCP authoring uses the separately [source-built Studio](docs/development/workflow-authoring.md);
-it is not included in the runtime package.
+demo. For Go SDK or MCP development, start with the
+[developer paths](CONTRIBUTING.md#develop-with-debuglet). The source-built MCP
+tool is not included in the runtime package.
 
 **Release availability:** v0.2.0 is the latest published release and predates
 `dbl executor join`. The current onboarding flow needs a compatible candidate
@@ -21,6 +22,36 @@ The [client-container guide](docs/operations/client-container.md) preserves
 credentials across Linux container restarts; Docker Desktop and architecture
 emulation are not validated. See [compatibility](docs/versions.md) for version
 and deployment limits.
+
+## Install a private development candidate
+
+This is the current route for executor enrollment. Ask your dispatcher operator
+for the exact version/source, trusted `bootstrap.sh`, and matching full archive,
+`install.sh` and `SHA256SUMS`. Keep the three package files together with their
+original names. For a user-local installation:
+
+```sh
+DEBUGLET_VERSION=VERSION_PROVIDED_BY_OPERATOR \
+DEBUGLET_RELEASE_DIR="$HOME/Downloads/debuglet-candidate" \
+DEBUGLET_ALLOW_UNSIGNED=1 \
+DEBUGLET_PREFIX="$HOME/.local" \
+sh "$HOME/Downloads/bootstrap.sh"
+export PATH="$HOME/.local/bin:$PATH"
+dbl --output json version
+dbl demo
+```
+
+Leave component and signature/trust settings unset. Check the reported version
+and source against the operator's values. Checksums detect changed files but
+do not authenticate an unsigned publisher. The demo needs no account, wallet,
+root access or existing service; success ends with `Cleanup: complete`.
+
+For a persistent executor, install system-wide: use `sudo env` with the same
+variables and `DEBUGLET_PREFIX=/usr/local`, then follow
+[persistent setup](docs/operations/executor-onboarding.md#run-persistently-on-linux).
+It creates the service account and explicitly enrolls and starts the executor.
+The public v0.2.0 demo uses the [legacy procedure](docs/operations/releases.md#explicit-unsigned-legacy-or-development-install)
+and does not provide current enrollment.
 
 ## Install with apt on Ubuntu 24.04 amd64
 
@@ -69,34 +100,6 @@ execution. [Offline installation and verification](docs/operations/releases.md)
 use the same trust checks. Tar installation does not create service accounts or
 activate services.
 
-## Install a private development candidate
-
-Ask the operator for the exact version/source, trusted `bootstrap.sh`, and the
-matching full archive, `install.sh` and `SHA256SUMS`. Keep the three package files
-together with their original names. For a local candidate directory:
-
-```sh
-DEBUGLET_VERSION=VERSION_PROVIDED_BY_OPERATOR \
-DEBUGLET_RELEASE_DIR="$HOME/Downloads/debuglet-candidate" \
-DEBUGLET_ALLOW_UNSIGNED=1 \
-DEBUGLET_PREFIX="$HOME/.local" \
-sh "$HOME/Downloads/bootstrap.sh"
-export PATH="$HOME/.local/bin:$PATH"
-dbl --output json version
-dbl demo
-```
-
-Leave component and signature/trust settings unset. Check the reported version
-and source against the operator's values. Checksums detect changed files but
-do not authenticate an unsigned publisher. The demo needs no account, wallet,
-root access or existing service.
-
-For a system-wide candidate, use `sudo env` with the same variables and
-`DEBUGLET_PREFIX=/usr/local`. Follow [persistent executor setup](docs/operations/executor-onboarding.md#run-persistently-on-linux)
-for service-account creation and activation. The older public v0.2.0 demo can be
-installed with the [explicit legacy procedure](docs/operations/releases.md#explicit-unsigned-legacy-or-development-install);
-it does not provide current enrollment.
-
 ## Next steps
 
 | What you want to do | Guide |
@@ -104,11 +107,12 @@ it does not provide current enrollment.
 | Join the network, including from an SSH-only host | [Host an executor](docs/operations/executor-onboarding.md) |
 | Submit measurements, use device sign-in or recover access | [CLI reference](docs/cli.md) |
 | Run or update persistent services | [Managed services](docs/operations/services.md) |
+| Remove an executor or package | [Stop and remove a service](docs/operations/services.md#remove-a-role-or-inactive-package); [remove Debian packages](docs/operations/debian.md#removal-and-repair) |
 | Operate a dispatcher | [Deployment guide](deploy/README.md) |
 
 ## Build from source
 
-On Linux amd64, install Go 1.26.10, Git, Make, Bash, GNU tar, coreutils, Python
+On Linux amd64, install Go 1.26.11, Git, Make, Bash, GNU tar, coreutils, Python
 3.11+ and `dpkg-deb` (from `dpkg`), then:
 
 ```sh

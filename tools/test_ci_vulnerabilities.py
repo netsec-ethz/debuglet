@@ -21,7 +21,8 @@ CONFIG = {'config': {'protocol_version': 'v1.0.0', 'scanner_name': 'govulncheck'
                      'db': 'https://vuln.go.dev', 'db_last_modified': '2026-09-28T00:00:00Z'}}
 SBOM = {'SBOM': {'roots': ['fixture.invalid/control']}}
 FINDING = {'finding': {'osv': 'GO-2021-0113', 'trace': [
-    {'module': 'golang.org/x/text', 'package': 'golang.org/x/text/language', 'function': 'Parse'}]}}
+    {'module': 'golang.org/x/text', 'version': 'v0.3.5',
+     'package': 'golang.org/x/text/language', 'function': 'Parse'}]}}
 TODAY = datetime.date(2026, 9, 28)
 
 
@@ -59,7 +60,7 @@ class VulnerabilityPolicyTest(unittest.TestCase):
                 VULNERABILITIES.DECODER.decode(exceptions)
 
     def test_malformed_policy_and_diagnostic_fields_fail(self):
-        for field in ('module', 'package', 'function'):
+        for field in ('module', 'package', 'function', 'version'):
             for value in (None, False, 0, '', ' ', [], {}):
                 bad = json.loads(json.dumps(FINDING))
                 bad['finding']['trace'][0][field] = value
@@ -82,7 +83,7 @@ class VulnerabilityPolicyTest(unittest.TestCase):
                 VULNERABILITIES.check(stream(CONFIG, SBOM, event), [], TODAY)
 
     def test_exception_is_exact_reviewed_and_expires(self):
-        exception = {'id': 'GO-2021-0113', 'module': 'golang.org/x/text',
+        exception = {'id': 'GO-2021-0113', 'module': 'golang.org/x/text', 'version': 'v0.3.5',
                      'expires': '2026-10-05', 'reason': 'Fixture', 'review': 'https://example.invalid/review'}
         evidence = stream(CONFIG, SBOM, FINDING)
         self.assertEqual(VULNERABILITIES.check(evidence, [exception], TODAY)[1][0]['exception'], exception)
@@ -90,10 +91,19 @@ class VulnerabilityPolicyTest(unittest.TestCase):
                         {'reason': True}, {'reason': ' '}, {'review': True}, {'review': ' '},
                         {'review': 'not-a-link'}, {'review': 'http://example.invalid/review'},
                         {'review': 'https:///review'}, {'review': 'https://bad host/review'},
-                        {'id': 'not-an-advisory'}, {'module': False}, {'expires': True}):
+                        {'id': 'not-an-advisory'}, {'module': False}, {'version': ''}, {'expires': True}):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 VULNERABILITIES.check(evidence, [dict(exception, **changes)], TODAY)
         self.assertIsNone(VULNERABILITIES.check(evidence, [dict(exception, module='other')], TODAY)[1][0]['exception'])
+        for version in (None, 'v0.3.4', 'v0.3.6'):
+            different = json.loads(json.dumps(FINDING))
+            if version is None:
+                del different['finding']['trace'][0]['version']
+            else:
+                different['finding']['trace'][0]['version'] = version
+            with self.subTest(version=version):
+                findings = VULNERABILITIES.check(stream(CONFIG, SBOM, different), [exception], TODAY)[1]
+                self.assertIsNone(findings[0]['exception'])
         for exceptions in ([True], [exception, exception], [dict(exception, extra='field')]):
             with self.subTest(exceptions=exceptions), self.assertRaises(ValueError):
                 VULNERABILITIES.check(evidence, exceptions, TODAY)

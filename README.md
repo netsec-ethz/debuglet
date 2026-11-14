@@ -10,15 +10,21 @@ or coordinate an experiment across several.
 ## Start here
 
 Open the [hosted console](https://debuglet.netsec.ethz.ch/console/) and sign in
-with an available provider. You do not need to install a dispatcher or executor
-to use existing nodes.
+with an available provider. Choose a template, select a ready executor and run
+it with TEST, then inspect the output in Results. The
+[first measurement walkthrough](docs/measurements.md#run-your-first-measurement)
+covers each step. TEST needs no crypto wallet; it needs sufficient
+operator-granted allowance if the deployment enforces one.
 
 | I want to… | Guide |
 | --- | --- |
-| Run my first experiment | [Choose a template, run it and read the result](docs/measurements.md#run-your-first-measurement) |
-| Host an executor | [Install and connect a machine](docs/operations/executor-onboarding.md) |
-| Build my own experiment | [Visual editor and AI/MCP](docs/development/workflow-authoring.md), or [Go SDK](docs/debuglets.md) |
-| Contribute to Debuglet | [Find the code, make a change and test it](CONTRIBUTING.md) |
+| Use the hosted site | [Run an experiment](docs/measurements.md#run-your-first-measurement); no local installation needed. |
+| Host an executor | [Connect an Ubuntu 24.04 amd64 machine](docs/operations/executor-onboarding.md). |
+| Develop with Debuglet | [CLI, Go SDK and MCP starting points](CONTRIBUTING.md#develop-with-debuglet), then the contribution workflow. |
+
+Build experiments with templates or the [visual editor](docs/development/workflow-authoring.md).
+The AI assistant is optional and in beta; review its proposed experiment and
+results. Ordinary editing and execution do not require AI.
 
 ## Try it locally
 

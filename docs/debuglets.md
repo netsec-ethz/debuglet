@@ -5,7 +5,7 @@ A **debuglet** is the small WebAssembly program an executor runs for one measure
 ## Start from an example
 
 Install the [CLI](../README-install.md), clone this release of the source and
-use its Go version (currently 1.26.10). From the repository root, build the
+use its Go version (currently 1.26.11). From the repository root, build the
 smallest example:
 
 ```sh

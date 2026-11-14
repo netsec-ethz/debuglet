@@ -17,7 +17,7 @@ Local `dbl-studio serve` is still the local development mode.
 ## Build and verify a compiler bundle
 
 Build on Linux amd64 from the exact clean committed source being deployed.
-Use Go 1.26.10 and the existing pinned CI tools image from
+Use Go 1.26.11 and the existing pinned CI tools image from
 `deploy/ci/images.env`; prepare the ordinary module cache before entering the
 offline build boundary. The bundle builder refuses a dirty source tree,
 another toolchain, missing cached dependencies or dynamically linked tools.

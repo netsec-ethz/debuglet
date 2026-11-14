@@ -452,10 +452,13 @@ func acceptTCPSocket(ctx, acceptCtx context.Context, env *WasmEnv) (int32, error
 			continue
 		}
 
-		if acceptCtx.Err() != nil {
+		// The kernel accept and policy admission have completed. A racing
+		// polling deadline must not discard this peer's already received data;
+		// only cancellation of the owning run prevents handing it to the guest.
+		if ctx.Err() != nil {
 			env.RecordCleanupError(conn.Close())
 			reservation.Release()
-			return -1, context.Cause(acceptCtx)
+			return -1, context.Cause(ctx)
 		}
 
 		// Linux copies the listener's mark to the connections it accepts;

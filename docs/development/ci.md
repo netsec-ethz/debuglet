@@ -61,7 +61,7 @@ The required vulnerability lane pins govulncheck and rejects known vulnerabiliti
 reachable from native package symbols. It retains the tool/database versions and
 call paths. Findings limited to an uncalled module are informational. Any temporary
 exception in `tools/vulnerability-exceptions.json` must name one advisory and
-module, a review URL, a reason, and an expiry no more than 30 days away. Expired
+exact module version, a review URL, a reason, and an expiry no more than 30 days away. Expired
 exceptions fail. This gate currently covers Go dependencies, not container OS
 packages.
 

@@ -1,8 +1,16 @@
 # Add your executor
 
-Use the console's **Operator → My nodes → Add executor** flow to connect a Linux
-machine to a dispatcher that supports account-owned enrollment. Your existing
-account owns the machine; it does not need dispatcher administrator privileges.
+Use the console's **Operator → My nodes → Add executor** flow to connect an
+**Ubuntu 24.04 amd64** machine. Your existing account owns the executor; it does
+not need dispatcher administrator privileges or a crypto wallet for TEST use.
+
+Before creating a node, obtain a compatible **full** package from your dispatcher
+operator. The public v0.2.0 release predates `executor join`, and public apt is
+not live yet. Check [installation and release availability](../../README-install.md).
+
+For an always-on node, go directly to [persistent setup](#run-persistently-on-linux)
+after creating the node and installing the package. The steps below run it in
+a terminal; keep that terminal open while the executor is in use.
 
 1. Give the machine a name. It appears as **Awaiting setup** until enrollment.
 2. Install the operator's compatible **full** package using the
@@ -10,7 +18,7 @@ account owns the machine; it does not need dispatcher administrator privileges.
    apt, `dbl_cli=/usr/local/bin/dbl` for system-wide tar, or
    `dbl_cli="$HOME/.local/bin/dbl"` for user-local tar. Confirm
    `"$dbl_cli" --output json version` matches the supplied version and source
-   revision. The published v0.2.0 package predates `executor join`.
+   revision.
 3. Use the setup values from the console with that selected CLI on the executor
    machine. For a system service, follow [persistent setup](#run-persistently-on-linux)
    instead of this terminal trial:
@@ -28,7 +36,10 @@ account owns the machine; it does not need dispatcher administrator privileges.
    machine's private key locally, obtains its certificate, initializes its
    database, and writes its configuration. The private key stays on the machine.
 5. Run the start command printed by `join`. Keep that process running. The
-   console updates when the dispatcher observes a ready connection.
+   console updates when the dispatcher observes a ready connection. Once it
+   shows **Ready**, [run a TEST measurement](../measurements.md#run-your-first-measurement)
+   on this node and inspect its output. The node must accept TEST and your
+   account needs sufficient allowance if the dispatcher enforces one.
 
 The join command first verifies the HTTPS enrollment API. If that API uses a
 publicly trusted certificate, use system trust: do not add the private native
@@ -140,8 +151,10 @@ the running executor; retain its generated identity and database for later start
 
 ## Run persistently on Linux
 
-For a Linux amd64 machine with systemd, install the operator's compatible full
-package through apt or system-wide tar using the [installation guide](../../README-install.md).
+For an Ubuntu 24.04 amd64 machine with systemd, create the node in **My nodes**
+and keep its executor ID and one-time setup token available. Install the
+compatible full package through apt or system-wide tar using the
+[installation guide](../../README-install.md).
 Set `dbl_cli=/usr/bin/dbl` for apt or `dbl_cli=/usr/local/bin/dbl` for tar in this
 shell, and check `"$dbl_cli" --output json version`. Use the same selection for
 the maintenance commands below; an unqualified `dbl` may select another package.

@@ -34,11 +34,12 @@ import (
 
 const (
 	soakLifetime    = 120 * time.Second
-	soakMaximumJobs = 122 // 120 healthy runs and two expiry attempts.
+	soakMaximumJobs = 124 // 120 healthy runs, two expiry refusals and two renewed runs.
 )
 
 // TestInstalledScheduleSoak measures a declared small TEST profile through its
-// actual finite TESLA lifetime. Exhaustion is a refusal, not automatic rotation.
+// finite TESLA lifetime. Out-of-window uploads are refused, and automatic
+// renewal announces a new schedule before work resumes.
 func TestInstalledScheduleSoak(t *testing.T) {
 	root, evidence := os.Getenv("DEBUGLET_LOCAL_INSTALL_ROOT"), os.Getenv("DEBUGLET_SOAK_EVIDENCE_DIR")
 	if !filepath.IsAbs(root) || !filepath.IsAbs(evidence) {
@@ -220,11 +221,13 @@ func TestInstalledScheduleSoak(t *testing.T) {
 		case <-readyTick.C:
 		}
 	}
+	anchors := make(map[string]int64, len(nodes))
 	var firstExpiry, lastExpiry time.Time
 	for _, node := range nodes {
 		if (node.ID != ids[0] && node.ID != ids[1]) || !node.Ready || node.TeslaDelaySec != 1 || node.TeslaAnchorTimestampNs <= 0 {
 			t.Fatal("unexpected schedule", node)
 		}
+		anchors[node.ID] = node.TeslaAnchorTimestampNs
 		expiry := time.Unix(0, node.TeslaAnchorTimestampNs).Add(soakLifetime)
 		if firstExpiry.IsZero() || expiry.Before(firstExpiry) {
 			firstExpiry = expiry
@@ -369,8 +372,8 @@ func TestInstalledScheduleSoak(t *testing.T) {
 			baseline = values
 		}
 	}
-	loadStart := time.Now()
-	for completed < soakMaximumJobs-2 && time.Now().Add(8*time.Second).Before(firstExpiry) {
+	runBatch := func() {
+		t.Helper()
 		start := time.Now().Unix() + 2
 		prepared, nonces := batch(start)
 		for i := range ids {
@@ -408,30 +411,18 @@ func TestInstalledScheduleSoak(t *testing.T) {
 		}
 		sample()
 	}
-	if completed < 40 || time.Since(loadStart) < 60*time.Second {
-		t.Fatal("insufficient sustained workload", completed, time.Since(loadStart))
-	}
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
-	for time.Now().Before(lastExpiry.Add(2 * time.Second)) {
-		sample()
-		select {
-		case <-ctx.Done():
-			t.Fatal(ctx.Err())
-		case <-tick.C:
-		}
-	}
-	prepared, nonces := batch(time.Now().Unix())
-	for i := range ids {
-		expected[i] <- nonces[i]
-	}
+	// Refuse work beyond the currently announced chain before it can renew.
+	// Waiting for this original expiry would instead exercise a fresh chain.
+	prepared, _ := batch(lastExpiry.Unix() + 1)
 	_, err = c.SubmitTEST(ctx, prepared)
 	var submission *client.SubmissionError
 	if !errors.As(err, &submission) || submission.TransactionID == "" {
-		t.Fatal("expired executor did not refuse a recorded TEST batch", err)
+		t.Fatal("executor did not refuse a recorded TEST batch beyond its chain expiry", err)
 	}
 	emit(map[string]any{"event": "expired_submission", "transaction": submission.TransactionID, "client_outcome_unknown": submission.OutcomeUnknown, "error": err.Error()})
-	// Reconcile the failed upload through the owned database; no client retry
+	// Reconcile the refused upload through the owned database; no client retry
 	// creates a new transaction or masks an unknown result.
 	db, err := sqlitedb.Open(dbPath, sqlitedb.ReadOnly())
 	if err != nil {
@@ -502,12 +493,61 @@ func TestInstalledScheduleSoak(t *testing.T) {
 		}
 	}
 	checkExpired("after_refusal")
-	for i := range ids {
+	// Public terminal errors omit executor details. Match a validation refusal
+	// to this batch in the owned executor logs rather than accepting an
+	// unrelated transport failure as the negative control.
+	refusals := 0
+	for i, id := range expiredIDs {
 		data, err := os.ReadFile(filepath.Join(work, fmt.Sprintf("executor-%d", i), "daemon.log"))
-		if err != nil || !strings.Contains(string(data), "TESLA key chain exhausted") {
-			t.Fatalf("executor %d did not report actual expiry: %v", i, err)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			var entry struct {
+				RunID string `json:"run_id"`
+				Stage string `json:"upload_stage"`
+				Code  string `json:"grpc_code"`
+			}
+			if json.Unmarshal([]byte(line), &entry) == nil && entry.RunID == id &&
+				entry.Stage == "validation" && entry.Code == "FailedPrecondition" {
+				refusals++
+				break
+			}
 		}
 	}
+	if refusals < 1 {
+		t.Fatal("no executor confirmed the out-of-window refusal")
+	}
+	loadStart := time.Now()
+	// Finish the sustained load before the 12-second renewal lead window.
+	// A drained executor may briefly refuse new work while reconnecting.
+	for completed < soakMaximumJobs-4 && time.Now().Add(18*time.Second).Before(firstExpiry) {
+		runBatch()
+	}
+	if completed < 40 || time.Since(loadStart) < 60*time.Second {
+		t.Fatal("insufficient sustained workload", completed, time.Since(loadStart))
+	}
+	for time.Now().Before(lastExpiry.Add(2 * time.Second)) {
+		sample()
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-tick.C:
+		}
+	}
+	nodes, err = c.Nodes(ctx)
+	if err != nil || len(nodes) != len(ids) {
+		t.Fatal("renewed executor listing", nodes, err)
+	}
+	for _, node := range nodes {
+		anchor, known := anchors[node.ID]
+		if !known || !node.Ready || node.TeslaDelaySec != 1 || node.TeslaAnchorTimestampNs <= anchor {
+			t.Fatal("executor did not announce a ready replacement schedule", node)
+		}
+		emit(map[string]any{"event": "renewed_schedule", "executor": node.ID,
+			"previous_anchor_ns": anchor, "anchor_ns": node.TeslaAnchorTimestampNs})
+	}
+	runBatch()
 	for time.Now().Before(observeUntil) {
 		sample()
 		select {
