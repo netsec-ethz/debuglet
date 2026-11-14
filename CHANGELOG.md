@@ -12,11 +12,16 @@ documentation contain operational details.
 ## [Unreleased]
 
 ### Changed
+- Starter templates are rebuilt with Go 1.26.11 and published as template
+  version 2. Saved version-1 profiles keep their original programs. Update
+  the dispatcher and its pinned console together (API 1.34).
 - Executors renew exhausted TESLA chains without changing identity. Admission
   pauses while renewal completes and discovery reports `chain_renewing` (API
   1.25). Upgrade the dispatcher and console before executors.
 
 ### Security
+- Updated Go to 1.26.11 to fix the `net/http.MaxBytesReader` header race
+  (GO-2026-6859).
 - Updated the JOSE and WebSocket dependencies and the runtime container base to
   address published dependency vulnerabilities.
 - Fixed an accounting bypass for IPv4 UDP and ICMP traffic when the eBPF
@@ -51,6 +56,10 @@ documentation contain operational details.
   executor admission (#415).
 
 ### Fixed
+- Coordinated experiments preserve partial peer messages across short receive
+  timeouts and abandon stalled frames so other peers can proceed.
+- The assistant's block catalogue now specifies one-based Repeat iterations;
+  incomplete generation has a larger output budget and a specific error.
 - Coordinated experiments retain their readiness budget after a slow polling
   request, instead of failing early while their start barrier is still open.
 - Client-certificate enforcement now binds inventory certificates during
