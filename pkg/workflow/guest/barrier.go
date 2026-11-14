@@ -4,7 +4,9 @@
 package guest
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 	"time"
@@ -176,20 +178,41 @@ func (e *Experiment) writeFrame(frame experimentFrame, deadline time.Time) error
 	return conn.Close()
 }
 
+type experimentFrameReceiver struct {
+	conn interface {
+		io.ReadCloser
+		SetReadDeadline(time.Time) error
+	}
+	reader experimentFrameReader
+}
+
 func (e *Experiment) receiveFrame(deadline time.Time) error {
 	remaining := time.Until(deadline)
 	if remaining <= 0 {
 		return debuglet.ErrTimeout
 	}
-	conn, err := debuglet.AcceptTCPTimeout(remaining)
-	if err != nil {
+	if e.receiving == nil {
+		conn, err := debuglet.AcceptTCPTimeout(remaining)
+		if err != nil {
+			return err
+		}
+		e.receiving = &experimentFrameReceiver{conn: conn}
+	}
+	receiver := e.receiving
+	var frame experimentFrame
+	var size int
+	err := receiver.conn.SetReadDeadline(deadline)
+	if err == nil {
+		frame, size, err = receiver.reader.read(receiver.conn)
+	}
+	var timeout interface{ Timeout() bool }
+	if errors.As(err, &timeout) && timeout.Timeout() {
+		// An early arrival for another phase may cross this phase's deadline.
+		// Keep its socket and partial frame for the next bounded receive.
 		return err
 	}
-	defer conn.Close()
-	if err := conn.SetReadDeadline(deadline); err != nil {
-		return err
-	}
-	frame, size, err := experimentRead(conn)
+	_ = receiver.conn.Close()
+	e.receiving = nil
 	if err != nil {
 		return err
 	}

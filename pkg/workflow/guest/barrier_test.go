@@ -4,10 +4,13 @@
 package guest
 
 import (
+	"errors"
 	"fmt"
+	"net"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func barrierIncoming(e *Experiment, peer, phase string, generation, sequence uint64) experimentFrame {
@@ -123,5 +126,120 @@ func TestBarrierIgnoresSkippedFutureGenerations(t *testing.T) {
 	out, err := e.Await(map[string]any{"source": "c", "channel": "other"})
 	if err != nil || out["ok"] != true {
 		t.Fatalf("phase generation consumed an application sequence: %#v, %v", out, err)
+	}
+}
+
+type barrierReadConn struct {
+	net.Conn
+	started chan struct{}
+	closed  bool
+}
+
+func (c *barrierReadConn) Read(p []byte) (int, error) {
+	if c.started != nil {
+		close(c.started)
+		c.started = nil
+	}
+	return c.Conn.Read(p)
+}
+
+func (c *barrierReadConn) Close() error {
+	c.closed = true
+	return c.Conn.Close()
+}
+
+func TestBarrierRetainsArrivalAcrossReadDeadline(t *testing.T) {
+	for _, split := range []int{0, 2, 4, 32} {
+		t.Run(fmt.Sprint(split), func(t *testing.T) {
+			e := experimentFixture(t, "a")
+			previous := &experimentBarrierState{generation: 2, current: map[string]bool{"b": true}, next: map[string]bool{}}
+			e.barriers["missing"] = previous
+			packet, err := experimentEncode(barrierIncoming(e, "b", "recovery", 1, 1))
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader, writer := net.Pipe()
+			defer reader.Close()
+			defer writer.Close()
+			started := make(chan struct{})
+			conn := &barrierReadConn{Conn: reader, started: started}
+			e.receiving = &experimentFrameReceiver{conn: conn}
+			resume, done := make(chan struct{}), make(chan error, 1)
+			go func() {
+				<-started
+				if err := writer.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+					done <- err
+					return
+				}
+				if err := experimentWrite(writer, packet[:split]); err != nil {
+					done <- err
+					return
+				}
+				// The prefix was consumed. Expire the read deterministically,
+				// without relying on the sender and receiver's scheduling.
+				if err := reader.SetReadDeadline(time.Now()); err != nil {
+					done <- err
+					return
+				}
+				<-resume
+				done <- experimentWrite(writer, packet[split:])
+			}()
+			err = e.receiveFrame(time.Now().Add(time.Second))
+			var timeout net.Error
+			if !errors.As(err, &timeout) || !timeout.Timeout() {
+				close(resume)
+				t.Fatalf("partial read error = %v, want timeout", err)
+			}
+			if e.receiving == nil || conn.closed || e.barriers["recovery"] != nil {
+				close(resume)
+				t.Fatal("timeout discarded the frame or published an incomplete arrival")
+			}
+			if got := e.barrierMissing(previous); !reflect.DeepEqual(got, []any{"c"}) {
+				close(resume)
+				t.Fatalf("partial arrival changed the old phase: %v", got)
+			}
+			close(resume)
+			if err := e.receiveFrame(time.Now().Add(time.Second)); err != nil {
+				t.Fatal("resume arrival:", err)
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			if e.receiving != nil || !conn.closed {
+				t.Fatal("complete frame retained its socket")
+			}
+			state := e.barriers["recovery"]
+			if state == nil || len(state.next) != 1 || !state.next["b"] || len(e.inbox) != 0 {
+				t.Fatalf("next-phase arrival not retained exactly once: %#v", state)
+			}
+		})
+	}
+}
+
+func TestBarrierClosesUnrecoverableFrame(t *testing.T) {
+	for name, packet := range map[string][]byte{
+		"short header": {0, 0},
+		"short body":   {0, 0, 0, 2, '{'},
+		"oversized":    {0, 0, 32, 1},
+		"invalid JSON": {0, 0, 0, 1, '{'},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := experimentFixture(t, "a")
+			reader, writer := net.Pipe()
+			defer reader.Close()
+			defer writer.Close()
+			conn := &barrierReadConn{Conn: reader}
+			e.receiving = &experimentFrameReceiver{conn: conn}
+			go func() {
+				defer writer.Close()
+				_ = experimentWrite(writer, packet)
+			}()
+			if err := e.receiveFrame(time.Now().Add(time.Second)); err == nil {
+				t.Fatal("accepted invalid frame")
+			}
+			if e.receiving != nil || !conn.closed || len(e.barriers) != 0 {
+				t.Fatal("invalid frame retained a socket or changed arrivals")
+			}
+		})
 	}
 }
