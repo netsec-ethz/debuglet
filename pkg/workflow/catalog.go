@@ -44,7 +44,7 @@ func Catalog() []Block {
 		{"or", "Or", "Logic", "At least one condition is true.", true, []Port{input("a", "boolean"), input("b", "boolean")}, []Port{output("value", "boolean")}, []string{}},
 		{"not", "Not", "Logic", "Invert a condition.", true, []Port{input("value", "boolean")}, []Port{output("value", "boolean")}, []string{}},
 		{"if", "If", "Control", "Run exactly the selected branch.", false, []Port{input("condition", "boolean")}, []Port{}, []string{"true", "false"}},
-		{"repeat", "Repeat", "Control", "Run the body sequentially up to 100 times, then continue on done. The body ends at an unconnected control output.", false, []Port{input("count", "number")}, []Port{output("iteration", "number")}, []string{"body", "done"}},
+		{"repeat", "Repeat", "Control", "Run the body sequentially up to 100 times, then continue on done. iteration starts at 1 and ends at count; subtract 1 for a zero-based array index. The body ends at an unconnected control output.", false, []Port{input("count", "number")}, []Port{output("iteration", "number")}, []string{"body", "done"}},
 		{"wait", "Wait", "Control", "Wait between actions, at most 60 seconds per call.", false, []Port{input("duration_ms", "number")}, []Port{}, []string{"next"}},
 		{"emit", "Emit result", "Results", "Publish a named JSON result.", false, []Port{input("name", "string"), input("value", "any")}, []Port{output("name", "string"), output("value", "any")}, []string{"next"}},
 	}, measurementCatalog()...), reportCatalog()...)
