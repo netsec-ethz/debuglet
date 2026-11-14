@@ -112,7 +112,7 @@ activate services.
 
 ## Build from source
 
-On Linux amd64, install Go 1.26.10, Git, Make, Bash, GNU tar, coreutils, Python
+On Linux amd64, install Go 1.26.11, Git, Make, Bash, GNU tar, coreutils, Python
 3.11+ and `dpkg-deb` (from `dpkg`), then:
 
 ```sh

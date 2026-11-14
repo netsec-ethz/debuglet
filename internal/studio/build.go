@@ -27,7 +27,7 @@ const (
 	MaxWorkflowBytes = 1 << 20
 	MaxBundleBytes   = 24 << 20
 	maxWasmBytes     = 16 << 20
-	toolchain        = "go1.26.10"
+	toolchain        = "go1.26.11"
 )
 
 type Bundle struct {

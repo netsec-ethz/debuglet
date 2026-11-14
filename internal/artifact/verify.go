@@ -15,7 +15,7 @@ import (
 )
 
 const GuestABI = "debuglet-go-wasi-imports-v1"
-const Toolchain = "go1.26.10"
+const Toolchain = "go1.26.11"
 const ManifestPath = "share/debuglet/manifest.json"
 
 var versionPattern = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$`)

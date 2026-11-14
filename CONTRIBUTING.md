@@ -37,7 +37,7 @@ the visual editor and MCP use the same catalog and compiler.
 
 ## Develop and test
 
-Use Ubuntu 24.04 amd64 and Go 1.26.10, as pinned in `go.mod` and `mise.toml`.
+Use Ubuntu 24.04 amd64 and Go 1.26.11, as pinned in `go.mod` and `mise.toml`.
 Install Git and Make, then:
 
 ```sh

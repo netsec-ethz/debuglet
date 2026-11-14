@@ -101,7 +101,7 @@ func TestAssistantCompilerSharesSlotsAndClassifiesWorkerFailures(t *testing.T) {
 		{"broken", 200, "not JSON", "compiler_unavailable"},
 		{"wrong document", 200, `{"version":1,"workflow_sha256":"wrong"}`, "compiler_unavailable"},
 		{"compile diagnostic", 422, `{"error":"compile workflow: # debuglet.workflow.build\n./main.go:17:2: undefined: calculation"}`, ""},
-		{"toolchain unavailable", 422, `{"error":"workflow builds require go1.26.10 installed locally"}`, "compiler_unavailable"},
+		{"toolchain unavailable", 422, `{"error":"workflow builds require go1.26.11 installed locally"}`, "compiler_unavailable"},
 		{"compiler killed", 422, `{"error":"compile workflow: compile: signal: killed"}`, "compiler_unavailable"},
 		{"success", 200, `{"version":1,"workflow_sha256":"` + studio.DocumentDigest(document) + `"}`, ""},
 	} {
