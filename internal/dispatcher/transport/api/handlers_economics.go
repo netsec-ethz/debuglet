@@ -47,10 +47,10 @@ func (h *Handler) PostPaymentQuote(c echo.Context) error {
 	if err := h.dispatcher.Payment.CheckPaymentMethod(req.PaymentMethod); err != nil {
 		return paymentMethodError(req.PaymentMethod, err)
 	}
-	if req.PaymentMethod != "TEST" && req.PaymentMethod != "USDC" {
+	if req.PaymentMethod != "TEST" && req.PaymentMethod != "USDC" && req.PaymentMethod != "SUI" {
 		return unknownPaymentMethod(req.PaymentMethod)
 	}
-	prices, total, failures := h.priceBatch(req.Debuglets)
+	prices, total, failures := h.priceBatchCurrency(req.Debuglets, req.PaymentMethod)
 	return c.JSON(http.StatusOK, newQuote(req.PaymentMethod, req.Debuglets, prices, total, failures))
 }
 
@@ -113,6 +113,8 @@ func currencyUnit(currency string) string {
 	switch currency {
 	case "TEST":
 		return "TEST units"
+	case "SUI":
+		return "MIST"
 	case "USDC":
 		return "micro-USDC"
 	default:
@@ -155,6 +157,9 @@ func intentStatus(state int64) string {
 // A chain method is offered exactly when the payment preflight admits it.
 func (h *Handler) accountEconomics() *wire.Economics {
 	economics := &wire.Economics{PaymentMethods: []string{"TEST"}}
+	if h.dispatcher.Payment.CheckPaymentMethod("SUI") == nil {
+		economics.PaymentMethods = append(economics.PaymentMethods, "SUI")
+	}
 	if h.dispatcher.Payment.CheckPaymentMethod("USDC") == nil {
 		economics.PaymentMethods = append(economics.PaymentMethods, "USDC")
 		economics.ChainPayments = true

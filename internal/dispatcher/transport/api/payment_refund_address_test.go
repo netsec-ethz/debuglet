@@ -77,7 +77,7 @@ func TestPaymentIntentRefundAddressValidationChainEnabled(t *testing.T) {
 	t.Cleanup(d.Close)
 	owner := apiTestOwner(t, d, wfExecutorID)
 	if err := apiTestRegister(t.Context(), d, owner, &protocol.HelloResponse{
-		ExecutorId: wfExecutorID, Version: "test", PricePerBwS: wfPricePerBwS, Currency: "TEST",
+		ExecutorId: wfExecutorID, Version: "test", PricePerBwS: wfPricePerBwS, Currency: "USDC",
 	}, "127.0.0.1"); err != nil {
 		t.Fatal(err)
 	}

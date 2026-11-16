@@ -28,7 +28,7 @@ var (
 type CommunityFundsError struct{ Available, Required int64 }
 
 func (e *CommunityFundsError) Error() string {
-	return fmt.Sprintf("community has %d units available; this measurement requires %d", e.Available, e.Required)
+	return fmt.Sprintf("prepaid budget has %d units available; this measurement requires %d", e.Available, e.Required)
 }
 
 // CommunityBudget derives funds from receipts and existing order decisions;
@@ -60,7 +60,7 @@ func (p *PaymentHandler) CommunityBalance(ctx context.Context, db database.DBTX,
 		a, err := readAllowance(ctx, database.New(db), owner)
 		return CommunityBudget{a.Granted, a.Reserved, a.Consumed, a.Remaining()}, err
 	}
-	if currency != "USDC" {
+	if !isChainCurrency(currency) {
 		return CommunityBudget{}, ErrUnsupportedPaymentMethod
 	}
 	var b CommunityBudget
@@ -69,13 +69,13 @@ func (p *PaymentHandler) CommunityBalance(ctx context.Context, db database.DBTX,
 			WHERE d.community_id=c.id AND d.network=? AND d.coin_type=? AND t.status=?),0),
 		COALESCE((SELECT SUM(o.price) FROM community_funding f JOIN transactions t ON t.id=f.transaction_id
 			JOIN debuglet_order o ON o.transaction_id=t.id
-			WHERE f.community_id=c.id AND f.currency='USDC' AND f.network=? AND t.status=? AND o.state=?),0),
+			WHERE f.community_id=c.id AND f.currency=? AND f.network=? AND t.status=? AND o.state=?),0),
 		COALESCE((SELECT SUM(o.price) FROM community_funding f JOIN debuglet_order o ON o.transaction_id=f.transaction_id
-			WHERE f.community_id=c.id AND f.currency='USDC' AND f.network=? AND o.state=?),0)
+			WHERE f.community_id=c.id AND f.currency=? AND f.network=? AND o.state=?),0)
 		FROM communities c WHERE c.id=?`,
-		p.cfg.Sui.Network, sui.GetCoinType("USDC", p.cfg.Sui.Network), models.Paid,
-		p.cfg.Sui.Network, models.Paid, models.Outstanding,
-		p.cfg.Sui.Network, models.Credited, communityID).Scan(&b.Funded, &b.Reserved, &b.Spent)
+		p.cfg.Sui.Network, sui.GetCoinType(currency, p.cfg.Sui.Network), models.Paid,
+		currency, p.cfg.Sui.Network, models.Paid, models.Outstanding,
+		currency, p.cfg.Sui.Network, models.Credited, communityID).Scan(&b.Funded, &b.Reserved, &b.Spent)
 	if errors.Is(err, sql.ErrNoRows) {
 		return b, ErrCommunityNotFound
 	}
@@ -92,11 +92,18 @@ func (p *PaymentHandler) CommunityBalance(ctx context.Context, db database.DBTX,
 // CreateCommunityTopUpIn creates the ordinary owner-signed USDC intent and
 // classifies it as a deposit in the same caller-owned SQL transaction.
 func (p *PaymentHandler) CreateCommunityTopUpIn(db database.DBTX, actor uuid.UUID, communityID, transactionID string, amount int64, refundAddress string, ctx context.Context) (PaymentIntent, error) {
-	if err := p.requireChain("USDC", "fund community"); err != nil {
+	return p.CreateCommunityTopUpCurrencyIn(db, actor, communityID, transactionID, amount, refundAddress, "USDC", ctx)
+}
+
+func (p *PaymentHandler) CreateCommunityTopUpCurrencyIn(db database.DBTX, actor uuid.UUID, communityID, transactionID string, amount int64, refundAddress, currency string, ctx context.Context) (PaymentIntent, error) {
+	if !isChainCurrency(currency) {
+		return PaymentIntent{}, ErrUnsupportedPaymentMethod
+	}
+	if err := p.requireChain(currency, "fund community"); err != nil {
 		return PaymentIntent{}, err
 	}
 	if amount <= 0 || amount > 1<<53-1 {
-		return PaymentIntent{}, errors.New("top-up must be between 1 and 9007199254740991 micro-USDC")
+		return PaymentIntent{}, errors.New("top-up must be between 1 and 9007199254740991 base units")
 	}
 	if err := sui.ValidAddress(refundAddress); err != nil {
 		return PaymentIntent{}, err
@@ -115,12 +122,12 @@ func (p *PaymentHandler) CreateCommunityTopUpIn(db database.DBTX, actor uuid.UUI
 	if actor != owner {
 		return PaymentIntent{}, ErrCommunityOwner
 	}
-	intent, err := p.CreatePaymentIntentIn(db, transactionID, amount, "USDC", "community-deposit:"+communityID, ctx)
+	intent, err := p.CreatePaymentIntentIn(db, transactionID, amount, currency, "community-deposit:"+communityID, ctx)
 	if err != nil {
 		return PaymentIntent{}, err
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO community_topups(transaction_id,community_id,created_by,refund_address,network,coin_type) VALUES(?,?,?,?,?,?)`,
-		transactionID, communityID, ownerID, refundAddress, p.cfg.Sui.Network, sui.GetCoinType("USDC", p.cfg.Sui.Network)); err != nil {
+		transactionID, communityID, ownerID, refundAddress, p.cfg.Sui.Network, sui.GetCoinType(currency, p.cfg.Sui.Network)); err != nil {
 		return PaymentIntent{}, err
 	}
 	if err := database.New(db).SetTransactionOwner(ctx, database.SetTransactionOwnerParams{TransactionID: transactionID, Uuid: actor}); err != nil {
@@ -140,7 +147,7 @@ func (p *PaymentHandler) CreateCommunityIntentIn(db database.DBTX, actor uuid.UU
 	if err := p.CheckPaymentMethod(currency); err != nil {
 		return PaymentIntent{}, err
 	}
-	if currency != "TEST" && currency != "USDC" {
+	if currency != "TEST" && !isChainCurrency(currency) {
 		return PaymentIntent{}, ErrUnsupportedPaymentMethod
 	}
 	if _, err := db.ExecContext(ctx, `UPDATE communities SET name=name WHERE id=(SELECT community_id FROM community_projects WHERE id=?)`, projectID); err != nil {
@@ -179,7 +186,7 @@ func (p *PaymentHandler) CreateCommunityIntentIn(db database.DBTX, actor uuid.UU
 		}
 		if err == nil {
 			_, err = database.New(db).CreateTransaction(ctx, database.CreateTransactionParams{
-				ID: transactionID, Price: price, Currency: "USDC", Method: "COMMUNITY",
+				ID: transactionID, Price: price, Currency: currency, Method: "COMMUNITY",
 				ExpiresAt: models.NewUTCTime(time.Now().Add(testIntentLifetime)), Hash: hash, Status: int64(models.Paid),
 			})
 			intent = PaymentIntent{method: "COMMUNITY", Intent: DummyIntent{TransactionId: transactionID}}
@@ -199,7 +206,7 @@ func (p *PaymentHandler) CreateCommunityIntentIn(db database.DBTX, actor uuid.UU
 // sponsored work. It does not grant access to another actor's payment intent.
 func (p *PaymentHandler) CheckCommunitySubmission(ctx context.Context, db database.DBTX, transactionID string, actor uuid.UUID) error {
 	var deposit bool
-	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM community_topups WHERE transaction_id=?)`, transactionID).Scan(&deposit); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM community_topups WHERE transaction_id=? UNION ALL SELECT 1 FROM prepaid_topups WHERE transaction_id=?)`, transactionID, transactionID).Scan(&deposit); err != nil {
 		return err
 	}
 	if deposit {
@@ -210,7 +217,7 @@ func (p *PaymentHandler) CheckCommunitySubmission(ctx context.Context, db databa
 		WHERE m.community_id=f.community_id AND u.uuid=? AND m.user_id=f.actor_user_id)
 		FROM community_funding f WHERE f.transaction_id=?`, actor, transactionID).Scan(&member)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		return p.checkCommunityCurrency(ctx, db, transactionID)
 	}
 	if err != nil {
 		return err
@@ -223,14 +230,14 @@ func (p *PaymentHandler) CheckCommunitySubmission(ctx context.Context, db databa
 
 func (p *PaymentHandler) checkCommunityCurrency(ctx context.Context, db database.DBTX, transactionID string) error {
 	var currency, network string
-	err := db.QueryRowContext(ctx, `SELECT currency,network FROM community_funding WHERE transaction_id=?`, transactionID).Scan(&currency, &network)
+	err := db.QueryRowContext(ctx, `SELECT currency,network FROM community_funding WHERE transaction_id=? UNION ALL SELECT currency,network FROM personal_funding WHERE transaction_id=?`, transactionID, transactionID).Scan(&currency, &network)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if currency == "USDC" && network != p.cfg.Sui.Network {
+	if isChainCurrency(currency) && network != p.cfg.Sui.Network {
 		return ErrCommunityNetwork
 	}
 	return nil
@@ -238,7 +245,7 @@ func (p *PaymentHandler) checkCommunityCurrency(ctx context.Context, db database
 
 func communityFunded(ctx context.Context, db database.DBTX, transactionID string) (bool, error) {
 	var funded bool
-	err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM community_funding WHERE transaction_id=?)`, transactionID).Scan(&funded)
+	err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM community_funding WHERE transaction_id=? UNION ALL SELECT 1 FROM personal_funding WHERE transaction_id=?)`, transactionID, transactionID).Scan(&funded)
 	return funded, err
 }
 

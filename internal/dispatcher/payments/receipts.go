@@ -103,7 +103,7 @@ func (p *PaymentHandler) settleReceipt(ctx context.Context, db database.DBTX, r 
 	// Reconfiguring the dispatcher cannot turn another network's funds into
 	// spendable credit in this wallet.
 	var network, coinType string
-	depositErr := db.QueryRowContext(ctx, `SELECT network,coin_type FROM community_topups WHERE transaction_id=?`, transaction.ID).Scan(&network, &coinType)
+	depositErr := db.QueryRowContext(ctx, `SELECT network,coin_type FROM community_topups WHERE transaction_id=? UNION ALL SELECT network,coin_type FROM prepaid_topups WHERE transaction_id=?`, transaction.ID, transaction.ID).Scan(&network, &coinType)
 	if depositErr != nil && !errors.Is(depositErr, sql.ErrNoRows) {
 		return "", "", depositErr
 	}
@@ -111,6 +111,8 @@ func (p *PaymentHandler) settleReceipt(ctx context.Context, db database.DBTX, r 
 		return sui.ReceiptMismatch, "community deposit network or coin type", nil
 	}
 	switch {
+	case transaction.Currency == "SUI" && p.cfg.Sui.Network != "testnet":
+		return sui.ReceiptMismatch, "native SUI network", nil
 	case !isChainCurrency(transaction.Method):
 		return sui.ReceiptMismatch, "method", nil
 	case !sameCoinType(r.CoinType, sui.GetCoinType(transaction.Currency, p.cfg.Sui.Network)):

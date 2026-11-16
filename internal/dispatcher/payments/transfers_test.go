@@ -44,6 +44,7 @@ type transferChain struct {
 
 	smu         sync.Mutex
 	prepares    int
+	gasBudget   uint64
 	receiverOf  map[string]string // digest -> receiver
 	executeErrs []error           // consumed per call; nil once exhausted
 	executeFor  map[string]error  // by receiver, before executeErrs
@@ -81,7 +82,11 @@ func (c *transferChain) PrepareTransfer(ctx context.Context, amount uint64, coin
 		c.receiverOf = map[string]string{}
 	}
 	c.receiverOf[digest] = receiver
-	return sui.RestorePreparedTransfer(digest, txBytes, fmt.Sprintf("signature %d", c.prepares))
+	prepared, err := sui.RestorePreparedTransfer(digest, txBytes, fmt.Sprintf("signature %d", c.prepares))
+	if prepared != nil {
+		prepared.GasBudgetMIST = c.gasBudget
+	}
+	return prepared, err
 }
 
 func (c *transferChain) ExecuteTransfer(ctx context.Context, prepared *sui.PreparedTransfer) error {

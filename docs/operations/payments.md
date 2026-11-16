@@ -5,9 +5,9 @@ executor payouts and buyer refunds. TEST payments move no funds and write no
 receipt or transfer records. While `[sui] disabled = true`, nothing here runs.
 
 For [community funding](../communities.md#pay-from-the-community-budget), the
-owner first signs a USDC deposit. Members then reserve that prepaid balance:
+owner first signs a SUI or USDC deposit. Members then reserve that prepaid balance:
 their intents return `method: "COMMUNITY"` and require no individual wallet
-payment. Failed USDC orders return funds to that community balance instead of
+payment. Failed prepaid orders return funds to that community balance instead of
 sending a buyer refund transfer. TEST communities share their creator's existing
 allowance. The tables below describe personal payment intents unless stated
 otherwise. Community deposits currently support Sui Testnet and have no
@@ -26,7 +26,9 @@ Chain payments are switched by `[sui] disabled`. Every shipped configuration
 | Chain client, receipt listener, payout and reconciliation loops | Not built; no keystore is read | Running |
 | Chain-currency orders of finished runs | Left as they are until chain payments are enabled again | Credited, or refunded on chain |
 
-`SUI` is never admitted as a payment method over the HTTP API. While disabled,
+Native `SUI` intents are admitted on Testnet only, in integer MIST. Executors
+must explicitly advertise `currency = "SUI"`; their configured `price_per_bw_s`
+is then a fixed MIST rate, with no exchange-rate conversion. While disabled,
 the dispatcher logs `blockchain payments are disabled; only TEST payments are
 available` at startup.
 
@@ -53,7 +55,8 @@ This build supports chain payments only in this profile:
 - **Network:** Sui Testnet (`network = "testnet"`). The daemon also accepts
   `mainnet` because the code carries its USDC coin type, but mainnet is not
   supported: there is no real-money operation.
-- **Currency:** Circle's testnet USDC, through the coin type the dispatcher
+- **Currencies:** native SUI (`0x2::sui::SUI`, 1 SUI = 1,000,000,000 MIST)
+  and Circle's testnet USDC, through the coin type the dispatcher
   carries for `testnet`:
 
   ```text
@@ -66,8 +69,9 @@ This build supports chain payments only in this profile:
   sets a gas budget of the reference gas price times 50,000 units, and the
   address must hold SUI coins covering that whole budget, in at most 256
   coin objects; only the gas used is charged.
-- **No deposits:** buyers pay each intent individually. The dispatcher holds
-  no prepaid customer balance.
+- **Prepaid credits:** an account can deposit native SUI once and reserve its
+  balance for subsequent experiments. Community owners can also deposit USDC.
+  These are custodial Testnet credits; there is no withdrawal interface.
 
 ### Custody
 
@@ -86,6 +90,54 @@ from, and where the gas is held.
 - The keystore is a JSON array of base64 entries. The dispatcher uses the
   Ed25519 entry whose address equals `address`, skips every other entry, reads
   the file once at startup and never logs its content.
+
+## Native prepaid credits and hosting rewards
+
+Account usage offers native SUI funding when enabled. `POST /me/wallet/top-ups`
+takes an integer-string `amount` in MIST, `refund_address`, and a unique
+`idempotency_key`. Reusing the same key returns the original intent and expiry;
+it never creates a second deposit. Only an exact confirmed payment-kit receipt
+credits the balance. `GET /me/wallet` returns funds, reservations, spend and
+recent receipt links. Chain intent amounts are limited to 9,007,199,254,740,991
+base units to preserve wallet SDK integer precision.
+
+A `PUT /payment/intent` request with `payment_method: "SUI", prepaid: true`
+reserves the entire quoted batch in one database transaction and returns
+`method: "CREDITS"`. No additional wallet signature is needed for that run.
+Success consumes its orders and credits executor earnings. Failure returns the
+same orders to the prepaid balance once; it does not also send a chain refund.
+Unused expired reservations are released, while admitted uncertain work keeps
+its reservation. TEST allowances remain noncashable and separate.
+
+Hosting awards require explicit operator approval of the current owner, a
+connected heartbeat no older than two minutes, and a registered SUI payout
+wallet. They are a daily eligibility snapshot, **not proof of a day's uptime**.
+The optional dispatcher settings (zero reward disables awards) are:
+
+```toml
+[sui]
+hosting_reward_mist = 1000000
+hosting_daily_cap_mist = 10000000
+hosting_max_nodes_per_account = 3
+```
+
+An authenticated operator funds the dedicated subsidy with
+`POST /operator/hosting-subsidy/top-ups`, using the same top-up body. Awards
+are checked every minute, at most once per executor per UTC day, with per-account
+node and global daily caps. Insufficient subsidy creates no award liability.
+The award joins ordinary executor earnings and uses the existing payout and
+reconciliation lifecycle.
+
+**Transfer gas is operator-funded once native custody begins.** This also
+applies to USDC payouts and refunds from the same wallet. Before a payout or direct
+refund can be broadcast, the dispatcher reserves its signed maximum gas budget
+from that subsidy in the same transaction as the transfer decision. Customer
+deposits cannot pay it. Without gas funding the payout/refund stays owed and is
+retried; it is not marked completed. Gas reservations survive restarts and
+uncertain outcomes. They conservatively retain the full ceiling even when actual
+gas is smaller; unused margin is not automatically released. Provision extra
+subsidy for gas as well as award principal. A single SUI coin can cover payment
+and gas; the transfer splits the gas coin after gas smashing.
 
 ## Startup validation
 
@@ -126,7 +178,7 @@ Two conditions are checked later, when the receipt listener starts or runs:
 
 With chain payments enabled, the dispatcher runs these on its own:
 
-- **Payout:** daily at local midnight, for every positive `USDC` balance that
+- **Payout:** daily at local midnight, for every positive `USDC` or `SUI` balance that
   has a payout wallet.
 - **Reconciliation:** every minute, over at most 100 open transfers; a
   `reserved` row counts as stale after ten minutes. See

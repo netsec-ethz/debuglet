@@ -122,7 +122,11 @@ func (h *Handler) PutDebuglets(c echo.Context) error {
 	// (stored Method "SUI", currency USDC or SUI) is rejected with 503 while
 	// blockchain payments are disabled, before any scheduler admission, debuglet
 	// insert or refund attempt. TEST transactions pass in both modes.
-	if err := h.dispatcher.Payment.CheckPaymentMethod(tx.Method); err != nil {
+	paymentMethod := tx.Method
+	if paymentMethod == "SUI" {
+		paymentMethod = tx.Currency
+	}
+	if err := h.dispatcher.Payment.CheckPaymentMethod(paymentMethod); err != nil {
 		if errors.Is(err, payments.ErrPaymentsDisabled) {
 			return apiError(http.StatusServiceUnavailable, CodePaymentsDisabled, paymentsDisabledMessage)
 		}

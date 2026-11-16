@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
@@ -138,6 +139,18 @@ func (p *PaymentHandler) prepareAndReserve(ctx context.Context, transfer databas
 		})
 		if err != nil {
 			return nil, fmt.Errorf("reserve %s transfer: %w", transfer.Kind, err)
+		}
+		custody, custodyErr := p.nativeCustody(ctx, tx)
+		if custodyErr != nil {
+			return nil, custodyErr
+		}
+		if (transfer.Currency == "SUI" || custody) && prepared != nil {
+			if prepared.GasBudgetMIST == 0 || prepared.GasBudgetMIST > math.MaxInt64 {
+				return nil, errors.New("native transfer has no supported gas budget")
+			}
+			if err := p.reserveNativeGas(ctx, tx, transfer.ID, int64(prepared.GasBudgetMIST)); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
