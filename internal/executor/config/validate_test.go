@@ -195,7 +195,7 @@ func TestRepositoryConfigurationLoads(t *testing.T) {
 			if err != nil {
 				t.Fatalf("checked-in configuration: %v", err)
 			}
-			if cfg.Identity.ExecutorID == "" || cfg.Resources.Capacity != 1_000_000_000 || cfg.Database.Path == "" {
+			if cfg.Identity.ExecutorID == "" || cfg.Resources.Capacity != DefaultCapacity || cfg.Database.Path == "" {
 				t.Fatalf("unexpected values: %+v", cfg)
 			}
 		})
@@ -246,5 +246,24 @@ func TestOmittedCapacityKeepsDefault(t *testing.T) {
 	}
 	if cfg.Resources.Capacity != DefaultCapacity {
 		t.Fatalf("capacity = %d, want %d", cfg.Resources.Capacity, DefaultCapacity)
+	}
+}
+
+func TestCapacityDefaultAndExistingOverrides(t *testing.T) {
+	for _, tc := range []struct {
+		resources string
+		want      int64
+	}{
+		{"", 100_000_000},
+		{"[resources]\ncapacity=10000000\n", 10_000_000},
+		{"[resources]\ncapacity=1000000000\n", 1_000_000_000},
+	} {
+		cfg, _, err := load(t, identitySection+dispatcherSection+databaseSection+tlsSection+tc.resources)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Resources.Capacity != tc.want {
+			t.Errorf("resources %q: capacity=%d, want %d", tc.resources, cfg.Resources.Capacity, tc.want)
+		}
 	}
 }

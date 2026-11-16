@@ -672,6 +672,24 @@
           counter must be auto with BPF enabled or explicit fallback.
         quiet: true
 
+    - name: Require typed executor network policy
+      ansible.builtin.assert:
+        that:
+          - executor_policy_tcp is boolean
+          - executor_policy_tls is boolean
+          - executor_policy_udp is boolean
+          - executor_policy_icmp is boolean
+          - executor_policy_scion is boolean
+          - executor_policy_inbound is boolean
+          - executor_policy_local_targets is boolean
+          - executor_denied_destinations is string
+          - executor_permitted_ports is string
+        fail_msg: >-
+          Executor policy switches must be YAML booleans. executor_denied_destinations
+          and executor_permitted_ports must be comma-separated strings; the
+          executor configuration validator checks their CIDR and port syntax.
+        quiet: true
+
     - name: Require client credentials when the control channel uses TLS
       ansible.builtin.assert:
         that:

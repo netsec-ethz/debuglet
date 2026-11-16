@@ -56,6 +56,17 @@ interface = "{{ executor_interface }}"
 # run listeners (see executor_public_host in group_vars/executors.yml).
 public_host = "{{ executor_public_host }}"
 public_ports = "{{ executor_public_ports }}"
+
+[network.policy]
+tcp = {{ executor_policy_tcp | bool | lower }}
+tls = {{ executor_policy_tls | bool | lower }}
+udp = {{ executor_policy_udp | bool | lower }}
+icmp = {{ executor_policy_icmp | bool | lower }}
+scion = {{ executor_policy_scion | bool | lower }}
+inbound = {{ executor_policy_inbound | bool | lower }}
+local_targets = {{ executor_policy_local_targets | bool | lower }}
+denied_destinations = {{ executor_denied_destinations | to_json }}
+permitted_ports = {{ executor_permitted_ports | to_json }}
 {% if executor_connectivity_ipv4_reflector | trim %}
 
 # IPv4 egress check against this executor's own dispatcher, over the control

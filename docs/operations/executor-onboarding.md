@@ -403,8 +403,11 @@ Deployment operators can label nodes outside the inventory with
 These entries merge with inventory labels, with explicit dictionary fields taking
 precedence. Configuration updates preserve them through normal template rendering.
 
-The join command offers `--capacity BITS_PER_SECOND` (default `10000000`). Choose
-a sustainable host and uplink limit. New Linux enrollments at the canonical managed
+The join command offers `--capacity BITS_PER_SECOND` (default `100000000`, or
+100 Mbps). Choose a sustainable host and uplink limit. Existing configurations
+and certificate renewal preserve the saved capacity. New joins include the
+[initial destination exclusions](destination-exclusions.md); configure additions
+there before opening the node to users. New Linux enrollments at the canonical managed
 service path use `auto`; other state paths use `fallback`.
 Check the node's reported capabilities after starting it. Fallback userspace
 tagging covers IPv4 UDP/ICMP only when raw sockets are permitted; TCP/TLS remain

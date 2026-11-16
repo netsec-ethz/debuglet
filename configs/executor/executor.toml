@@ -21,7 +21,7 @@ yamux_addr = "127.0.0.1:9000"
 disable = true
 
 [resources]
-capacity = 1_000_000_000
+capacity = 100_000_000
 max_debuglets = 1000
 
 # Output v1 spools accepted data before delivery. Zero uses these defaults.
@@ -52,8 +52,10 @@ public_ports = ""   # allowed public listener ports, comma-separated ranges
 # then reaches no loopback service. Reserved, private and link-local ranges are
 # denied either way.
 local_targets = true
-# denied_destinations = "10.0.0.0/8, opted-out.example"  # extra operator denials
-# permitted_ports = "80,443,8000-8100"                   # empty permits every port
+# Omitted uses the reviewed initial list; an explicit string replaces it.
+# Sources and additions: docs/operations/destination-exclusions.md.
+# denied_destinations = "6.0.0.0/8,7.0.0.0/8,11.0.0.0/8,opted-out.example"
+# permitted_ports = "80,443,8000-8100"  # empty permits every port
 
 [logging]
 log_level = "debug"

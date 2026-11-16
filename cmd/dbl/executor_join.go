@@ -29,6 +29,8 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/buildinfo"
 	"github.com/netsec-ethz/debuglet/internal/configcheck"
 	"github.com/netsec-ethz/debuglet/internal/demo/service"
+	executorconfig "github.com/netsec-ethz/debuglet/internal/executor/config"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 	"github.com/netsec-ethz/debuglet/internal/storagecheck"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 	"golang.org/x/term"
@@ -49,7 +51,7 @@ mobile, satellite or nat; it is written to [metadata] host_tags. HTTPS verifies 
 For a new enrollment DIR must not exist. The command creates private identity, configuration and
 storage files, then prints the command to start the executor. It does not
 start a service or configure payments. Keep DIR for subsequent restarts.
---capacity sets the bandwidth offered to the dispatcher (default 10000000 bit/s).
+--capacity sets the bandwidth offered to the dispatcher (default 100000000 bit/s).
 Choose a sustainable limit for this host and its uplink.
 For a persistent Linux system service, follow docs/operations/executor-onboarding.md
 and enroll directly into /var/lib/debuglet/executors/NAME before service install.
@@ -81,7 +83,7 @@ func executorJoinCommandWith(ctx context.Context, args []string, options globalO
 	renew := fs.Bool("renew", false, "renew a drained managed executor certificate using a fresh setup token")
 	caFile := fs.String("ca-file", "", "trusted dispatcher CA certificate")
 	tokenFile := fs.String("token-file", "", "file containing the enrollment token")
-	capacity := fs.Int64("capacity", 10_000_000, "bandwidth offered to the dispatcher in bits per second")
+	capacity := fs.Int64("capacity", executorconfig.DefaultCapacity, "bandwidth offered to the dispatcher in bits per second")
 	var hostTags []string
 	fs.Func("host-tag", "public host tag, such as home or fibre; repeatable", func(value string) error {
 		hostTags = append(hostTags, value)
@@ -494,6 +496,7 @@ disable_scion_environment = true
 local_targets = false
 scion = false
 inbound = false
+denied_destinations = %q
 [logging]
 log_level = "info"
 [pricing]
@@ -502,6 +505,6 @@ currency = "TEST"
 [metadata]
 host_tags = [%s]
 `, id, buildinfo.Version, result.GRPCAddress, result.YamuxAddress,
-		filepath.Join(state, "ca.crt"), filepath.Join(state, "executor.crt"), filepath.Join(state, "executor.key"), filepath.Join(state, "executor.sqlite"), capacity, executorJoinPacketCounter(state),
+		filepath.Join(state, "ca.crt"), filepath.Join(state, "executor.crt"), filepath.Join(state, "executor.key"), filepath.Join(state, "executor.sqlite"), capacity, executorJoinPacketCounter(state), netpolicy.DefaultDeniedDestinations,
 		strings.Join(quoted, ", "))
 }

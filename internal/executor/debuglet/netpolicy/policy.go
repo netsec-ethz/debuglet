@@ -107,10 +107,16 @@ type Spec struct {
 	PermittedPorts string
 }
 
+// DefaultDeniedDestinations is the initial public-node exclusion list.
+// ARIN allocation records reviewed 2026-11-16 identify these US military
+// networks. This is not a comprehensive military-network classification.
+// Sources and override procedure: docs/operations/destination-exclusions.md.
+const DefaultDeniedDestinations = "6.0.0.0/8,7.0.0.0/8,11.0.0.0/8"
+
 // Defaults is the policy an executor applies where its configuration says
 // nothing: the transports this build supports are on, SCION is off because it
-// cannot be held to the same contract, and every reserved or internal range is
-// denied on every port.
+// cannot be held to the same contract, and reserved/internal ranges and
+// DefaultDeniedDestinations are denied on every port.
 //
 // Loopback is denied with them. An executor that measures against services on
 // its own host — the local, wallet-free profile — has to say so with
@@ -119,12 +125,13 @@ type Spec struct {
 // interface.
 func Defaults() Spec {
 	return Spec{
-		TCP:     true,
-		TLS:     true,
-		UDP:     true,
-		ICMP:    true,
-		SCION:   false,
-		Inbound: true,
+		TCP:                true,
+		TLS:                true,
+		UDP:                true,
+		ICMP:               true,
+		SCION:              false,
+		Inbound:            true,
+		DeniedDestinations: DefaultDeniedDestinations,
 	}
 }
 

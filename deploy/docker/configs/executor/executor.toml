@@ -41,7 +41,7 @@ client_cert = ""
 client_key = ""
 
 [resources]
-capacity = 1_000_000_000
+capacity = 100_000_000
 max_debuglets = 20
 
 [tesla]
