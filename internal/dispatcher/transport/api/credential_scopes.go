@@ -59,6 +59,7 @@ var credentialRouteScopes = map[string]string{
 	"GET /me":                                       "account:read",
 	"GET /me/orders":                                "account:read",
 	"GET /me/allowance":                             "account:read",
+	"GET /me/wallet":                                "account:read",
 	"GET /auth/credential":                          "account:read",
 	"GET /executors":                                "executors:read",
 	"GET /executors/by-ip":                          "executors:read",

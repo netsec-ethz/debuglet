@@ -822,6 +822,14 @@ var authAccessMatrix = map[string]authRoutePolicy{
 	"POST /me/presence":                                           {anonymous: http.StatusUnauthorized, target: "/me/presence"},
 	"GET /me/orders":                                              {anonymous: http.StatusUnauthorized, target: "/me/orders"},
 	"GET /me/allowance":                                           {anonymous: http.StatusUnauthorized, target: "/me/allowance"},
+	"GET /me/wallet":                                              {anonymous: http.StatusUnauthorized, target: "/me/wallet"},
+	"POST /me/wallet/top-ups":                                     {anonymous: http.StatusUnauthorized, target: "/me/wallet/top-ups", body: []byte(`{}`)},
+	"POST /operator/hosting-subsidy/top-ups":                       {anonymous: http.StatusUnauthorized, target: "/operator/hosting-subsidy/top-ups", body: []byte(`{}`)},
+	"PUT /operator/accounts/:id/allowance-policy":                 {anonymous: http.StatusUnauthorized, target: "/operator/accounts/" + authSampleID + "/allowance-policy", body: []byte(`{}`)},
+	"GET /me/assistant-key":                                       {anonymous: http.StatusUnauthorized, target: "/me/assistant-key"},
+	"PUT /me/assistant-key":                                       {anonymous: http.StatusUnauthorized, target: "/me/assistant-key", body: []byte(`{}`)},
+	"DELETE /me/assistant-key":                                    {anonymous: http.StatusUnauthorized, target: "/me/assistant-key"},
+	"POST /me/assistant-key/test":                                 {anonymous: http.StatusUnauthorized, target: "/me/assistant-key/test", body: []byte(`{}`)},
 	"GET /user-ids":                                               {anonymous: http.StatusUnauthorized, target: "/user-ids"},
 	// Registering an account is the credential issuer: it has to be
 	// reachable by a caller that has no credential yet.

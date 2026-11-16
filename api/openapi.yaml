@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.34"
+  version: "1.35"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Run reads require ownership, operator authority or explicit community sharing to a current member; payment orders and run mutations remain owner-scoped. A hidden resource answers 404. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -1957,6 +1957,85 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /operator/accounts/{id}/allowance-policy:
+    put:
+      operationId: setAccountAllowancePolicy
+      summary: Set an account's approved research and executor eligibility.
+      description: "Added in API 1.35. Requires an authenticated operator; cookie sessions require CSRF. Replaces the approved researcher flag and owned executor IDs transactionally. At most 100 unique executor UUIDs may be approved, all owned by the account. Existing grants and today's allowance decision remain unchanged."
+      parameters:
+        - name: Debuglet-API-Version
+          in: header
+          schema: {type: string}
+        - name: X-Debuglet-CSRF
+          in: header
+          description: Required with a cookie session.
+          schema: {type: string}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AllowanceEligibilityRequest"}
+      responses:
+        "200":
+          description: Eligibility saved.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AllowanceEligibilityRequest"}
+        "400":
+          description: Invalid request, duplicate IDs, non-owned executors or unsupported API version.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401":
+          description: Authentication required.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "403":
+          description: Operator authority and cookie CSRF proof required.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "404":
+          description: Account not found or allowances disabled.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "413":
+          description: Request body exceeds the limit.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "500":
+          description: Eligibility could not be saved.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "415":
+          description: Request must contain an uncompressed JSON object.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   /operator/accounts/{id}/allowance:
     post:
       operationId: "grantAllowance"
@@ -5860,7 +5939,7 @@ paths:
     put:
       operationId: "createPaymentIntent"
       summary: "Create a payment intent for a batch of debuglets."
-      description: "Prices the batch and, once every order has been validated and priced, stores one outstanding order per debuglet and returns the transaction ID and auth key used by the following submission. The HTTP API admits request methods TEST and USDC; TEST is bookkeeping only. API 1.23 optionally selects community_project_id, reserves that shared budget and returns method COMMUNITY without a new external-wallet payment. Community experiment ID/revision may link the run to saved source. The encoded request body must not exceed 67108864 bytes. Explicit retries require API 1.12 and preserve one parent/request identity across intent and submission; reusing that identity with the same frozen request recovers the existing attempt."
+      description: "Prices the batch and, once every order has been validated and priced, stores one outstanding order per debuglet and returns the transaction ID and auth key used by the following submission. Admits TEST, USDC and native Testnet SUI; TEST is non-cashable usage credit. API 1.23 optionally selects community_project_id, reserves that shared budget and returns method COMMUNITY. API 1.35 adds prepaid personal SUI credit, returning method CREDITS; it cannot be combined with community funding. Funded intents need no new wallet payment. Community experiment ID/revision may link the run to saved source. The encoded request body must not exceed 67108864 bytes. Explicit retries require API 1.12 and preserve one parent/request identity across intent and submission; reusing that identity with the same frozen request recovers the existing attempt."
       requestBody:
         required: true
         content:
@@ -5887,7 +5966,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/IntentResponse"
         "400":
-          description: "Malformed body, an empty batch, or a missing or invalid USDC refund_address (invalid_request; an address refusal includes field_errors with field refund_address and code invalid_address), an unsupported payment method (unsupported_payment_method), an unknown executor (unknown_executor), or an invalid policy, a repeated order_id or a price that does not fit a signed 64-bit integer (invalid_policy). Nothing is written in any of these cases."
+          description: "Malformed body, an empty batch, or a missing or invalid chain-payment refund_address (invalid_request; an address refusal includes field_errors with field refund_address and code invalid_address), conflicting personal and community funding, an unsupported payment method (unsupported_payment_method), an unknown executor (unknown_executor), or an invalid policy, a repeated order_id or a price that does not fit a signed 64-bit integer (invalid_policy). Nothing is written in any of these cases."
           headers:
             Debuglet-API-Version:
               description: "Contract version this dispatcher implements."
@@ -6347,7 +6426,7 @@ paths:
     get:
       operationId: "getMyAllowance"
       summary: "Report the account's usage allowance."
-      description: "Added in API 1.15. Requires an authenticated account, including when local development is enabled. Reports the caller's usage allowance in TEST units; answers 404 while allowances are not enabled."
+      description: "Added in API 1.15. Requires an authenticated account, including when local development is enabled. Reports the caller's usage allowance in TEST units; answers 404 while allowances are not enabled. API 1.35 adds the optional daily or one-time trial policy, including credited hosting eligibility and next UTC reset. Reads apply an enabled policy idempotently."
       parameters:
         - name: "Debuglet-API-Version"
           in: "header"
@@ -9660,12 +9739,264 @@ paths:
             "application/json":
               "schema":
                 "$ref": "#/components/schemas/Error"
+  /me/wallet:
+    get:
+      operationId: getPersonalWallet
+      summary: Read your prepaid SUI balance and recent deposits.
+      description: "Added in API 1.35. Requires an authenticated account. Reports confirmed personal credit in integer MIST strings, mode prepaid, currency SUI and unit MIST, plus at most 50 recent deposits on the configured network. Native SUI is supported only on Testnet. No private wallet key is returned or stored."
+      parameters:
+        - name: Debuglet-API-Version
+          in: header
+          schema: {type: string}
+        - name: currency
+          in: query
+          description: Defaults to SUI when omitted.
+          schema: {type: string, enum: [SUI]}
+      responses:
+        "200":
+          description: Personal prepaid wallet.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/CommunityWallet"}
+        "400":
+          description: Unsupported currency, network or API version.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401":
+          description: Authentication required.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "403":
+          description: The credential does not permit reading this account's wallet.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "413":
+          description: Request body exceeds the limit.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "500":
+          description: Wallet could not be read.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: Native SUI payments are disabled or unavailable.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /me/wallet/top-ups:
+    post:
+      operationId: createPersonalTopUp
+      summary: Create a native SUI deposit intent for your prepaid credit.
+      description: "Added in API 1.35. Requires a browser account session and CSRF proof; scoped API credentials are prohibited. Accepts at most 1024 encoded bytes. The returned Testnet SUI intent must be signed with the caller's external wallet. Creation alone credits nothing; a confirmed receipt credits the personal balance once. An idempotency key identifies the deposit and conflicting reuse is refused. A deposit intent cannot authorize an experiment. No withdrawal endpoint is provided."
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: Debuglet-API-Version
+          in: header
+          schema: {type: string}
+        - name: X-Debuglet-CSRF
+          in: header
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/PrepaidTopUpRequest"}
+      responses:
+        "201":
+          description: Deposit intent created or its matching existing intent returned.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/IntentResponse"}
+        "400":
+          description: Invalid amount, refund address, idempotency key, network or API version.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401":
+          description: Authentication required.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "403":
+          description: Browser session and CSRF proof required; API credentials are prohibited.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "409":
+          description: The idempotency key already identifies different deposit parameters.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "413":
+          description: Request body exceeds the limit.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "415":
+          description: Request must contain an uncompressed JSON object.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "429":
+          description: Account admission limit reached.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "500":
+          description: Deposit intent could not be created.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: Native SUI payments are disabled or unavailable.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /operator/hosting-subsidy/top-ups:
+    post:
+      operationId: createHostingSubsidyTopUp
+      summary: Create a native SUI deposit intent to fund executor hosting rewards.
+      description: "Added in API 1.35. Requires an operator browser session and CSRF proof; scoped API credentials are prohibited. Accepts at most 1024 encoded bytes. The operator signs the returned Testnet SUI intent with an external wallet. Creation alone funds nothing; confirmed deposits fund only the hosting subsidy pool. Idempotent per deposit key; conflicting reuse is refused. No experiment authorization or withdrawal endpoint is provided."
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: Debuglet-API-Version
+          in: header
+          schema: {type: string}
+        - name: X-Debuglet-CSRF
+          in: header
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/PrepaidTopUpRequest"}
+      responses:
+        "201":
+          description: Deposit intent created or its matching existing intent returned.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/IntentResponse"}
+        "400":
+          description: Invalid amount, refund address, idempotency key, network or API version.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401":
+          description: Authentication required.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "403":
+          description: Operator browser session and CSRF proof required; API credentials are prohibited.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "409":
+          description: The idempotency key already identifies different deposit parameters.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "413":
+          description: Request body exceeds the limit.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "415":
+          description: Request must contain an uncompressed JSON object.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "429":
+          description: Account admission limit reached.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "500":
+          description: Deposit intent could not be created.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: Native SUI payments are disabled or unavailable.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   "/communities/{id}/wallet":
     "get":
       "operationId": "getCommunityWallet"
       "summary": "Read the community's shared measurement budget."
-      "description": "Added in API 1.23. Requires account:read for a scoped credential and current membership. USDC is prepaid money held by the dispatcher after an owner-signed deposit. TEST is bookkeeping against the creator's existing allowance, not money or a new grant. Amounts are exact decimal strings of base units. No private wallet key is returned or stored for the community."
+      "description": "Added in API 1.23; API 1.35 adds native SUI. Requires account:read for a scoped credential and current membership. USDC and SUI balances are funded by confirmed deposits. TEST is bookkeeping against the creator's existing allowance, not money or a new grant. Amounts are exact decimal strings of base units. No private wallet key is returned or stored for the community."
       "parameters":
+        - "name": "currency"
+          "in": "query"
+          "required": false
+          "description": "Select SUI, USDC or TEST. Omitted selects the dispatcher's configured community currency."
+          "schema":
+            "type": "string"
+            "enum": ["SUI", "USDC", "TEST"]
         - "name": "Debuglet-API-Version"
           "in": "header"
           "required": false
@@ -9769,7 +10100,7 @@ paths:
   "/communities/{id}/wallet/top-ups":
     "post":
       "operationId": "createCommunityTopUp"
-      "summary": "Create an owner-approved USDC deposit intent."
+      "summary": "Create an owner-approved USDC or SUI deposit intent."
       "description": "Added in API 1.23. Requires a browser session and the community owner. Available only while chain payments are enabled. The owner must sign the returned normal Sui payment intent with their external wallet; creation alone adds no funds. A confirmed receipt credits the community once. The returned intent is for a deposit and cannot authorize a run. TEST mode cannot be topped up. The supported chain profile is Sui Testnet; unused deposits have no withdrawal endpoint."
       "parameters":
         - "name": "Debuglet-API-Version"
@@ -9904,11 +10235,280 @@ paths:
             "application/json":
               "schema":
                 "$ref": "#/components/schemas/Error"
+  /me/assistant-key:
+    get:
+      operationId: getAssistantKey
+      summary: Read your personal assistant key status.
+      description: "Added in API 1.35. Requires an authenticated account. Returns metadata only for the current account; no credential is returned. Disabled personal-key storage returns enabled false and configured false. Query parameters and encoded paths are rejected. Responses use Cache-Control: no-store."
+      parameters:
+        - name: Debuglet-API-Version
+          in: header
+          schema: {type: string}
+      responses:
+        "200":
+          description: Personal key status.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AssistantKeyStatus"}
+        "413":
+          description: Request body exceeds the dispatcher limit.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "400":
+          description: Invalid path, query or API version.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401":
+          description: Authentication required.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "403":
+          description: Credential is not permitted to manage personal keys.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: Personal key storage is unavailable.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+    put:
+      operationId: saveAssistantKey
+      summary: Save or replace your personal OpenAI key.
+      description: "Added in API 1.35. Requires a recent browser session and CSRF proof; scoped API credentials are prohibited. Accepts one uncompressed JSON object, at most 16 KiB, with a key of 1–8192 bytes without whitespace. Stores the key encrypted; no key is returned. Rechecks the session transactionally. Query parameters and encoded paths are rejected. Responses use Cache-Control: no-store."
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: Debuglet-API-Version
+          in: header
+          schema: {type: string}
+        - name: X-Debuglet-CSRF
+          in: header
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AssistantKeyRequest"}
+      responses:
+        "204":
+          description: Key saved.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+        "413":
+          description: Request body exceeds the dispatcher limit.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "400":
+          description: Invalid body, key, path, query or API version.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401":
+          description: Authentication required.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "403":
+          description: Recent browser session and CSRF proof required; API credentials are prohibited.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "415":
+          description: Body must be uncompressed application/json.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "429":
+          description: Account request limit reached.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: Personal key storage is disabled or unavailable.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+    delete:
+      operationId: deleteAssistantKey
+      summary: Remove your personal assistant key.
+      description: "Added in API 1.35. Requires a recent browser session and CSRF proof; scoped API credentials are prohibited. Idempotent. Rechecks the session transactionally. No request body is needed. Query parameters and encoded paths are rejected. Responses use Cache-Control: no-store."
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: Debuglet-API-Version
+          in: header
+          schema: {type: string}
+        - name: X-Debuglet-CSRF
+          in: header
+          required: true
+          schema: {type: string}
+      responses:
+        "204":
+          description: Key absent.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+        "413":
+          description: Request body exceeds the dispatcher limit.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "400":
+          description: Invalid path, query or API version.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401":
+          description: Authentication required.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "403":
+          description: Recent browser session and CSRF proof required; API credentials are prohibited.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "429":
+          description: Account request limit reached.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: Personal key storage is disabled or unavailable.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /me/assistant-key/test:
+    post:
+      operationId: testAssistantKey
+      summary: Test your saved key's access to the configured model.
+      description: "Added in API 1.35. Requires a recent browser session and CSRF proof; scoped API credentials are prohibited. Sends a fixed GET /v1/models/{model} request to OpenAI using only the saved personal key; does not generate text or fall back to the operator key. No request body is needed. Account, global and concurrent assistant limits apply. Provider deadline is 15 seconds. Failures are sanitized; no credential or provider response body is returned. Query parameters and encoded paths are rejected. Responses use Cache-Control: no-store."
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: Debuglet-API-Version
+          in: header
+          schema: {type: string}
+        - name: X-Debuglet-CSRF
+          in: header
+          required: true
+          schema: {type: string}
+      responses:
+        "204":
+          description: Provider accepted access to the configured model.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+        "413":
+          description: Request body exceeds the dispatcher limit.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "400":
+          description: Invalid path, query or API version.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401":
+          description: Authentication required.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "403":
+          description: Recent browser session and CSRF proof required; API credentials are prohibited.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "409":
+          description: No personal key has been saved.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "429":
+          description: Account, global or concurrent request limit reached.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "502":
+          description: Sanitized provider failure; reason is provider_auth, provider_rate_limit or provider_unavailable.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503":
+          description: Personal key storage is disabled or unavailable.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "504":
+          description: Provider access check timed out.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
   "/studio/assistant":
     "get":
       "operationId": "getStudioAssistant"
       "summary": "Read optional experiment assistant availability."
-      "description": "Added in API 1.29. Requires an account and measurements:read scope. Independent of compiler availability; returns enabled false until the dispatcher operator configures a provider. No endpoint or credential is returned. Responses are not cached. Query parameters are not accepted."
+      "description": "Added in API 1.29; API 1.35 adds personal key availability and the selected credential source. Requires an account and measurements:read scope. A configured personal key takes precedence over the operator key; personal-key failures never fall back to the operator. Independent of compiler availability. No endpoint or credential is returned. Responses are not cached. Query parameters are not accepted."
       "parameters":
         -
           "name": "Debuglet-API-Version"
@@ -9928,6 +10528,13 @@ paths:
             "application/json":
               "schema":
                 "$ref": "#/components/schemas/StudioAssistantAvailability"
+        "503":
+          description: Personal key storage is unavailable; no operator credential was used.
+          headers:
+            Debuglet-API-Version: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
         "400":
           "description": "Malformed input, query, encoded path or unsupported API version."
           "headers":
@@ -13735,14 +14342,17 @@ components:
             $ref: "#/components/schemas/DebugletRequest"
         payment_method:
           type: "string"
-          description: "TEST for the local alpha's bookkeeping-only method, or USDC."
+          description: "TEST for non-cashable usage credits, USDC, or native SUI when Testnet payments are enabled."
+        prepaid:
+          type: boolean
+          description: "API 1.35. Reserve confirmed personal prepaid credit. Requires payment_method SUI and no community_project_id. The intent returns method CREDITS and needs no new wallet payment."
         refund_address:
           type: "string"
-          description: "Required when creating a personal USDC intent: a Sui address, 0x followed by 1 to 64 hexadecimal digits (short addresses are accepted). Missing or invalid values answer 400 invalid_request with field_errors naming refund_address and code invalid_address, before intent or order writes. Disabled chain payments still answer 503 payments_disabled first. TEST does not validate this field and it may be omitted or empty. The quote endpoint does not evaluate this field. Community-funded intents ignore it; funds return to the shared budget."
+          description: "Required for a direct USDC or SUI payment intent: a Sui address, 0x followed by 1 to 64 hexadecimal digits (short addresses are accepted). Missing or invalid values answer 400 invalid_request with field_errors naming refund_address and code invalid_address, before intent or order writes. Disabled chain payments answer 503 payments_disabled first. TEST does not validate this field. Quotes do not evaluate it. Funded community or prepaid intents refund the selected budget."
         community_project_id:
           type: "string"
           format: "uuid"
-          description: "API 1.23. Select a project whose community funds this measurement. Requires current membership. A quote checks membership without reserving funds; an intent atomically reserves the community budget and returns method COMMUNITY. TEST uses the creator allowance and USDC uses confirmed community deposits. The submitting account still owns the run."
+          description: "API 1.23. Select a project whose community funds this measurement. Requires current membership. A quote checks membership without reserving funds; an intent atomically reserves the community budget and returns method COMMUNITY. TEST uses the creator allowance; USDC and SUI use confirmed community deposits. Cannot be combined with personal prepaid credit. The submitting account still owns the run."
         community_experiment_id:
           type: "string"
           format: "uuid"
@@ -13763,10 +14373,10 @@ components:
       properties:
         method:
           type: "string"
-          description: "TEST, USDC or COMMUNITY. COMMUNITY is already funded by a shared budget and requires no new external-wallet payment."
+          description: "TEST, USDC, SUI, COMMUNITY or CREDITS. COMMUNITY reserves a shared budget; CREDITS reserves personal prepaid SUI. Both are already funded and require no new external-wallet payment."
         currency:
           type: "string"
-          description: "Present for COMMUNITY intents; the budget currency (TEST or USDC)."
+          description: "Present for COMMUNITY or CREDITS intents; the budget currency (TEST, USDC or SUI)."
         intent:
           description: "Method-specific intent."
           oneOf:
@@ -13778,7 +14388,7 @@ components:
           $ref: "#/components/schemas/Quote"
     DummyIntent:
       type: object
-      description: "Submission authorization for TEST or a funded COMMUNITY intent. TEST is bookkeeping only; COMMUNITY has already reserved its declared currency."
+      description: "Submission authorization for TEST or a funded COMMUNITY or CREDITS intent. TEST is bookkeeping only; funded intents have already reserved their declared currency."
       additionalProperties: false
       required:
         - transaction_id
@@ -13852,7 +14462,7 @@ components:
       properties:
         payment_methods:
           type: array
-          description: "The methods PUT /payment/intent admits now: TEST, and USDC when blockchain payments are enabled."
+          description: "The methods PUT /payment/intent admits now: TEST, USDC when blockchain payments are enabled, and native SUI only for an enabled Testnet backend."
           items:
             type: string
         chain_payments:
@@ -13881,7 +14491,7 @@ components:
           description: "The requested payment method, which is the currency of every order."
         unit:
           type: string
-          description: "The base unit of the amounts: TEST units, micro-USDC or base units."
+          description: "The base unit of the amounts: TEST units, micro-USDC or MIST for native SUI."
         total:
           type: string
           description: "The sum of the order prices. Empty unless every order was priced."
@@ -13946,6 +14556,50 @@ components:
         pricing_rule:
           type: string
           description: "The pricing rule intents are priced with now."
+        policy:
+          $ref: "#/components/schemas/AllowancePolicy"
+    AllowancePolicy:
+      type: object
+      additionalProperties: false
+      required: [kind, researcher, eligible_nodes, daily_ceiling, hosting_bonus, credited]
+      properties:
+        kind:
+          type: string
+          enum: [daily, trial]
+        researcher:
+          type: boolean
+        eligible_nodes:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Capped number of approved hosted executors credited by this decision.
+        daily_ceiling:
+          type: string
+          pattern: "^[0-9]+$"
+          description: Unsigned decimal string of TEST units.
+        hosting_bonus:
+          type: string
+          pattern: "^[0-9]+$"
+          description: Unsigned decimal string of TEST units.
+        credited:
+          type: string
+          pattern: "^[0-9]+$"
+          description: Unsigned decimal string of TEST units applied by this decision.
+        next_reset:
+          type: string
+          format: date-time
+          description: Next UTC reset for a daily policy; absent for a one-time trial.
+    AllowanceEligibilityRequest:
+      type: object
+      additionalProperties: false
+      required: [researcher, approved_executor_ids]
+      properties:
+        researcher:
+          type: boolean
+        approved_executor_ids:
+          type: array
+          description: At most 100 distinct executor UUIDs, all owned by the account. An empty array removes existing approvals.
+          items: {type: string, format: uuid}
     AllowanceGrantRequest:
       type: object
       description: "Added in API 1.15."
@@ -14023,6 +14677,13 @@ components:
           description: "Empty when the executor has earned nothing and is not connected."
         total_income:
           type: string
+        hosting_awarded:
+          type: string
+          pattern: "^[0-9]+$"
+          description: "API 1.35. Total hosting rewards in integer MIST, already included in total_income; not an additional balance."
+        network:
+          type: string
+          description: "API 1.35. Configured chain network for these earnings and transfers."
         current_balance:
           type: string
           description: "Earned and not yet reserved for a payout."
@@ -15644,6 +16305,8 @@ components:
           "enum":
             - "USDC"
             - "TEST"
+            - "SUI"
+            - "prepaid"
         "currency":
           "type": "string"
         "unit":
@@ -15663,6 +16326,42 @@ components:
         "available":
           "type": "string"
           "description": "Exact decimal string of integer base units."
+        "deposits":
+          "type": "array"
+          "description": "API 1.35. Present for a personal prepaid wallet; at most 50 recent deposits on the configured network."
+          "items":
+            "$ref": "#/components/schemas/PrepaidDeposit"
+    PrepaidDeposit:
+      type: object
+      additionalProperties: false
+      required: [transaction_id, amount, status]
+      properties:
+        transaction_id:
+          type: string
+        amount:
+          type: string
+          pattern: "^[0-9]+$"
+          description: Exact integer MIST amount.
+        status:
+          type: string
+        digest:
+          type: string
+          description: Applied on-chain receipt digest, when confirmed.
+    PrepaidTopUpRequest:
+      type: object
+      additionalProperties: false
+      required: [amount, refund_address, idempotency_key]
+      properties:
+        amount:
+          type: string
+          pattern: "^[1-9][0-9]*$"
+          description: Positive integer MIST amount from 1 to 9007199254740991.
+        refund_address:
+          type: string
+          description: Sui address controlled by the payer; 0x followed by 1 to 64 hexadecimal digits.
+        idempotency_key:
+          type: string
+          description: 1 to 128 characters; replaying the same deposit returns its existing intent, and conflicting parameters are refused.
     "CommunityTopUpRequest":
       "type": "object"
       "additionalProperties": false
@@ -15672,7 +16371,11 @@ components:
       "properties":
         "amount":
           "type": "string"
-          "description": "Positive decimal string of micro-USDC, from 1 to 9007199254740991."
+          "description": "Positive integer string from 1 to 9007199254740991 in the selected currency's base units: micro-USDC or MIST."
+        "currency":
+          "type": "string"
+          "enum": ["USDC", "SUI"]
+          "description": "API 1.35. Defaults to USDC when omitted. SUI uses native Testnet SUI."
         "refund_address":
           "type": "string"
           "description": "Sui address controlled by the owner; 0x followed by 1 to 64 hexadecimal digits."
@@ -15951,6 +16654,34 @@ components:
           "type": "boolean"
         "model":
           "type": "string"
+        "source":
+          "type": "string"
+          "enum": ["personal", "operator", "none"]
+          "description": "Added in API 1.35; older dispatchers omit this field."
+        "personal_keys_enabled":
+          "type": "boolean"
+          "description": "Added in API 1.35; an absent field does not enable personal keys."
+    AssistantKeyStatus:
+      type: object
+      additionalProperties: false
+      required: [enabled, configured]
+      properties:
+        enabled:
+          type: boolean
+          description: "Whether the dispatcher accepts personal OpenAI keys."
+        configured:
+          type: boolean
+          description: "Whether this account has a stored key; this does not prove provider access."
+        model:
+          type: string
+    AssistantKeyRequest:
+      type: object
+      additionalProperties: false
+      required: [api_key]
+      properties:
+        api_key:
+          type: string
+          description: "Personal OpenAI API key, 1–8192 bytes without whitespace. Never returned in a response."
     "StudioAssistantMessage":
       "type": "object"
       "required":
