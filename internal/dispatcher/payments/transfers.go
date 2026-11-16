@@ -60,7 +60,8 @@ var (
 	// errPayoutNotReserved means the balance could not be reserved: another
 	// payout of the same executor and currency is still open, or the balance
 	// changed since it was read.
-	errPayoutNotReserved = errors.New("payout not reserved: an earlier payout is still open or the balance changed")
+	errPayoutNotReserved      = errors.New("payout not reserved: an earlier payout is still open or the balance changed")
+	errTransferDigestReserved = errors.New("prepared transaction already belongs to another transfer; settlement remains pending")
 )
 
 // reservedTransfer holds a committed transfer decision. A prepared transaction
@@ -123,6 +124,20 @@ func (p *PaymentHandler) prepareAndReserve(ctx context.Context, transfer databas
 	queries := database.New(p.db).WithTx(tx)
 	if err := decide(queries); err != nil {
 		return nil, err
+	}
+	if prepared != nil && prepared.Digest != "" {
+		// Equal transfers prepared against the same coin version have identical
+		// signed bytes. One chain transaction cannot discharge two obligations.
+		// decide has acquired the writer lock: the check and reservation are
+		// atomic across handlers/processes. A collision rolls the decision back;
+		// the settlement sweep can retry once a new coin version is available.
+		var exists bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM chain_transfers WHERE digest=?)`, prepared.Digest).Scan(&exists); err != nil {
+			return nil, fmt.Errorf("check prepared transfer identity: %w", err)
+		}
+		if exists {
+			return nil, errTransferDigestReserved
+		}
 	}
 	if transfer.Amount > 0 {
 		now := models.NewUTCTime(time.Now())
