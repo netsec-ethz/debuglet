@@ -31,8 +31,9 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	// Schema 35 adds account-owned editable templates.
-	MinimumDispatcherVersion int64 = 35
+	// Schemas 36–38 add daily allowances, native SUI credits and assistant keys.
+	// The dispatcher queries these tables; earlier schemas require an upgrade.
+	MinimumDispatcherVersion int64 = 38
 	MinimumExecutorVersion   int64 = 9
 )
 
@@ -79,6 +80,14 @@ func PolicyFor(role Role) (Policy, error) {
 			"experiment_barriers":        {"transaction_id", "deadline_ns", "start_time_ns"},
 			"experiment_readiness":       {"debuglet_id", "metadata", "ready_at_ns"},
 			"allocation_reclamations":    {"debuglet_id", "reclaimed_at"},
+			"allowance_eligibility":      {"user_id", "researcher", "approved_by", "updated_at"},
+			"hosting_approvals":          {"executor_id", "user_id", "approved_by", "updated_at"},
+			"allowance_periods":          {"user_id", "period", "researcher", "eligible_nodes", "ceiling", "hosting_bonus", "granted", "decided_at"},
+			"prepaid_topups":             {"transaction_id", "user_id", "purpose", "idempotency_key", "refund_address", "network", "coin_type", "intent_json"},
+			"personal_funding":           {"transaction_id", "user_id", "currency", "network"},
+			"hosting_awards":             {"executor_id", "day", "user_id", "amount", "network"},
+			"native_gas_reservations":    {"transfer_id", "amount", "network"},
+			"assistant_keys":             {"user_id", "encrypted_key"},
 			"allowance_grants":           {"id", "user_id", "amount", "granted_by", "reason", "idempotency_key", "granted_at"},
 			"probe_status":               {"executor_id", "first_connected", "last_connected", "connected", "status_since", "total_uptime", "is_public", "host_tags", "version"},
 			"probe_addresses":            {"executor_id", "family", "address", "via", "first_observed", "last_observed"},
