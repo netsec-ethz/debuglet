@@ -75,6 +75,29 @@ fix a permission error by making it world-readable. `dbl --dispatcher research l
 session when reachable and forgets it locally. It does not delete the account
 or its account-key file.
 
+### Use a scoped credential in CI
+
+Create a credential on the console **Credentials** page for the issuing
+dispatcher. For the measurement workflow, grant `account:read`, `executors:read`,
+`measurements:read`, and `measurements:write`. Import its token from a private
+regular file, at most 4 KiB, rather than putting it in process arguments:
+
+```sh
+chmod 600 /private/path/debuglet-token
+dbl --dispatcher research login --token-file /private/path/debuglet-token --credential-store file
+```
+
+The CLI needs `account:read` to check its current validity, audience and expiry
+before replacing the saved credential. It neither renews the token nor revokes it if local storage
+fails. This flag cannot be combined with browser approval, registration,
+account-key flags or `DEBUGLET_ACCOUNT_KEY`. `logout` revokes the imported token,
+including copies used by other jobs. For an ephemeral runner, delete its private
+configuration directory instead; revoke the token centrally when retiring it.
+See the [GitHub Actions example](operations/github-actions.md) for signed
+installation, bounded execution, measurement assertions and result artifacts.
+`--token-file` requires the new release containing this feature; it is not in
+`v1.0.0-rc.1`.
+
 ### Choose credential storage
 
 `dbl login --credential-store auto` is the default. On Linux desktops with
