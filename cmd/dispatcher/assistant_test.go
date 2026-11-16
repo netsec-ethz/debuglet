@@ -4,12 +4,14 @@
 package main
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
+	"github.com/netsec-ethz/debuglet/internal/sqlitedb"
 )
 
 func TestConfiguredAssistantCredentials(t *testing.T) {
@@ -47,6 +49,35 @@ func TestConfiguredAssistantCredentials(t *testing.T) {
 	}
 	if _, err := configuredAssistant(cfg); err == nil {
 		t.Fatal("oversized key accepted")
+	}
+}
+
+func TestConfiguredPersonalAssistantWithoutOperatorKey(t *testing.T) {
+	t.Setenv("DEBUGLET_ASSISTANT_API_KEY", "")
+	cfg := config.AssistantConfig{Enabled: true, PersonalModel: "test-model", PersonalKeyFile: filepath.Join(t.TempDir(), "encryption.key")}
+	if err := os.WriteFile(cfg.PersonalKeyFile, []byte(base64.StdEncoding.EncodeToString(make([]byte, 32))), 0600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "db.sqlite"), sqlitedb.Create())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if a, err := configuredAssistant(cfg); a != nil || err != nil {
+		t.Fatal("personal-only deployment required operator key", err)
+	}
+	if option, err := configuredPersonalAssistant(cfg, db); option == nil || err != nil {
+		t.Fatal("personal-only deployment failed", err)
+	}
+	cfg.Endpoint, cfg.Model = "https://operator.example/v1/responses", "operator-model"
+	if a, err := configuredAssistant(cfg); a != nil || err != nil {
+		t.Fatal("optional shared key missing", err)
+	}
+	if err := os.Remove(cfg.PersonalKeyFile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := configuredPersonalAssistant(cfg, db); err == nil {
+		t.Fatal("missing deployment encryption key silently ignored")
 	}
 }
 

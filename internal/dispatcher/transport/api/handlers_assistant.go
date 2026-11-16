@@ -16,22 +16,42 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/netsec-ethz/debuglet/internal/daemonlog"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/assistantkeys"
 	"github.com/netsec-ethz/debuglet/internal/studio"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 )
 
 type assistantState struct {
-	client   *studio.Assistant
-	slots    studioProxy
-	requests *rate.Limiter
+	client        *studio.Assistant
+	slots         studioProxy
+	requests      *rate.Limiter
+	keys          *assistantkeys.Store
+	personalModel string
+	newPersonal   func(string) (*studio.Assistant, error)
 }
 
 // Assistant availability is independent of the compiler; proposals containing
 // custom code require it. The provider receives source, never account credentials.
 func Assistant(client *studio.Assistant) Option {
 	return func(h *Handler) {
-		h.assistant = assistantState{client: client, slots: studioProxy{active: make(map[uuid.UUID]bool)}, requests: rate.NewLimiter(rate.Every(10*time.Second), 4)}
+		h.assistant.client = client
+		h.assistant.initialize()
+	}
+}
+
+func (state *assistantState) initialize() {
+	if state.requests == nil {
+		state.slots = studioProxy{active: make(map[uuid.UUID]bool)}
+		state.requests = rate.NewLimiter(rate.Every(10*time.Second), 4)
+	}
+}
+
+func PersonalAssistantKeys(keys *assistantkeys.Store, model, reasoning string) Option {
+	return func(h *Handler) {
+		h.assistant.keys, h.assistant.personalModel = keys, model
+		h.assistant.newPersonal = func(key string) (*studio.Assistant, error) { return studio.NewPersonalAssistant(model, key, reasoning) }
+		h.assistant.initialize()
 	}
 }
 
@@ -39,6 +59,10 @@ func (h *Handler) registerAssistantRoutes(e *echo.Echo) {
 	e.GET("/studio/assistant", h.assistantAvailability)
 	e.POST("/studio/assistant", h.assistantReply)
 	e.POST("/studio/assistant/stream", h.assistantReplyStream)
+	e.GET("/me/assistant-key", h.assistantKeyStatus)
+	e.PUT("/me/assistant-key", h.assistantKeySave)
+	e.DELETE("/me/assistant-key", h.assistantKeyDelete)
+	e.POST("/me/assistant-key/test", h.assistantKeyTest)
 }
 
 func assistantRoute(c echo.Context) error {
@@ -50,17 +74,31 @@ func assistantRoute(c echo.Context) error {
 }
 
 func (h *Handler) assistantAvailability(c echo.Context) error {
-	if _, err := requireAccount(c); err != nil {
+	account, err := requireAccount(c)
+	if err != nil {
 		return err
 	}
 	if err := assistantRoute(c); err != nil {
 		return err
 	}
 	result := struct {
-		Enabled bool   `json:"enabled"`
-		Model   string `json:"model,omitempty"`
-	}{Enabled: h.assistant.client != nil}
+		Enabled             bool   `json:"enabled"`
+		Model               string `json:"model,omitempty"`
+		Source              string `json:"source"`
+		PersonalKeysEnabled bool   `json:"personal_keys_enabled"`
+	}{Source: "none", PersonalKeysEnabled: h.assistant.keys != nil}
+	if h.assistant.keys != nil {
+		configured, err := h.assistant.keys.Configured(c.Request().Context(), account.UserUUID)
+		if err != nil {
+			return assistantKeyFailure()
+		}
+		if configured {
+			result.Enabled, result.Source, result.Model = true, "personal", h.assistant.personalModel
+			return c.JSON(http.StatusOK, result)
+		}
+	}
 	if h.assistant.client != nil {
+		result.Enabled, result.Source = true, "operator"
 		result.Model = h.assistant.client.Model()
 	}
 	return c.JSON(http.StatusOK, result)
@@ -82,8 +120,15 @@ func (h *Handler) assistantReplyWithProgress(c echo.Context, stream bool) error 
 	if err := assistantRoute(c); err != nil {
 		return err
 	}
-	if h.assistant.client == nil {
+	client, personal, err := h.assistantClient(c.Request().Context(), account.UserUUID)
+	if err != nil {
+		return err
+	}
+	if client == nil {
 		return apiError(http.StatusServiceUnavailable, CodeUnavailable, "experiment assistance is not enabled on this dispatcher")
+	}
+	if personal {
+		defer client.Close()
 	}
 	if err := h.allowAdmissionRequest(c, account); err != nil {
 		return err
@@ -119,10 +164,10 @@ func (h *Handler) assistantReplyWithProgress(c echo.Context, stream bool) error 
 	ctx, cancel := context.WithTimeout(req.Context(), studio.AssistantTimeout)
 	defer cancel()
 	if stream {
-		return h.streamAssistant(c, ctx, cancel, input, h.assistantCompileCheck(account.UserUUID))
+		return h.streamAssistant(c, ctx, cancel, client, input, h.assistantCompileCheck(account.UserUUID))
 	}
 	started := time.Now()
-	result, err := h.assistant.client.ReplyChecked(ctx, input, h.assistantCompileCheck(account.UserUUID))
+	result, err := client.ReplyChecked(ctx, input, h.assistantCompileCheck(account.UserUUID))
 	if err != nil {
 		h.logAssistantFailure(c, err, ctx.Err(), time.Since(started))
 		var compilerFailure *echo.HTTPError
@@ -152,7 +197,7 @@ type assistantStreamEvent struct {
 	Status       int                       `json:"status,omitempty"`
 }
 
-func (h *Handler) streamAssistant(c echo.Context, ctx context.Context, cancel context.CancelFunc, input studio.AssistantRequest, check studio.AssistantCompileCheck) error {
+func (h *Handler) streamAssistant(c echo.Context, ctx context.Context, cancel context.CancelFunc, client *studio.Assistant, input studio.AssistantRequest, check studio.AssistantCompileCheck) error {
 	started := time.Now()
 	c.Response().Header().Set("Content-Type", "text/event-stream")
 	c.Response().Header().Set("X-Accel-Buffering", "no")
@@ -187,7 +232,7 @@ func (h *Handler) streamAssistant(c echo.Context, ctx context.Context, cancel co
 	stopKeepalive := startAssistantKeepalive(ctx, 15*time.Second, func() error {
 		return write(": keepalive\n\n")
 	})
-	result, err := h.assistant.client.ReplyProgress(ctx, input, check, func(progress studio.AssistantProgress) error {
+	result, err := client.ReplyProgress(ctx, input, check, func(progress studio.AssistantProgress) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -296,7 +341,7 @@ func assistantFailure(err, contextErr error) *echo.HTTPError {
 	var message string
 	switch reason {
 	case "provider_auth":
-		message = "the AI provider rejected its server credential; the operator needs to update it"
+		message = "the AI provider rejected the selected credential or model access; update your personal key or contact the operator"
 	case "provider_rate_limit":
 		message = "the AI provider is at its usage limit; try again later"
 	case "output_truncated":

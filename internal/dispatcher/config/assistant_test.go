@@ -29,6 +29,12 @@ func TestAssistantConfiguration(t *testing.T) {
 		{"no reasoning effort", func(c *AssistantConfig) { c.ReasoningEffort = "none" }, true},
 		{"unknown reasoning effort", func(c *AssistantConfig) { c.ReasoningEffort = "disabled" }, false},
 		{"relative key", func(c *AssistantConfig) { c.APIKeyFile = "model.key" }, false},
+		{"personal only", func(c *AssistantConfig) {
+			*c = AssistantConfig{Enabled: true, PersonalKeyFile: "/etc/debuglet/personal.key", PersonalModel: "model"}
+		}, true},
+		{"personal missing model", func(c *AssistantConfig) { c.PersonalKeyFile = "/etc/debuglet/personal.key" }, false},
+		{"personal missing encryption key", func(c *AssistantConfig) { c.PersonalModel = "model" }, false},
+		{"personal relative encryption key", func(c *AssistantConfig) { c.PersonalKeyFile = "personal.key"; c.PersonalModel = "model" }, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			c := valid

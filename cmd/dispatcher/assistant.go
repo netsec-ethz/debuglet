@@ -4,12 +4,15 @@
 package main
 
 import (
+	"database/sql"
 	"errors"
 	"io"
 	"os"
 	"strings"
 
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/assistantkeys"
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/config"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/transport/api"
 	"github.com/netsec-ethz/debuglet/internal/studio"
 )
 
@@ -19,6 +22,9 @@ func configuredAssistant(cfg config.AssistantConfig) (*studio.Assistant, error) 
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
+	}
+	if cfg.Endpoint == "" {
+		return nil, nil // Personal-key-only deployment.
 	}
 	key := os.Getenv("DEBUGLET_ASSISTANT_API_KEY")
 	if cfg.APIKeyFile != "" {
@@ -37,5 +43,26 @@ func configuredAssistant(cfg config.AssistantConfig) (*studio.Assistant, error) 
 		}
 		key = strings.TrimSpace(string(data))
 	}
+	if key == "" && cfg.APIKeyFile == "" && cfg.PersonalKeyFile != "" {
+		return nil, nil
+	}
 	return studio.NewAssistant(studio.AssistantConfig{Endpoint: cfg.Endpoint, Model: cfg.Model, APIKey: key, AllowInsecureHTTP: cfg.AllowInsecureHTTP, ReasoningEffort: cfg.ReasoningEffort})
+}
+
+func configuredPersonalAssistant(cfg config.AssistantConfig, db *sql.DB) (api.Option, error) {
+	if !cfg.Enabled || cfg.PersonalKeyFile == "" {
+		return api.PersonalAssistantKeys(nil, "", ""), nil
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	key, err := assistantkeys.ReadKey(cfg.PersonalKeyFile)
+	if err != nil {
+		return nil, err
+	}
+	store, err := assistantkeys.New(db, key)
+	if err != nil {
+		return nil, err
+	}
+	return api.PersonalAssistantKeys(store, cfg.PersonalModel, cfg.ReasoningEffort), nil
 }

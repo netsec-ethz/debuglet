@@ -48,6 +48,11 @@ type AllowanceGrant struct {
 	GrantedAt      models.UTCTime
 }
 
+type AssistantKey struct {
+	UserID       int64
+	EncryptedKey []byte
+}
+
 type AttributionChain struct {
 	ExecutorID    string
 	ChainID       string
