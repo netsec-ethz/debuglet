@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 )
 
 func writeOperatorConfig(t *testing.T, role, extra string) string {
@@ -52,6 +54,9 @@ func TestConfigDefaultsOriginsAndNoWrites(t *testing.T) {
 				if got := settings["network.policy.tcp"]; got.Origin != "default" || got.Value != true {
 					t.Fatalf("policy switch default not resolved: %+v", got)
 				}
+				if got := settings["network.policy.denied_destinations"]; got.Origin != "default" || got.Value != netpolicy.DefaultDeniedDestinations {
+					t.Fatalf("policy destination default not resolved: %+v", got)
+				}
 			} else if got := settings["scheduler.executor_timeout"]; got.Origin != "default" || got.Value != float64(60) {
 				t.Fatalf("default origin: %+v", got)
 			}
@@ -60,6 +65,31 @@ func TestConfigDefaultsOriginsAndNoWrites(t *testing.T) {
 			if err != nil || string(before) != string(after) || len(entries) != 1 {
 				t.Fatal("inspection changed config or created state")
 			}
+		})
+	}
+}
+
+func TestConfigExplicitDestinationPolicy(t *testing.T) {
+	for _, destinations := range []string{"", "198.51.100.0/24"} {
+		t.Run(destinations, func(t *testing.T) {
+			path := writeOperatorConfig(t, "executor", "[network.policy]\ndenied_destinations='"+destinations+"'\n")
+			code, out, errout := runCLI(context.Background(), "--output", outputJSON, "config", "--role", "executor", "--file", path)
+			assertCode(t, code, exitOK, out, errout)
+			var doc struct {
+				Settings []configSetting `json:"settings"`
+			}
+			if err := json.Unmarshal([]byte(out), &doc); err != nil {
+				t.Fatal(err)
+			}
+			for _, setting := range doc.Settings {
+				if setting.Key == "network.policy.denied_destinations" {
+					if setting.Origin != "configured" || setting.Value != destinations {
+						t.Fatalf("explicit destination policy changed: %+v", setting)
+					}
+					return
+				}
+			}
+			t.Fatal("destination policy missing from config output")
 		})
 	}
 }

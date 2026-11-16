@@ -117,12 +117,13 @@ func (cfg daemonConfig) settings() []configSetting {
 	var value any = cfg.dispatcher
 	if cfg.executor != nil {
 		copy := *cfg.executor
-		// These optional switches resolve in PolicyConfig.Spec at startup.
+		// These optional policy values resolve in PolicyConfig.Spec at startup.
 		policy := copy.Network.Policy.Spec()
 		copy.Network.Policy.TCP, copy.Network.Policy.TLS = &policy.TCP, &policy.TLS
 		copy.Network.Policy.UDP, copy.Network.Policy.ICMP = &policy.UDP, &policy.ICMP
 		copy.Network.Policy.SCION, copy.Network.Policy.Inbound = &policy.SCION, &policy.Inbound
 		copy.Network.Policy.LocalTargets = &policy.LocalTargets
+		copy.Network.Policy.DeniedDestinations = &policy.DeniedDestinations
 		value = &copy
 	}
 	settings := []configSetting{}
