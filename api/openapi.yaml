@@ -9806,16 +9806,15 @@ paths:
     post:
       operationId: createPersonalTopUp
       summary: Create a native SUI deposit intent for your prepaid credit.
-      description: "Added in API 1.35. Requires a browser account session and CSRF proof; scoped API credentials are prohibited. Accepts at most 1024 encoded bytes. The returned Testnet SUI intent must be signed with the caller's external wallet. Creation alone credits nothing; a confirmed receipt credits the personal balance once. An idempotency key identifies the deposit and conflicting reuse is refused. A deposit intent cannot authorize an experiment. No withdrawal endpoint is provided."
-      security:
-        - cookieAuth: []
+      description: "Added in API 1.35. Requires an authenticated account session; cookie sessions require CSRF proof and scoped API credentials are prohibited. Accepts at most 1024 encoded bytes. The returned Testnet SUI intent must be signed with the caller's external wallet. Creation alone credits nothing; a confirmed receipt credits the personal balance once. An idempotency key identifies the deposit and conflicting reuse is refused. A deposit intent cannot authorize an experiment. No withdrawal endpoint is provided."
       parameters:
         - name: Debuglet-API-Version
           in: header
           schema: {type: string}
         - name: X-Debuglet-CSRF
           in: header
-          required: true
+          required: false
+          description: Required with a cookie session.
           schema: {type: string}
       requestBody:
         required: true
@@ -9845,7 +9844,7 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
         "403":
-          description: Browser session and CSRF proof required; API credentials are prohibited.
+          description: Cookie session lacks CSRF proof, or a prohibited scoped API credential was used.
           headers:
             Debuglet-API-Version: {schema: {type: string}}
           content:
@@ -9897,16 +9896,15 @@ paths:
     post:
       operationId: createHostingSubsidyTopUp
       summary: Create a native SUI deposit intent to fund executor hosting rewards.
-      description: "Added in API 1.35. Requires an operator browser session and CSRF proof; scoped API credentials are prohibited. Accepts at most 1024 encoded bytes. The operator signs the returned Testnet SUI intent with an external wallet. Creation alone funds nothing; confirmed deposits fund only the hosting subsidy pool. Idempotent per deposit key; conflicting reuse is refused. No experiment authorization or withdrawal endpoint is provided."
-      security:
-        - cookieAuth: []
+      description: "Added in API 1.35. Requires an operator account session; cookie sessions require CSRF proof and scoped API credentials are prohibited. Accepts at most 1024 encoded bytes. The operator signs the returned Testnet SUI intent with an external wallet. Creation alone funds nothing; confirmed deposits fund only the hosting subsidy pool. Idempotent per deposit key; conflicting reuse is refused. No experiment authorization or withdrawal endpoint is provided."
       parameters:
         - name: Debuglet-API-Version
           in: header
           schema: {type: string}
         - name: X-Debuglet-CSRF
           in: header
-          required: true
+          required: false
+          description: Required with a cookie session.
           schema: {type: string}
       requestBody:
         required: true
@@ -9936,7 +9934,7 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
         "403":
-          description: Operator browser session and CSRF proof required; API credentials are prohibited.
+          description: Operator authority is required; cookie sessions need CSRF proof and scoped API credentials are prohibited.
           headers:
             Debuglet-API-Version: {schema: {type: string}}
           content:
@@ -15440,6 +15438,7 @@ components:
           "enum":
             - 1
             - 2
+            - 3
     "ProfileConfig":
       "type": "object"
       "additionalProperties": false
@@ -15569,6 +15568,7 @@ components:
           "enum":
             - 1
             - 2
+            - 3
         "name":
           "type": "string"
         "description":
