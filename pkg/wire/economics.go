@@ -126,8 +126,8 @@ type ExecutorEarnings struct {
 	Transfers      []ChainTransfer `json:"transfers"`
 	Payouts        string          `json:"payouts"`
 	// HostingAwarded is included in TotalIncome; it is not an extra balance.
-	HostingAwarded string          `json:"hosting_awarded,omitempty"`
-	Network        string          `json:"network,omitempty"`
+	HostingAwarded string `json:"hosting_awarded,omitempty"`
+	Network        string `json:"network,omitempty"`
 }
 
 // ChainTransfer is one outbound chain transfer. Kind is payout or refund;
