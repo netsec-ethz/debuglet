@@ -160,7 +160,9 @@ Download all published assets again, compare their digests with the audited
 bundle, and repeat the full audit. On a clean supported host, install the actual
 public files, confirm version/source, run the full bundle's `dbl demo`, and
 check each component's documented command. No compiler or checkout should be
-needed on that host. Then publish and verify the [apt channel](apt-repository.md).
+needed on that host. If offering apt installation, publish and verify the
+[apt channel](apt-repository.md) before advertising it. A verified tar release
+can be offered while the separate apt channel remains explicitly unavailable.
 
 The SBOM records Go modules and same-source offline WASI dependency graphs.
 Runtime image pins are not a complete OS-package inventory, and recorded BPF
@@ -169,6 +171,11 @@ For independent pilot deployments, agree [abuse response](abuse-response.md) and
 [operator acceptance](external-pilot.md) with the affected operator.
 
 ## Retain a complete release
+
+Public prerelease publication and private retention are separate operations.
+Configure and verify durable retention before declaring a stable version supported,
+including the designated rollback material and independent backup. An archive
+access problem does not require rebuilding or re-signing the existing bundle.
 
 Use a private GitHub archive with immutable Releases enabled. Its administrator
 creates the version tag and grants the publisher Contents write and

@@ -6,10 +6,11 @@ demo. For Go SDK or MCP development, start with the
 [developer paths](CONTRIBUTING.md#develop-with-debuglet). The source-built MCP
 tool is not included in the runtime package.
 
-**Release availability:** v0.2.0 is the latest published release and predates
-`dbl executor join`. The current onboarding flow needs a compatible candidate
-from your dispatcher operator until the next signed release is published. The
-official public apt channel is not live yet. A version tag alone is not a release.
+**Release availability:** [v1.0.0-rc.1](https://github.com/netsec-ethz/debuglet/releases/tag/v1.0.0-rc.1)
+is the signed release candidate for current enrollment and managed research
+deployments. Use the signed installation below with a compatible dispatcher.
+v0.2.0 remains the latest stable release and predates `dbl executor join`.
+The official public apt channel is not live yet.
 
 ## Supported platforms
 
@@ -23,35 +24,36 @@ credentials across Linux container restarts; Docker Desktop and architecture
 emulation are not validated. See [compatibility](docs/versions.md) for version
 and deployment limits.
 
-## Install a private development candidate
+## Install a signed release
 
-This is the current route for executor enrollment. Ask your dispatcher operator
-for the exact version/source, trusted `bootstrap.sh`, and matching full archive,
-`install.sh` and `SHA256SUMS`. Keep the three package files together with their
-original names. For a user-local installation:
+Tar installation needs a POSIX shell, GNU tar, coreutils, Python 3.11+, curl and
+OpenSSH with `ssh-keygen -Y`. Obtain the bootstrap from a trusted checkout and
+provision the [release signing trust](docs/operations/releases.md#production-signer)
+independently. Select an exact published version with signed assets:
 
 ```sh
-DEBUGLET_VERSION=VERSION_PROVIDED_BY_OPERATOR \
-DEBUGLET_RELEASE_DIR="$HOME/Downloads/debuglet-candidate" \
-DEBUGLET_ALLOW_UNSIGNED=1 \
+DEBUGLET_VERSION=v1.0.0-rc.1 \
+DEBUGLET_REQUIRE_SIGNATURE=1 \
+DEBUGLET_RELEASE_TRUST=/etc/debuglet/release-allowed-signers \
+DEBUGLET_RELEASE_SIGNER=releases@debuglet.netsec.ethz.ch \
 DEBUGLET_PREFIX="$HOME/.local" \
-sh "$HOME/Downloads/bootstrap.sh"
+sh /path/to/trusted/bootstrap.sh
 export PATH="$HOME/.local/bin:$PATH"
 dbl --output json version
 dbl demo
 ```
 
-Leave component and signature/trust settings unset. Check the reported version
-and source against the operator's values. Checksums detect changed files but
-do not authenticate an unsigned publisher. The demo needs no account, wallet,
-root access or existing service; success ends with `Cleanup: complete`.
+Leave `DEBUGLET_ALLOW_UNSIGNED`, `DEBUGLET_COMPONENT` and `DEBUGLET_RELEASE_DIR`
+unset for this full online install. Signature failures stop before installer
+execution. [Offline installation and verification](docs/operations/releases.md)
+use the same trust checks. The demo needs no account, wallet, root access or
+existing service; success ends with `Cleanup: complete`.
 
-For a persistent executor, install system-wide: use `sudo env` with the same
-variables and `DEBUGLET_PREFIX=/usr/local`, then follow
+Tar installation does not activate services. To host a persistent executor,
+install system-wide using `sudo env` with the same variables and
+`DEBUGLET_PREFIX=/usr/local`, then follow
 [persistent setup](docs/operations/executor-onboarding.md#run-persistently-on-linux).
-It creates the service account and explicitly enrolls and starts the executor.
-The public v0.2.0 demo uses the [legacy procedure](docs/operations/releases.md#explicit-unsigned-legacy-or-development-install)
-and does not provide current enrollment.
+That procedure creates the service account, enrolls the executor and starts it.
 
 ## Install with apt on Ubuntu 24.04 amd64
 
@@ -75,31 +77,6 @@ For an existing service, follow the [upgrade procedure](docs/operations/debian.m
 before activation. Apt stages the new payload and retains payloads referenced by
 managed services; it does not drain, migrate or restart them for you.
 
-## Install a signed release
-
-Tar installation needs a POSIX shell, GNU tar, coreutils, Python 3.11+, curl and
-OpenSSH with `ssh-keygen -Y`. Obtain the bootstrap from a trusted checkout and
-provision the [release signing trust](docs/operations/releases.md#production-signer)
-independently. Select an exact published version with signed assets:
-
-```sh
-DEBUGLET_VERSION=VERSION_PROVIDED_BY_OPERATOR \
-DEBUGLET_REQUIRE_SIGNATURE=1 \
-DEBUGLET_RELEASE_TRUST=/etc/debuglet/release-allowed-signers \
-DEBUGLET_RELEASE_SIGNER=releases@debuglet.netsec.ethz.ch \
-DEBUGLET_PREFIX="$HOME/.local" \
-sh /path/to/trusted/bootstrap.sh
-export PATH="$HOME/.local/bin:$PATH"
-dbl --output json version
-dbl demo
-```
-
-Leave `DEBUGLET_ALLOW_UNSIGNED`, `DEBUGLET_COMPONENT` and `DEBUGLET_RELEASE_DIR`
-unset for this full online install. Signature failures stop before installer
-execution. [Offline installation and verification](docs/operations/releases.md)
-use the same trust checks. Tar installation does not create service accounts or
-activate services.
-
 ## Next steps
 
 | What you want to do | Guide |
@@ -109,6 +86,30 @@ activate services.
 | Run or update persistent services | [Managed services](docs/operations/services.md) |
 | Remove an executor or package | [Stop and remove a service](docs/operations/services.md#remove-a-role-or-inactive-package); [remove Debian packages](docs/operations/debian.md#removal-and-repair) |
 | Operate a dispatcher | [Deployment guide](deploy/README.md) |
+
+## Install a private development candidate
+
+Use this route only for an exact unsigned development package supplied by your
+operator or built from source. Obtain its version/source, trusted `bootstrap.sh`,
+full archive, `install.sh` and `SHA256SUMS`; keep the package files together with
+their original names.
+
+```sh
+DEBUGLET_VERSION=VERSION_PROVIDED_BY_OPERATOR \
+DEBUGLET_RELEASE_DIR="$HOME/Downloads/debuglet-candidate" \
+DEBUGLET_ALLOW_UNSIGNED=1 \
+DEBUGLET_PREFIX="$HOME/.local" \
+sh "$HOME/Downloads/bootstrap.sh"
+export PATH="$HOME/.local/bin:$PATH"
+dbl --output json version
+dbl demo
+```
+
+Leave component and signature/trust settings unset. Check the reported version
+and source against the operator's values. Checksums detect changed files but
+do not authenticate an unsigned publisher. The older public v0.2.0 demo uses the
+[legacy procedure](docs/operations/releases.md#explicit-unsigned-legacy-or-development-install)
+and does not provide current enrollment.
 
 ## Build from source
 
