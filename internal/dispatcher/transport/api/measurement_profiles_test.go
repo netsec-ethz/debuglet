@@ -141,11 +141,12 @@ func TestMeasurementProfileLimitAndCatalogue(t *testing.T) {
 }
 
 func TestMeasurementProfileTemplateVersionsSurviveUpgrade(t *testing.T) {
+	v2Digest := "21be031d8a7d121b967df3ff82a26019517b25c0d19d627ba40607cd67691693"
 	oldDigest := "0135f2de557856f013e707d35225d3999895e217e55029c5d83cd5d595ffe91b"
 	for _, id := range []string{"http", "tcp", "service", "unknown"} {
-		for _, version := range []int{1, wire.ProbeTemplateVersion, 3} {
-			for _, digest := range []string{oldDigest, wire.ProbeSHA256, "tampered"} {
-				want := id != "unknown" && (version == 1 && digest == oldDigest || version == wire.ProbeTemplateVersion && digest == wire.ProbeSHA256)
+		for _, version := range []int{1, 2, wire.ProbeTemplateVersion, 4} {
+			for _, digest := range []string{oldDigest, v2Digest, wire.ProbeSHA256, "tampered"} {
+				want := id != "unknown" && (version == 1 && digest == oldDigest || version == 2 && digest == v2Digest || version == wire.ProbeTemplateVersion && digest == wire.ProbeSHA256)
 				if got := validProfileTemplate(wire.TemplateReference{ID: id, Version: version}, digest); got != want {
 					t.Fatalf("template %s version %d digest %s: accepted=%t, want %t", id, version, digest, got, want)
 				}
