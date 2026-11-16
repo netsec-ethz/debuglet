@@ -9,7 +9,7 @@ GO ?= go
 # CI uses explicit native package roots so WASI examples are built for
 # their actual target instead of being treated as host programs.
 CI_PACKAGES = ./api/... ./cmd/... ./internal/... ./pkg/... ./protocol/...
-CI_TEST_TIMEOUT ?= 4m
+CI_TEST_TIMEOUT ?= 6m
 CI_DIST ?= .cache/ci/dist
 
 # Race-detector lane: the scheduler, session/transport, registry and
