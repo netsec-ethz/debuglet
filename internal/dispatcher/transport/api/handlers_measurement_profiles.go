@@ -149,6 +149,8 @@ func validProfileTemplate(ref wire.TemplateReference, digest string) bool {
 	case 1:
 		// Saved profiles retain their original program across upgrades.
 		return digest == "0135f2de557856f013e707d35225d3999895e217e55029c5d83cd5d595ffe91b"
+	case 2:
+		return digest == "21be031d8a7d121b967df3ff82a26019517b25c0d19d627ba40607cd67691693"
 	case wire.ProbeTemplateVersion:
 		return digest == wire.ProbeSHA256
 	default:

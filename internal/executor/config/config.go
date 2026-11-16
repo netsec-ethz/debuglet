@@ -145,9 +145,8 @@ type NetworkConfig struct {
 // checked, and either one refusing is a refusal.
 //
 // Every switch is optional and keeps its documented default when the file
-// omits it. The defaults are the local profile's: the transports this build
-// supports are on, SCION is off, and loopback destinations are reachable while
-// the other reserved and internal ranges are not.
+// omits it. Supported IP transports are on, SCION is off, and local/private
+// destinations and the documented public-node exclusions are denied.
 type PolicyConfig struct {
 	TCP     *bool `toml:"tcp"`
 	TLS     *bool `toml:"tls"`
@@ -163,8 +162,10 @@ type PolicyConfig struct {
 	// DeniedDestinations are operator denials in addition to the reserved and
 	// internal ranges, as a comma-separated list of CIDR blocks, IP addresses
 	// and DNS names. A name denies the name and the addresses it resolves to,
-	// which is how a destination that opted out stays unreachable.
-	DeniedDestinations string `toml:"denied_destinations"`
+	// which is how a destination that opted out stays unreachable. Omitted
+	// uses netpolicy.DefaultDeniedDestinations; an explicit string replaces
+	// that list without changing the mandatory reserved-range protection.
+	DeniedDestinations *string `toml:"denied_destinations"`
 	// PermittedPorts are the destination ports a guest may reach, written as
 	// comma-separated ports and ranges. Empty permits every port.
 	PermittedPorts string `toml:"permitted_ports"`
@@ -181,7 +182,9 @@ func (cfg PolicyConfig) Spec() netpolicy.Spec {
 	spec.SCION = switchedOn(cfg.SCION, spec.SCION)
 	spec.Inbound = switchedOn(cfg.Inbound, spec.Inbound)
 	spec.LocalTargets = switchedOn(cfg.LocalTargets, spec.LocalTargets)
-	spec.DeniedDestinations = cfg.DeniedDestinations
+	if cfg.DeniedDestinations != nil {
+		spec.DeniedDestinations = *cfg.DeniedDestinations
+	}
 	spec.PermittedPorts = cfg.PermittedPorts
 	return spec
 }
@@ -234,7 +237,7 @@ const DefaultConfigPath = "/etc/debuglet/executor/executor.toml"
 
 // Documented defaults for keys the configuration file may omit.
 const (
-	DefaultCapacity     = int64(1_000_000_000) // Bits per second when omitted.
+	DefaultCapacity     = int64(100_000_000) // Bits per second when omitted.
 	DefaultLogLevel     = "info"
 	DefaultMaxDebuglets = 100
 	// DefaultClockMaxErrorMS matches hostprobe.DefaultClockErrorBound.

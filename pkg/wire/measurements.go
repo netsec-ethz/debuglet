@@ -9,10 +9,10 @@ const (
 	ProfileVersion        = 1
 	MaxProfileBytes       = 8 << 20
 	MaxProfilesPerAccount = 32
-	ProbeTemplateVersion  = 2
+	ProbeTemplateVersion  = 3
 	// ProbeSHA256 identifies the Go 1.26.11 build shipped by the matching
 	// dashboard. Clients verify the asset before applying a catalogue entry.
-	ProbeSHA256 = "21be031d8a7d121b967df3ff82a26019517b25c0d19d627ba40607cd67691693"
+	ProbeSHA256 = "ddc3e5f9771238a659dee6b268a6c259a3b6c363b325658f65da26e94412be03"
 )
 
 // ProfileConfig is reusable: it deliberately contains neither an absolute

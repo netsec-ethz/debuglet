@@ -21,6 +21,7 @@ const loginUsage = `Usage:
       [--recovery-file FILE] [--credential-store auto|system|file]
   dbl [--dispatcher NAME] login --browser [--no-browser] [--scopes LIST]
       [--credential-store auto|system|file]
+  dbl [--dispatcher NAME] login --token-file FILE [--credential-store auto|system|file]
   dbl [--dispatcher NAME] logout
 
 Obtain a session for the selected dispatcher and store it for that connection.
@@ -39,8 +40,15 @@ yet: the account key to --account-key-file (default account-key-PROFILE.txt
 beside the connections file) and the recovery code to --recovery-file (default
 recovery-PROFILE.txt). Keep both; the dispatcher cannot show either again.
 
-Only the session is stored. --credential-store auto (default) uses Linux Secret
-Service when secret-tool and a desktop D-Bus session are available; otherwise it
+--token-file imports an existing scoped API credential for headless use. The
+file must be regular, owner-only (mode 0600) and at most 4 KiB. Its audience and
+expiry are checked with the selected dispatcher before it is stored; this
+requires the account:read scope. Create
+and revoke these credentials on the console Credentials page; never use an
+account root key in CI. Import does not issue or renew a credential.
+
+Only the session or API credential is stored. --credential-store auto (default)
+uses Linux Secret Service when secret-tool and a desktop D-Bus session are available; otherwise it
 uses credentials.json beside the connections file, mode 0600. An available but
 locked or failing system store is an error, not a silent fallback. Use system to
 require Secret Service, or file explicitly on headless hosts. Tokens are only
@@ -57,6 +65,7 @@ const maxAccountKeyFile = 4096
 
 func loginCommand(ctx context.Context, args []string, options globalOptions, stdout, stderr io.Writer) int {
 	fs := newCommandFlagSet("login")
+	tokenFile := fs.String("token-file", "", "owner-only file holding a scoped API credential")
 	keyFile := fs.String("account-key-file", "", "file holding the account key, or receiving it with --register")
 	register := fs.String("register", "", "create an account with this name first")
 	recoveryFile := fs.String("recovery-file", "", "file the new account's recovery code is written to")
@@ -67,14 +76,23 @@ func loginCommand(ctx context.Context, args []string, options globalOptions, std
 	if code, ok := parseCommandFlags(fs, args, loginUsage, stdout, stderr); !ok {
 		return code
 	}
-	scopesRequested := false
+	scopesRequested, tokenFileRequested := false, false
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "scopes" {
 			scopesRequested = true
 		}
+		if f.Name == "token-file" {
+			tokenFileRequested = true
+		}
 	})
 	if fs.NArg() != 0 {
 		return usageError("dbl login", loginUsage, stderr, "login takes no positional arguments; supply a key with --account-key-file")
+	}
+	if tokenFileRequested && *tokenFile == "" {
+		return usageError("dbl login", loginUsage, stderr, "--token-file requires a nonempty path")
+	}
+	if *tokenFile != "" && (*keyFile != "" || *register != "" || *recoveryFile != "" || *browser || *noBrowser || scopesRequested || strings.TrimSpace(os.Getenv(accountKeyEnv)) != "") {
+		return usageError("dbl login", loginUsage, stderr, "--token-file cannot be combined with account-key login, registration or browser approval")
 	}
 	if *recoveryFile != "" && *register == "" {
 		return usageError("dbl login", loginUsage, stderr, "--recovery-file only applies to --register")
@@ -100,6 +118,9 @@ func loginCommand(ctx context.Context, args []string, options globalOptions, std
 	// successful remote login into an avoidable local persistence failure.
 	if _, err := connections.LoadCredentials(options.ConfigPath); err != nil {
 		return reportFailure(ctx, "dbl login: read credential store", stderr, err)
+	}
+	if *tokenFile != "" {
+		return importTokenCommand(ctx, c, profile, options, *tokenFile, storage, stdout, stderr)
 	}
 	if *browser || *noBrowser || scopesRequested || (*register == "" && *keyFile == "" && strings.TrimSpace(os.Getenv(accountKeyEnv)) == "" && remoteLoginEndpoint(profile.Endpoint)) {
 		return browserLoginCommand(ctx, c, profile, options, strings.Split(*scopes, ","), *noBrowser, storage, stdout, stderr)

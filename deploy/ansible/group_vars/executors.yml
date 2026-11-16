@@ -43,8 +43,8 @@ executor_legacy_state_dir: "{{ state_dir }}/executor"
 # Version string the executor reports; follows the release being deployed.
 executor_version: "{{ deploy_version }}"
 
-# Bandwidth capacity in bits per second (default 1 Gbps).
-executor_capacity: 1_000_000_000
+# Bandwidth capacity in bits per second (default 100 Mbps).
+executor_capacity: 100_000_000
 executor_max_debuglets: 20
 
 # TESLA epoch length in seconds: each chain key signs for one epoch. An
@@ -89,6 +89,18 @@ executor_interface: "{{ ansible_default_ipv4.interface | default('') }}"
 # Internet, since a listener nobody can reach only fails runs that ask for one.
 executor_public_host: ""
 executor_public_ports: ""
+
+# Public guest policy. Add exclusions to this list; an explicit replacement is
+# an operator decision. Sources/limits: docs/operations/destination-exclusions.md.
+executor_policy_tcp: true
+executor_policy_tls: true
+executor_policy_udp: true
+executor_policy_icmp: true
+executor_policy_scion: false
+executor_policy_inbound: true
+executor_policy_local_targets: false
+executor_denied_destinations: "6.0.0.0/8,7.0.0.0/8,11.0.0.0/8"
+executor_permitted_ports: ""
 
 # The executor's IPv4 egress check (the connectivity object in GET /executors):
 # a literal address:port of this executor's own dispatcher, which reflects the

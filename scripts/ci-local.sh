@@ -12,6 +12,8 @@ install_candidate "$work/install" .cache/ci/local-install.log "${LOCAL_PACKAGE_D
 
 python3 -m unittest -v tools/test_bootstrap.py 2>&1 | tee .cache/ci/bootstrap-tests.log
 python3 -m unittest discover -v -s examples/experiments/runpod -p 'test_*.py' 2>&1 | tee .cache/ci/runpod-demo-tests.log
+python3 -m unittest discover -v -s deploy/gcp -p 'test_*.py' 2>&1 | tee .cache/ci/local-gcp-fleet-tests.log
+python3 -m unittest discover -v -s examples/github-actions -p 'test_*.py' 2>&1 | tee .cache/ci/github-actions-example-tests.log
 export DEBUGLET_LOCAL_INSTALL_ROOT="$installed_root"
 export DEBUGLET_LOCAL_SOURCE_ROOT="$PWD"
 export DEBUGLET_LOCAL_SOURCE_SHA="$(git rev-parse HEAD)"

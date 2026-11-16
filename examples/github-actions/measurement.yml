@@ -1,0 +1,84 @@
+# Copy to .github/workflows/debuglet.yml in your repository.
+# Requires the release containing `dbl login --token-file` (not v1.0.0-rc.1).
+name: Debuglet TCP measurement
+on:
+  workflow_dispatch:
+    inputs:
+      max_connect_ms:
+        description: Maximum TCP connection time in ms (use 0 to demonstrate a failed assertion)
+        default: '1000'
+        required: true
+permissions:
+  contents: read
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      DEBUGLET_VERSION: ${{ vars.DEBUGLET_VERSION }}
+      DEBUGLET_SOURCE_COMMIT: ${{ vars.DEBUGLET_SOURCE_COMMIT }}
+      DEBUGLET_ENDPOINT: ${{ vars.DEBUGLET_ENDPOINT }}
+      DEBUGLET_CONSOLE_URL: ${{ vars.DEBUGLET_CONSOLE_URL }}
+      DEBUGLET_EXECUTOR: ${{ vars.DEBUGLET_EXECUTOR }}
+      DEBUGLET_TARGET: ${{ vars.DEBUGLET_TARGET }}
+      DEBUGLET_MAX_CONNECT_MS: ${{ inputs.max_connect_ms }}
+    steps:
+      - name: Require explicit release pins and destination
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DEBUGLET_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]
+          [[ "$DEBUGLET_SOURCE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
+          test -n "$DEBUGLET_CONSOLE_URL" && test -n "$DEBUGLET_ENDPOINT" && test -n "$DEBUGLET_EXECUTOR" && test -n "$DEBUGLET_TARGET"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: netsec-ethz/debuglet
+          ref: ${{ vars.DEBUGLET_SOURCE_COMMIT }}
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install signed CLI and compile the small measurement
+        shell: bash
+        env:
+          RELEASE_ALLOWED_SIGNERS: ${{ vars.DEBUGLET_RELEASE_ALLOWED_SIGNERS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s\n' "$RELEASE_ALLOWED_SIGNERS" > "$RUNNER_TEMP/release-allowed-signers"
+          DEBUGLET_REQUIRE_SIGNATURE=1 DEBUGLET_COMPONENT=cli \
+            DEBUGLET_RELEASE_TRUST="$RUNNER_TEMP/release-allowed-signers" \
+            DEBUGLET_RELEASE_SIGNER=releases@debuglet.netsec.ethz.ch \
+            DEBUGLET_PREFIX="$RUNNER_TEMP/debuglet" sh scripts/bootstrap.sh
+          echo "$RUNNER_TEMP/debuglet/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/debuglet/bin/dbl" --output json version > "$RUNNER_TEMP/cli-version.json"
+          python3 -c 'import json,os; v=json.load(open(os.environ["RUNNER_TEMP"]+"/cli-version.json")); assert v["version"]==os.environ["DEBUGLET_VERSION"] and v["revision"]==os.environ["DEBUGLET_SOURCE_COMMIT"], "CLI and SDK pins differ"'
+          GOTOOLCHAIN=local GOOS=wasip1 GOARCH=wasm go build -mod=readonly -o "$RUNNER_TEMP/tcp-check.wasm" ./examples/github-actions/tcp-check
+      - name: Run, export and assert the measurement
+        shell: bash
+        env:
+          DEBUGLET_TOKEN: ${{ secrets.DEBUGLET_TOKEN }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$DEBUGLET_TOKEN"
+          printf '%s\n' "$DEBUGLET_TOKEN" > "$RUNNER_TEMP/debuglet-token"
+          unset DEBUGLET_TOKEN
+          DEBUGLET_TOKEN_FILE="$RUNNER_TEMP/debuglet-token" DEBUGLET_WASM="$RUNNER_TEMP/tcp-check.wasm" \
+            bash examples/github-actions/run.sh
+      - name: Remove local credential copy and summarize
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/debuglet-token"
+          if test -f results/run-url.txt; then
+            printf 'Debuglet run: %s\n' "$(cat results/run-url.txt)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: debuglet-results
+          path: results/
+          if-no-files-found: warn
+          retention-days: 7

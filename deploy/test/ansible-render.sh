@@ -351,6 +351,10 @@ refuses 'a public address with a port is refused' 'bare public' \
 	-e executor_public_host=192.0.2.10:9000
 refuses 'a named IPv4 reflector is refused' 'literal IPv4' \
 	-e executor_connectivity_ipv4_reflector=dispatcher.fixture.invalid:19001
+refuses 'text cannot silently change a transport switch' 'Executor policy switches must be YAML booleans' \
+	-e executor_policy_udp=false
+refuses 'exclusions must be an explicit comma-separated string' 'Executor policy switches must be YAML booleans' \
+	-e '{"executor_denied_destinations": ["6.0.0.0/8"]}'
 refuses 'colliding listener ports are refused' 'must differ' \
 	-e 'dispatcher_grpc_port=19000'
 refuses 'a database directory inside the configuration is refused' 'neither' \
@@ -594,6 +598,12 @@ expect 'the dispatcher unit loads the CILogon credentials' \
 expect 'the executor carries its UUID identity' "$executor_toml" \
 	'executor_id = "5fe02882-0410-416c-9935-235090bcba0d"'
 
+expect 'the managed executor defaults to 100 Mbps' "$executor_toml" 'capacity = 100000000'
+expect 'the managed executor renders guest policy' "$executor_toml" '[network.policy]'
+expect 'the public executor denies local targets' "$executor_toml" 'local_targets = false'
+expect 'the managed executor uses the reviewed initial exclusions' "$executor_toml" \
+	'denied_destinations = "6.0.0.0/8,7.0.0.0/8,11.0.0.0/8"'
+
 # Vantage-point metadata: the executor advertises its public address, and the
 # dispatcher labels it under its identity with exactly the inventory's values.
 expect 'the executor advertises its public address' "$executor_toml" 'public_host = "192.0.2.10"'
@@ -661,7 +671,8 @@ mkdir -p "$work/tls"
 if run "$work/tls-render.log" "$work/tls-render.yml" \
 	-e "tls_template_dir=$playbooks" -e "tls_render_dir=$work/tls" \
 	-e executor_tls_server_name=dispatcher.fixture.invalid \
-	-e dispatcher_require_client_cert=true; then
+	-e dispatcher_require_client_cert=true \
+	-e '{"executor_capacity": 25000000, "executor_policy_udp": false, "executor_denied_destinations": "6.0.0.0/8,7.0.0.0/8,11.0.0.0/8,2001:4860::/32,excluded.example", "executor_permitted_ports": "53,443"}'; then
 	check 'the transport keys render when they are set' pass
 	expect 'the dispatcher requires a client certificate when asked' \
 		"$work/tls/dispatcher.toml" 'require_client_cert = true'
@@ -669,6 +680,11 @@ if run "$work/tls-render.log" "$work/tls-render.yml" \
 		"$work/tls/dispatcher.toml" "ca_file = \"$host/etc/debuglet/dispatcher/ca.crt\""
 	expect 'the executor verifies the configured name' \
 		"$work/tls/executor.toml" 'server_name = "dispatcher.fixture.invalid"'
+	expect 'explicit executor capacity is preserved' "$work/tls/executor.toml" 'capacity = 25000000'
+	expect 'an explicit transport restriction is preserved' "$work/tls/executor.toml" 'udp = false'
+	expect 'operator exclusions survive rendering' "$work/tls/executor.toml" \
+		'denied_destinations = "6.0.0.0/8,7.0.0.0/8,11.0.0.0/8,2001:4860::/32,excluded.example"'
+	expect 'permitted ports survive rendering' "$work/tls/executor.toml" 'permitted_ports = "53,443"'
 	# Both keys are declared by the daemons this package installs, so a
 	# rendered file that carries them has to reach the database rather than
 	# be refused by name.

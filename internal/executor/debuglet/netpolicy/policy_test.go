@@ -572,3 +572,18 @@ func TestResolutionFailuresAreAlsoBounded(t *testing.T) {
 		t.Errorf("10 refused peers spent %d resolver queries, want one", got)
 	}
 }
+
+// Resolution and IPv4-mapped literals must not bypass the default exclusions.
+// The resolver is a fixture: these checks never contact excluded networks.
+func TestDefaultExclusionsAcrossTransports(t *testing.T) {
+	resolver := newResolver(map[string][]string{"excluded.example": {"6.1.2.3"}})
+	operator := mustParse(t, Defaults())
+	policy := New(operator, Run{Addresses: []string{"6.1.2.3", "7.1.2.3", "11.1.2.3", "excluded.example"}, RequireICMP: true}, WithResolver(resolver), WithICMPProbe(permitted))
+	for _, transport := range []Transport{TCP, TLS, UDP, ICMP} {
+		for _, target := range []string{"6.1.2.3:443", "7.1.2.3:443", "11.1.2.3:443", "[::ffff:6.1.2.3]:443", "excluded.example:443"} {
+			if _, err := policy.AdmitDestination(context.Background(), transport, target); !errors.Is(err, ErrDenied) {
+				t.Errorf("transport %v target %s: want ErrDenied, got %v", transport, target, err)
+			}
+		}
+	}
+}

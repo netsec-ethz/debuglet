@@ -69,6 +69,14 @@ func TestBootstrapFresh(t *testing.T) {
 					"experiment_barriers":            "transaction_id deadline_ns start_time_ns",
 					"experiment_readiness":           "debuglet_id metadata ready_at_ns",
 					"allocation_reclamations":        "debuglet_id reclaimed_at",
+					"allowance_eligibility":          "user_id researcher approved_by updated_at",
+					"hosting_approvals":              "executor_id user_id approved_by updated_at",
+					"allowance_periods":              "user_id period researcher eligible_nodes ceiling hosting_bonus granted decided_at",
+					"prepaid_topups":                 "transaction_id user_id purpose idempotency_key refund_address network coin_type intent_json",
+					"personal_funding":               "transaction_id user_id currency network",
+					"hosting_awards":                 "executor_id day user_id amount network",
+					"native_gas_reservations":        "transfer_id amount network",
+					"assistant_keys":                 "user_id encrypted_key",
 					"allowance_grants":               "id user_id amount currency granted_by reason idempotency_key granted_at",
 					"probe_status":                   "executor_id first_connected last_connected connected status_since total_uptime is_public host_tags version",
 					"probe_addresses":                "executor_id family address via first_observed last_observed",
@@ -101,7 +109,7 @@ func TestBootstrapFresh(t *testing.T) {
 					"oauth_login_attempts":           "state_hash provider verifier nonce purpose session_selector expires_at",
 					"pending_identity_links":         "user_id provider issuer subject login session_selector expires_at",
 					"device_logins":                  "selector verifier_hash user_code_hash audience scopes label expires_at next_poll_at poll_interval state approver_session user_id",
-				}, []string{"account_recovery_pending", "account_run_reservations_live", "attribution_runs_source_idx", "chain_transfers_executor_idx", "communities_creator", "community_experiments_project", "community_funding_community", "community_funding_sponsor", "community_invitations_community", "community_measurements_measurement", "community_members_user", "community_projects_community", "community_topups_community", "debuglet_logs_sequence_idx", "debuglets_uuid_idx", "device_logins_expiry", "egress_grants_expiry", "executor_enrollment_tokens_executor_idx", "measurement_profiles_owner", "oauth_login_expiry", "owned_executors_user_idx", "payment_receipts_nonce_idx", "personal_templates_owner", "result_highlights_owner", "result_highlights_project", "result_highlights_run", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35})
+				}, []string{"account_recovery_pending", "account_run_reservations_live", "attribution_runs_source_idx", "chain_transfers_executor_idx", "communities_creator", "community_experiments_project", "community_funding_community", "community_funding_sponsor", "community_invitations_community", "community_measurements_measurement", "community_members_user", "community_projects_community", "community_topups_community", "debuglet_logs_sequence_idx", "debuglets_uuid_idx", "device_logins_expiry", "egress_grants_expiry", "executor_enrollment_tokens_executor_idx", "measurement_profiles_owner", "oauth_login_expiry", "owned_executors_user_idx", "payment_receipts_nonce_idx", "personal_funding_user", "personal_templates_owner", "result_highlights_owner", "result_highlights_project", "result_highlights_run", "sessions_user_idx", "users_uuid_idx"}, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38})
 				dispatcherSchemaRoundTrip(t, db)
 			} else {
 				assertSchema(t, db, map[string]string{

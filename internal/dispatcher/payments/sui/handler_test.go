@@ -893,3 +893,30 @@ func TestNewSuiPaymentHandlerRedactsInvalidEndpoints(t *testing.T) {
 		})
 	}
 }
+
+func TestNativeTransferUsesSingleCoinForPaymentAndGas(t *testing.T) {
+	f := fundedFixture()
+	f.pages[types.SUI_TYPE_ARG] = [][]*v2.Object{{coinObject(11, 110_000_000)}}
+	h := startFixture(t, f)
+	prepared, err := h.PrepareTransfer(t.Context(), 60_000_000, types.SUI_TYPE_ARG, testReceiver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RestorePreparedTransfer(prepared.Digest, prepared.Bytes(), prepared.Signature()); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.ExecuteTransfer(t.Context(), prepared); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNativeTransferMalformedGasReferenceFailsWithoutPanic(t *testing.T) {
+	f := fundedFixture()
+	coin := coinObject(11, 110_000_000)
+	coin.Digest = proto.String("invalid digest")
+	f.pages[types.SUI_TYPE_ARG] = [][]*v2.Object{{coin}}
+	h := startFixture(t, f)
+	if _, err := h.PrepareTransfer(t.Context(), 60_000_000, types.SUI_TYPE_ARG, testReceiver); !errors.Is(err, ErrNotBroadcast) {
+		t.Fatalf("malformed reference: %v", err)
+	}
+}

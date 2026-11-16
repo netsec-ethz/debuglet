@@ -10,6 +10,10 @@ CI performs no remote deployment. It builds,
 packages and checks the release payload; the paths below consume that payload.
 Nothing here deploys from CI, and no variable reaches a playbook from it.
 
+For a fixed fleet of lab-owned Google Cloud executors, use the
+[GCP preparation and provisioning guide](gcp/README.md). Its offline plan creates
+no resources; installation reuses the Ansible profile below.
+
 The optional hosted compiler has a separate verified bundle and restricted
 systemd service. See [hosted Studio](../docs/operations/hosted-studio.md) for its
 offline build, installation, resource limits and dispatcher activation.

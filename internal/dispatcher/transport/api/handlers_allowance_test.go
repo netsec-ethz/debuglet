@@ -31,6 +31,10 @@ import (
 // alNewFixture is ccNewFixtureWith with usage allowances enabled in the
 // payment handler's configuration, which is where the daemon reads them.
 func alNewFixture(t *testing.T, options ...Option) *ccFixture {
+	return alNewFixtureWithAllowance(t, config.AllowanceConfig{Enabled: true}, options...)
+}
+
+func alNewFixtureWithAllowance(t *testing.T, allowance config.AllowanceConfig, options ...Option) *ccFixture {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -42,7 +46,7 @@ func alNewFixture(t *testing.T, options ...Option) *ccFixture {
 	if _, err := sqlitedb.Migrate(t.Context(), db, database.MigrationFS(), sqlitedb.Latest); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	cfg := &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}, Allowance: config.AllowanceConfig{Enabled: true}}
+	cfg := &config.DispatcherConfig{Sui: config.SuiConfig{Disabled: true}, Allowance: allowance}
 	ph, err := payments.NewPaymentHandler(db, cfg, zap.NewNop())
 	if err != nil {
 		t.Fatalf("payment handler: %v", err)

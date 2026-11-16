@@ -22,6 +22,9 @@ import (
 )
 
 func (h *Handler) registerCommunityFundingRoutes(e *echo.Echo) {
+	e.GET("/me/wallet", h.GetPersonalWallet)
+	e.POST("/me/wallet/top-ups", h.CreatePersonalTopUp)
+	e.POST("/operator/hosting-subsidy/top-ups", h.CreateHostingTopUp)
 	e.GET("/communities/:id/wallet", h.GetCommunityWallet)
 	e.POST("/communities/:id/wallet/top-ups", h.CreateCommunityTopUp)
 }
@@ -44,6 +47,10 @@ func communityFundingError(err error) error {
 	switch {
 	case errors.Is(err, payments.ErrCommunityNotFound):
 		return communityNotFound()
+	case errors.Is(err, payments.ErrTopUpConflict):
+		return apiError(http.StatusConflict, CodeInvalidRequest, err.Error())
+	case errors.Is(err, payments.ErrUnsupportedPaymentMethod):
+		return apiError(http.StatusBadRequest, CodeInvalidRequest, err.Error())
 	case errors.Is(err, payments.ErrCommunityOwner):
 		return apiError(http.StatusForbidden, CodeForbidden, err.Error())
 	case errors.Is(err, payments.ErrCommunityAllowanceDisabled):
@@ -68,6 +75,12 @@ func (h *Handler) GetCommunityWallet(c echo.Context) error {
 		return err
 	}
 	currency, network := h.dispatcher.Payment.CommunityCurrency()
+	if requested := c.QueryParam("currency"); requested != "" {
+		currency = requested
+	}
+	if err := h.dispatcher.Payment.CheckPaymentMethod(currency); err != nil {
+		return communityFundingError(err)
+	}
 	tx, err := h.db.BeginTx(c.Request().Context(), &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return communityFundingError(err)
@@ -100,15 +113,19 @@ func (h *Handler) CreateCommunityTopUp(c echo.Context) error {
 	}
 	var request struct {
 		Amount        string `json:"amount"`
+		Currency      string `json:"currency"`
 		RefundAddress string `json:"refund_address"`
 	}
 	c.Request().Body = http.MaxBytesReader(c.Response(), c.Request().Body, 1024)
 	if err := decodeMeasurementRequest(c, &request); err != nil {
 		return err
 	}
+	if request.Currency == "" {
+		request.Currency = "USDC"
+	}
 	amount, err := strconv.ParseInt(request.Amount, 10, 64)
 	if err != nil || amount <= 0 || amount > 1<<53-1 || strconv.FormatInt(amount, 10) != request.Amount {
-		return apiError(http.StatusBadRequest, CodeInvalidRequest, "amount must be an integer string between 1 and 9007199254740991 micro-USDC")
+		return apiError(http.StatusBadRequest, CodeInvalidRequest, "amount must be an integer string between 1 and 9007199254740991 base units")
 	}
 	if err := sui.ValidAddress(request.RefundAddress); err != nil {
 		return apiError(http.StatusBadRequest, CodeInvalidRequest, "refund_address must be a Sui address")
@@ -123,11 +140,11 @@ func (h *Handler) CreateCommunityTopUp(c echo.Context) error {
 		return communityFundingError(err)
 	}
 	defer tx.Rollback()
-	intent, err := h.dispatcher.Payment.CreateCommunityTopUpIn(tx, account.UserUUID, c.Param("id"), id, amount, request.RefundAddress, ctx)
+	intent, err := h.dispatcher.Payment.CreateCommunityTopUpCurrencyIn(tx, account.UserUUID, c.Param("id"), id, amount, request.RefundAddress, request.Currency, ctx)
 	if err != nil {
 		return communityFundingError(err)
 	}
-	response, err := paymentIntentResponse("USDC", intent)
+	response, err := paymentIntentResponse(request.Currency, intent)
 	if err != nil {
 		return err
 	}
@@ -138,6 +155,14 @@ func (h *Handler) CreateCommunityTopUp(c echo.Context) error {
 }
 
 func (h *Handler) checkCommunityFundingRequest(c echo.Context, req PaymentIntentRequest) error {
+	if req.Prepaid {
+		if _, err := requireAccount(c); err != nil {
+			return err
+		}
+		if req.CommunityProjectID != "" || req.PaymentMethod != "SUI" {
+			return apiError(http.StatusBadRequest, CodeInvalidRequest, "personal prepaid credit requires SUI and no community project")
+		}
+	}
 	if req.CommunityProjectID == "" {
 		if req.CommunityExperimentID != "" || req.CommunityExperimentRevision != nil {
 			return apiError(http.StatusBadRequest, CodeInvalidRequest, "an experiment association requires a community project")

@@ -109,6 +109,9 @@ func newPaymentHandler(db *sql.DB, cfg *config.DispatcherConfig, logger *zap.Log
 		logger.Info("blockchain payments are disabled; only TEST payments are available")
 		return handler, nil
 	}
+	if cfg.Sui.HostingRewardMIST != 0 && (cfg.Sui.Network != "testnet" || cfg.Sui.HostingRewardMIST < 0 || cfg.Sui.HostingDailyCapMIST < cfg.Sui.HostingRewardMIST || cfg.Sui.HostingMaxNodesPerAccount < 1 || cfg.Sui.HostingMaxNodesPerAccount > 100) {
+		return nil, errors.New("invalid Testnet hosting reward policy")
+	}
 	chain, err := deps.newChain(cfg, db, logger, handler)
 	if err != nil {
 		return nil, fmt.Errorf("blockchain payments: %w", err)
@@ -135,6 +138,9 @@ func isChainCurrency(currency string) bool {
 // Every path that reaches p.sui must pass this check first, so a disabled
 // handler returns the sentinel instead of dereferencing a nil backend.
 func (p *PaymentHandler) requireChain(currency string, action string) error {
+	if currency == "SUI" && p.cfg.Sui.Network != "testnet" && !p.chainDisabled() {
+		return fmt.Errorf("%s: native SUI is enabled only on Testnet: %w", action, ErrUnsupportedPaymentMethod)
+	}
 	if isChainCurrency(currency) && p.chainDisabled() {
 		return fmt.Errorf("%s (%s): %w", action, currency, ErrPaymentsDisabled)
 	}
@@ -149,7 +155,12 @@ func (p *PaymentHandler) CheckPaymentMethod(method string) error {
 	switch method {
 	case "TEST":
 		return nil
-	case "USDC", "SUI", "COMMUNITY":
+	case "SUI", "CREDITS":
+		if p.chainDisabled() {
+			return ErrPaymentsDisabled
+		}
+		return p.requireChain("SUI", "use native SUI")
+	case "USDC", "COMMUNITY":
 		if p.chainDisabled() {
 			return ErrPaymentsDisabled
 		}
@@ -168,6 +179,7 @@ func (p *PaymentHandler) Start(ctx context.Context) error {
 	}
 	g, subCtx := errgroup.WithContext(ctx)
 	g.Go(func() error { return p.pt.StartPayoutLoop(subCtx) })
+	g.Go(func() error { return p.hostingAwardLoop(subCtx) })
 	g.Go(func() error { return p.sui.Start(subCtx) })
 	return g.Wait()
 }
@@ -321,13 +333,13 @@ func (p *PaymentHandler) settleOrder(ctx context.Context, debuglet *database.Deb
 		if err := p.requireChain(order.Currency, "refund order"); err != nil && !sponsored {
 			return err
 		}
-		if order.Currency != "USDC" && (chainOnly || order.Currency != "TEST") {
+		if !isChainCurrency(order.Currency) && (chainOnly || order.Currency != "TEST") {
 			return fmt.Errorf("Refunds not supported for currency %s", order.Currency)
 		}
 	} else if err := p.requireChain(order.Currency, "credit order"); err != nil {
 		return err
 	}
-	if kind == settlementRefund && order.Currency == "USDC" && !sponsored && order.State == int64(models.Outstanding) {
+	if kind == settlementRefund && isChainCurrency(order.Currency) && !sponsored && order.State == int64(models.Outstanding) {
 		// The chain refund is not sent inside this SQL transaction: the
 		// transfer lifecycle commits the decision with the reserved transfer
 		// before it calls the chain.
@@ -620,7 +632,7 @@ func (p *PaymentHandler) refundTransaction(transactionId string, ctx context.Con
 		}
 		outstanding = append(outstanding, order)
 	}
-	if sponsored && currency == "USDC" {
+	if sponsored && isChainCurrency(currency) {
 		if len(outstanding) == 0 {
 			return RefundLocal, fmt.Errorf("orders of transaction %s are already settled; nothing was refunded", transactionId)
 		}
@@ -645,7 +657,7 @@ func (p *PaymentHandler) refundTransaction(transactionId string, ctx context.Con
 		}
 		return RefundLocal, tx.Commit()
 	}
-	if currency != "USDC" {
+	if !isChainCurrency(currency) {
 		return RefundLocal, fmt.Errorf("Refunds are not supported for currency %s", currency)
 	}
 	tx.Rollback()
@@ -719,7 +731,7 @@ func (p *PaymentHandler) PayoutExecutor(earning database.Earning, ctx context.Co
 	if err := p.requireChain(earning.Currency, "pay out earnings"); err != nil {
 		return err
 	}
-	if earning.Currency != "USDC" {
+	if !isChainCurrency(earning.Currency) {
 		return fmt.Errorf("Unknown/unallowed currency %s", earning.Currency)
 	}
 	if earning.CurrentBalance <= 0 {

@@ -42,6 +42,7 @@ WHERE debuglet_order.transaction_id = ?2 AND debuglet_order.order_id = ?3
       AND transactions.status = ?5
   )
   AND NOT EXISTS(SELECT 1 FROM community_topups d WHERE d.transaction_id=debuglet_order.transaction_id)
+  AND NOT EXISTS(SELECT 1 FROM prepaid_topups d WHERE d.transaction_id=debuglet_order.transaction_id)
   AND NOT EXISTS(
     SELECT 1 FROM community_funding f WHERE f.transaction_id=debuglet_order.transaction_id
       AND NOT EXISTS(SELECT 1 FROM community_members m

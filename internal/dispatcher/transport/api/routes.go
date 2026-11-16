@@ -182,6 +182,7 @@ func (h *Handler) RegisterRoutes(e *echo.Echo) {
 	e.POST("/operator/executors/:id/enrollment-token", h.PostOwnedExecutorToken)
 	e.GET("/operator/executors/:id/earnings", h.GetExecutorEarnings)
 	e.POST("/operator/accounts/:id/allowance", h.PostAccountAllowance)
+	e.PUT("/operator/accounts/:id/allowance-policy", h.PutAccountAllowancePolicy)
 	e.POST("/executor-enrollment", h.PostExecutorEnrollment)
 	// attribution
 	e.GET(routeAttributionCandidates, h.GetAttributionCandidates)

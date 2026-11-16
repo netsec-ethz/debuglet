@@ -299,6 +299,19 @@ func (h *Handler) GetExecutorEarnings(c echo.Context) error {
 			CreatedAt: transfer.CreatedAt.UTC(), UpdatedAt: transfer.UpdatedAt.UTC(),
 		})
 	}
+	if response.Currency == "SUI" {
+		var awarded int64
+		if err := h.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(amount),0) FROM hosting_awards WHERE executor_id=? AND network='testnet'`, executor.ExecutorID).Scan(&awarded); err != nil {
+			return earningsFailure(err)
+		}
+		response.HostingAwarded = strconv.FormatInt(awarded, 10)
+	}
+	if response.Currency == "SUI" || response.Currency == "USDC" {
+		_, response.Network = h.dispatcher.Payment.CommunityCurrency()
+		if response.Currency == "SUI" {
+			response.Network = "testnet"
+		}
+	}
 	return c.JSON(http.StatusOK, response)
 }
 

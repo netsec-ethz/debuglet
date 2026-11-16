@@ -174,6 +174,7 @@ type DummyIntent struct {
 }
 
 type PaymentIntentRequest struct {
+	Prepaid                     bool              `json:"prepaid,omitempty"`
 	CommunityProjectID          string            `json:"community_project_id,omitempty"`
 	CommunityExperimentID       string            `json:"community_experiment_id,omitempty"`
 	CommunityExperimentRevision *int64            `json:"community_experiment_revision,omitempty"`

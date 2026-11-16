@@ -387,7 +387,8 @@ func TestPortManagerListenControlRefusalStops(t *testing.T) {
 // The IPv4-only listeners of a run that refuses IPv6 bind the IPv4 wildcard,
 // so an IPv6 peer cannot reach them.
 func TestPortManagerIPv4OnlyListeners(t *testing.T) {
-	s, err := NewPortManager("203.0.113.10", strconv.Itoa(freePort(t))+","+strconv.Itoa(freePort(t)))
+	lo, hi := pmFreePorts(t)
+	s, err := NewPortManager("203.0.113.10", strconv.Itoa(lo)+","+strconv.Itoa(hi))
 	if err != nil {
 		t.Fatalf("NewPortManager: %v", err)
 	}

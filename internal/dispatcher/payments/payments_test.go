@@ -382,8 +382,8 @@ func expectOrderRead(mock sqlmock.Sqlmock, currency string, state models.Transac
 }
 
 func expectPersonalFunding(mock sqlmock.Sqlmock) {
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM community_funding WHERE transaction_id=?)")).
-		WithArgs(testTxID).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM community_funding WHERE transaction_id=? UNION ALL SELECT 1 FROM personal_funding WHERE transaction_id=?)")).
+		WithArgs(testTxID, testTxID).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 }
 
 func expectTransactionRead(mock sqlmock.Sqlmock, method string, status models.TransactionState) {
@@ -1115,8 +1115,8 @@ func TestApplyPaymentReceiptModes(t *testing.T) {
 			expect: func(mock sqlmock.Sqlmock) {
 				expectBeginAndReceiptMiss(mock)
 				expectTransactionRead(mock, "USDC", models.Outstanding)
-				mock.ExpectQuery(regexp.QuoteMeta("SELECT network,coin_type FROM community_topups WHERE transaction_id=?")).
-					WithArgs(testTxID).WillReturnError(sql.ErrNoRows)
+				mock.ExpectQuery(regexp.QuoteMeta("SELECT network,coin_type FROM community_topups WHERE transaction_id=? UNION ALL SELECT network,coin_type FROM prepaid_topups WHERE transaction_id=?")).
+					WithArgs(testTxID, testTxID).WillReturnError(sql.ErrNoRows)
 				mock.ExpectExec(markTransactionPaidQuery).WithArgs(int64(models.Paid), testTxID, int64(models.Outstanding)).WillReturnError(errScripted)
 				mock.ExpectRollback()
 			},

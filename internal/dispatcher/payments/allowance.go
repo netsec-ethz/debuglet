@@ -114,7 +114,8 @@ func (p *PaymentHandler) DefaultAllowanceGrant() int64 {
 // Allowance reads an account's allowance. An unknown account is
 // sql.ErrNoRows.
 func (p *PaymentHandler) Allowance(ctx context.Context, account uuid.UUID) (Allowance, error) {
-	return readAllowance(ctx, database.New(p.db), account)
+	a, _, err := p.AllowanceWithPolicy(ctx, account)
+	return a, err
 }
 
 func readAllowance(ctx context.Context, q *database.Queries, account uuid.UUID) (Allowance, error) {
@@ -151,6 +152,9 @@ func (p *PaymentHandler) CreateAllowanceIntentIn(db database.DBTX, account uuid.
 	}
 	if released > 0 {
 		p.logger.Info("released expired unadmitted intents", zap.Int64("intents", released))
+	}
+	if _, err := p.applyAllowancePolicyIn(ctx, db, account, now); err != nil {
+		return PaymentIntent{}, err
 	}
 	created, err := queries.ReserveAllowanceIntent(ctx, database.ReserveAllowanceIntentParams{
 		ID: transactionId, Price: price, ExpiresAt: models.NewUTCTime(now.Add(testIntentLifetime)),

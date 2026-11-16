@@ -78,12 +78,13 @@ type OrderHistoryOrder struct {
 // alike; Reserved the price of the other orders of its paid intents; and
 // Remaining is Granted - Consumed - Reserved.
 type Allowance struct {
-	Currency    string `json:"currency"`
-	Granted     string `json:"granted"`
-	Reserved    string `json:"reserved"`
-	Consumed    string `json:"consumed"`
-	Remaining   string `json:"remaining"`
-	PricingRule string `json:"pricing_rule"`
+	Currency    string           `json:"currency"`
+	Granted     string           `json:"granted"`
+	Reserved    string           `json:"reserved"`
+	Consumed    string           `json:"consumed"`
+	Remaining   string           `json:"remaining"`
+	PricingRule string           `json:"pricing_rule"`
+	Policy      *AllowancePolicy `json:"policy,omitempty"`
 }
 
 // AllowanceGrantRequest asks for a grant to an account. Amount is a decimal
@@ -124,6 +125,9 @@ type ExecutorEarnings struct {
 	CurrentBalance string          `json:"current_balance"`
 	Transfers      []ChainTransfer `json:"transfers"`
 	Payouts        string          `json:"payouts"`
+	// HostingAwarded is included in TotalIncome; it is not an extra balance.
+	HostingAwarded string `json:"hosting_awarded,omitempty"`
+	Network        string `json:"network,omitempty"`
 }
 
 // ChainTransfer is one outbound chain transfer. Kind is payout or refund;

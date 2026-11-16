@@ -26,7 +26,7 @@ import (
 
 // TestPolicyKeysKeepTheirDocumentedDefaults covers a file that writes no
 // policy at all: the transports this build supports are on, SCION is off,
-// loopback stays reachable and every port is permitted.
+// local/private and documented exclusions are denied; every port is permitted.
 func TestPolicyKeysKeepTheirDocumentedDefaults(t *testing.T) {
 	cfg, _, err := load(t, baseSections+"[network]\npacket_counter='fallback'\n")
 	if err != nil {
@@ -47,6 +47,46 @@ func TestPolicyKeysKeepTheirDocumentedDefaults(t *testing.T) {
 	// its own host: local targets are something an operator asks for.
 	if err := operator.CheckAddr(netip.MustParseAddr("127.0.0.1")); err == nil {
 		t.Error("a configuration without a policy section reaches loopback services")
+	}
+}
+
+// Existing explicit policy remains an operator decision, including an empty
+// additional list. Clearing it never disables the built-in private-range guard.
+func TestPolicyDefaultExclusionsAndExplicitReplacement(t *testing.T) {
+	for _, tc := range []struct {
+		name, policy string
+		denyInitial  bool
+	}{
+		{"omitted", "", true},
+		{"explicit empty", "[network.policy]\ndenied_destinations=''\n", false},
+		{"explicit replacement", "[network.policy]\ndenied_destinations='8.8.8.8'\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, _, err := load(t, baseSections+tc.policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			operator, err := cfg.Network.Policy.Compile()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, address := range []string{"6.1.2.3", "7.1.2.3", "11.1.2.3", "::ffff:6.1.2.3"} {
+				if denied := operator.CheckAddr(netip.MustParseAddr(address)) != nil; denied != tc.denyInitial {
+					t.Errorf("%s denied = %t, want %t", address, denied, tc.denyInitial)
+				}
+			}
+			for _, address := range []string{"127.0.0.1", "10.0.0.1", "169.254.169.254", "::1", "fc00::1", "fe80::1"} {
+				if err := operator.CheckAddr(netip.MustParseAddr(address)); err == nil {
+					t.Errorf("private/local destination %s was allowed", address)
+				}
+			}
+			if err := operator.CheckAddr(netip.MustParseAddr("1.1.1.1")); err != nil {
+				t.Errorf("unlisted public destination rejected: %v", err)
+			}
+			if tc.name == "explicit replacement" && operator.CheckAddr(netip.MustParseAddr("8.8.8.8")) == nil {
+				t.Error("explicit operator denial was lost")
+			}
+		})
 	}
 }
 

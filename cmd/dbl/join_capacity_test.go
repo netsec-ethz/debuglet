@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	executorconfig "github.com/netsec-ethz/debuglet/internal/executor/config"
+	"github.com/netsec-ethz/debuglet/internal/executor/debuglet/netpolicy"
 )
 
 func TestJoinCapacityAndCounterSelection(t *testing.T) {
@@ -50,5 +51,27 @@ func TestJoinCapacityAndCounterSelection(t *testing.T) {
 		if code != exitUsage {
 			t.Fatalf("capacity %s accepted: %d", value, code)
 		}
+	}
+}
+
+func TestJoinDefaultPublicPolicy(t *testing.T) {
+	fixture := newJoinFixture(t, nil)
+	state := filepath.Join(t.TempDir(), "executor")
+	code, out, errout := runCLI(context.Background(), fixture.args(state)...)
+	assertCode(t, code, exitOK, out, errout)
+	data, err := os.ReadFile(filepath.Join(state, "service.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := executorconfig.DecodeConfig(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Resources.Capacity != 100_000_000 {
+		t.Fatalf("join default capacity = %d, want 100 Mbps", cfg.Resources.Capacity)
+	}
+	spec := cfg.Network.Policy.Spec()
+	if spec.LocalTargets || spec.DeniedDestinations != netpolicy.DefaultDeniedDestinations {
+		t.Fatalf("join public policy = %+v", spec)
 	}
 }

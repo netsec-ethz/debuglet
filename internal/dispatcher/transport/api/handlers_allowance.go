@@ -80,7 +80,7 @@ func (h *Handler) GetMyAllowance(c echo.Context) error {
 	if !h.dispatcher.Payment.AllowancesEnabled() {
 		return allowancesDisabled()
 	}
-	allowance, err := h.dispatcher.Payment.Allowance(c.Request().Context(), caller.UserUUID)
+	allowance, policy, err := h.dispatcher.Payment.AllowanceWithPolicy(c.Request().Context(), caller.UserUUID)
 	if errors.As(err, new(*payments.AllowanceRangeError)) {
 		return allowanceOutOfRange(err)
 	}
@@ -90,7 +90,11 @@ func (h *Handler) GetMyAllowance(c echo.Context) error {
 	if err != nil {
 		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to read the allowance", err)
 	}
-	return c.JSON(http.StatusOK, allowanceResponse(allowance))
+	response := allowanceResponse(allowance)
+	if policy != nil {
+		response.Policy = &wire.AllowancePolicy{Kind: policy.Kind, Researcher: policy.Researcher, EligibleNodes: policy.EligibleNodes, DailyCeiling: strconv.FormatInt(policy.Ceiling, 10), HostingBonus: strconv.FormatInt(policy.HostingBonus, 10), Credited: strconv.FormatInt(policy.Credited, 10), NextReset: policy.NextReset}
+	}
+	return c.JSON(http.StatusOK, response)
 }
 
 // POST /operator/accounts/:id/allowance
@@ -164,4 +168,54 @@ func (h *Handler) PostAccountAllowance(c echo.Context) error {
 func boundedText(value string, limit int) bool {
 	count := utf8.RuneCountInString(value)
 	return utf8.ValidString(value) && count >= 1 && count <= limit && !strings.ContainsFunc(value, unicode.IsControl)
+}
+
+// PutAccountAllowancePolicy replaces explicit eligibility without rewriting
+// ledger history or today's refill decision.
+func (h *Handler) PutAccountAllowancePolicy(c echo.Context) error {
+	operator, err := requireAccount(c)
+	if err != nil {
+		return err
+	}
+	if !operator.Operator {
+		return apiError(http.StatusForbidden, CodeForbidden, "this operation requires an operator account")
+	}
+	if !h.dispatcher.Payment.AllowancesEnabled() {
+		return allowancesDisabled()
+	}
+	account, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apiError(http.StatusNotFound, CodeNotFound, "account not found")
+	}
+	var input struct {
+		Researcher          *bool    `json:"researcher"`
+		ApprovedExecutorIDs []string `json:"approved_executor_ids"`
+	}
+	if err := decodeMeasurementRequest(c, &input); err != nil {
+		return err
+	}
+	if input.Researcher == nil {
+		return apiError(http.StatusBadRequest, CodeInvalidRequest, "researcher must be explicitly true or false")
+	}
+	req := wire.AllowanceEligibilityRequest{Researcher: *input.Researcher, ApprovedExecutorIDs: input.ApprovedExecutorIDs}
+	if req.ApprovedExecutorIDs == nil || len(req.ApprovedExecutorIDs) > 100 {
+		return apiError(http.StatusBadRequest, CodeInvalidRequest, "approved_executor_ids must be an array of at most 100 owned executor IDs")
+	}
+	ids := make([]uuid.UUID, len(req.ApprovedExecutorIDs))
+	for i, raw := range req.ApprovedExecutorIDs {
+		ids[i], err = uuid.Parse(raw)
+		if err != nil {
+			return apiError(http.StatusBadRequest, CodeInvalidRequest, "invalid executor ID")
+		}
+	}
+	err = h.dispatcher.Payment.SetAllowanceEligibility(c.Request().Context(), account, operator.UserUUID, req.Researcher, ids)
+	switch {
+	case errors.Is(err, payments.ErrUnknownAccount):
+		return apiError(http.StatusNotFound, CodeNotFound, "account not found")
+	case errors.Is(err, payments.ErrInvalidHostingApproval):
+		return apiError(http.StatusBadRequest, CodeInvalidRequest, err.Error())
+	case err != nil:
+		return apiErrorFrom(http.StatusInternalServerError, CodeInternal, "failed to update allowance eligibility", err)
+	}
+	return c.JSON(http.StatusOK, req)
 }

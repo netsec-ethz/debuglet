@@ -108,13 +108,17 @@ type CORSConfig struct {
 }
 
 type SuiConfig struct {
-	Network           string `toml:"network"`       //testnet or mainnet
-	GRPCEndpoint      string `toml:"grpc_endpoint"` // host:port, e.g. fullnode.testnet.sui.io:443
-	GraphQLURL        string `toml:"graphql_url"`   // Sui GraphQL RPC, used to catch up on PaymentReceipt events by type
-	Address           string `toml:"address"`
-	PaymentRegistryId string `toml:"payment_registry_id"`
-	PaymentKitPackage string `toml:"payment_kit_package"`
-	KeystorePath      string `toml:"keystore_path"`
+	// Zero disables hosting awards. Amounts are integer MIST, Testnet only.
+	HostingRewardMIST         int64  `toml:"hosting_reward_mist"`
+	HostingDailyCapMIST       int64  `toml:"hosting_daily_cap_mist"`
+	HostingMaxNodesPerAccount int    `toml:"hosting_max_nodes_per_account"`
+	Network                   string `toml:"network"`       //testnet or mainnet
+	GRPCEndpoint              string `toml:"grpc_endpoint"` // host:port, e.g. fullnode.testnet.sui.io:443
+	GraphQLURL                string `toml:"graphql_url"`   // Sui GraphQL RPC, used to catch up on PaymentReceipt events by type
+	Address                   string `toml:"address"`
+	PaymentRegistryId         string `toml:"payment_registry_id"`
+	PaymentKitPackage         string `toml:"payment_kit_package"`
+	KeystorePath              string `toml:"keystore_path"`
 	// Disabled switches blockchain payments off explicitly. When true, the
 	// dispatcher constructs neither the Sui client/listener nor the payout
 	// ticker and rejects USDC/SUI payment actions; TEST payments keep working.

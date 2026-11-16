@@ -244,16 +244,34 @@ the retained run. That imported map is kept only for the current page visit.
 
 ## Connect an MCP client
 
-Configure a stdio MCP server in your client's settings:
+The MCP tool is source-built, not part of the runtime archive. On the supported
+**Ubuntu 24.04 / Linux amd64** host, install Git and **Go 1.26.11**. Pin the tool
+and SDK to the same source revision. This example uses the published
+`v1.0.0-rc.1` commit (do not replace it with a moving `main` checkout):
+
+```sh
+git clone https://github.com/netsec-ethz/debuglet.git "$HOME/debuglet-sdk"
+git -C "$HOME/debuglet-sdk" checkout --detach 509f5c89dbffd19c839a94196469f2e0308af2af
+mkdir -p "$HOME/.local/bin" "$HOME/debuglet-workflows"
+(cd "$HOME/debuglet-sdk" && GOTOOLCHAIN=local go build -mod=readonly -o "$HOME/.local/bin/dbl-studio" ./cmd/dbl-studio)
+```
+
+First compilation downloads the pinned Go dependencies. Keep this SDK checkout:
+the MCP compiler needs it for subsequent builds. No dispatcher credential is
+needed for authoring. The MCP client must launch the command on this Linux host;
+native macOS, Windows and arm64 builds are not validated here.
+
+Configure a stdio MCP server in your client's settings, replacing `/home/alice`
+with your absolute home path (client JSON generally does not expand `$HOME`):
 
 ```json
 {
   "mcpServers": {
     "debuglet": {
-      "command": "/path/to/dbl-studio",
+      "command": "/home/alice/.local/bin/dbl-studio",
       "args": [
-        "mcp", "--sdk", "/path/to/debuglet",
-        "--workspace", "/path/to/my-workflows"
+        "mcp", "--sdk", "/home/alice/debuglet-sdk",
+        "--workspace", "/home/alice/debuglet-workflows"
       ]
     }
   }
@@ -284,3 +302,7 @@ with the enclosing guest's permissions and limits, not in an additional per-bloc
 sandbox. Runtime destination permissions and operator network policy still apply;
 compiler destination hints do not grant network access. See
 [Workflow format](workflows.md) for supported blocks and control-flow rules.
+
+Use the [CLI](../cli.md) to submit built WASM deliberately. For noninteractive
+measurement checks, see the [GitHub Actions example](../operations/github-actions.md);
+MCP tools do not implicitly run experiments.

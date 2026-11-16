@@ -54,7 +54,7 @@ func (h *Handler) priceIntent(request PaymentIntentRequest) ([]int64, int64, err
 	if err := h.dispatcher.Payment.CheckPaymentMethod(request.PaymentMethod); err != nil {
 		return nil, 0, paymentMethodError(request.PaymentMethod, err)
 	}
-	prices, total, failures := h.priceBatch(request.Debuglets)
+	prices, total, failures := h.priceBatchCurrency(request.Debuglets, request.PaymentMethod)
 	if len(failures) > 0 {
 		return nil, 0, failures[0].err
 	}
@@ -76,6 +76,23 @@ type pricingFailure struct {
 // the first one is what an intent answers and all of them are what a quote
 // reports. prices of a refused order and total are meaningful only when
 // nothing was refused.
+func (h *Handler) priceBatchCurrency(debuglets []DebugletRequest, currency string) ([]int64, int64, []pricingFailure) {
+	prices, total, failures := h.priceBatch(debuglets)
+	// A native SUI quote uses an explicitly announced integer MIST rate. An
+	// executor's USDC/TEST rate cannot silently become a native SUI price.
+	if currency == "SUI" || currency == "USDC" {
+		for i, req := range debuglets {
+			if e, ok := h.dispatcher.GetExecutor(req.ExecutorID); ok && e.Currency != currency {
+				failures = append(failures, pricingFailure{index: i, field: "payment_method", err: apiError(http.StatusBadRequest, CodeInvalidRequest, "executor has not advertised pricing in the requested currency")})
+			}
+		}
+	}
+	if len(failures) > 0 {
+		total = 0
+	}
+	return prices, total, failures
+}
+
 func (h *Handler) priceBatch(debuglets []DebugletRequest) ([]int64, int64, []pricingFailure) {
 	if len(debuglets) == 0 {
 		return nil, 0, []pricingFailure{{index: -1, field: "debuglets",
@@ -240,14 +257,14 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 	if err := h.dispatcher.Payment.CheckPaymentMethod(req.PaymentMethod); err != nil {
 		return paymentMethodError(req.PaymentMethod, err)
 	}
-	// The HTTP allowlist: SUI is not admitted over the API in enabled mode.
-	if (req.PaymentMethod != "TEST") && (req.PaymentMethod != "USDC") {
+	// Native SUI is admitted only on Testnet by the payment preflight.
+	if (req.PaymentMethod != "TEST") && (req.PaymentMethod != "USDC") && req.PaymentMethod != "SUI" {
 		return unknownPaymentMethod(req.PaymentMethod)
 	}
 	// A chain refund must remain payable after the order is stored. Refuse an
 	// unusable address before pricing or creating any part of the intent, while
 	// preserving the disabled-payment response above and TEST's local behavior.
-	if req.PaymentMethod == "USDC" && req.CommunityProjectID == "" {
+	if (req.PaymentMethod == "USDC" || req.PaymentMethod == "SUI") && req.CommunityProjectID == "" && !req.Prepaid {
 		if err := sui.ValidAddress(req.RefundAddress); err != nil {
 			const message = "refund_address must be a Sui address: 0x followed by 1 to 64 hexadecimal digits"
 			return echo.NewHTTPError(http.StatusBadRequest, ErrorResponse{
@@ -300,6 +317,11 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 		if err != nil {
 			return communityFundingError(err)
 		}
+	} else if req.Prepaid {
+		intent, err = h.dispatcher.Payment.CreatePersonalIntentIn(dbTx, established.UserUUID, transactionId, price, req.PaymentMethod, hash, ctx)
+		if err != nil {
+			return communityFundingError(err)
+		}
 	} else if owner, ok := established.owner(); ok && req.PaymentMethod == "TEST" && h.dispatcher.Payment.AllowancesEnabled() {
 		intent, err = h.dispatcher.Payment.CreateAllowanceIntentIn(dbTx, owner, transactionId, price, hash, ctx)
 		var exceeded *payments.AllowanceExceededError
@@ -345,6 +367,9 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 		}
 	}
 	responseMethod := req.PaymentMethod
+	if req.Prepaid {
+		responseMethod = "CREDITS"
+	}
 	if req.CommunityProjectID != "" {
 		responseMethod = "COMMUNITY"
 		if err := shareFundedMeasurement(ctx, dbTx, established, req, transactionId); err != nil {
@@ -355,7 +380,7 @@ func (h *Handler) PutPaymentIntent(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if responseMethod == "COMMUNITY" {
+	if responseMethod == "COMMUNITY" || responseMethod == "CREDITS" {
 		response.Currency = req.PaymentMethod
 	}
 	// The stored prices, stated as the quote of the same batch would state
@@ -386,7 +411,7 @@ func paymentIntentResponse(method string, intent payments.PaymentIntent) (Intent
 			CoinType: suiIntent.CoinType, ExpiresAtS: suiIntent.ExpiresAt.Unix(),
 			RegistryAddress: suiIntent.RegistryAddress, ReceiverAddress: suiIntent.ReceiverAddress,
 		}}, nil
-	case "TEST", "COMMUNITY":
+	case "TEST", "COMMUNITY", "CREDITS":
 		dummy, ok := intent.Intent.(payments.DummyIntent)
 		if !ok {
 			return IntentResponse{}, apiError(http.StatusInternalServerError, CodeInternal, "unexpected payment intent type")

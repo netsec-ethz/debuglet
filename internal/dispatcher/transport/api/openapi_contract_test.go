@@ -409,6 +409,7 @@ func TestContractDescribesHandlerResponsesAndSDKRequests(t *testing.T) {
 				map[string]string{"Authorization": "Bearer " + session.Token})
 			oaCommunityExchanges(t, f, ctx, sdk, recorder, deployment.url, session.Token, owned)
 			oaStudioUnavailableExchanges(t, ctx, recorder, deployment.url, session.Token)
+			oaAccountServiceExchanges(t, recorder, deployment.url, session.Token)
 			if err := authenticated.Logout(ctx); err != nil {
 				t.Fatalf("Logout: %v", err)
 			}
@@ -522,6 +523,36 @@ func oaRegisterExecutor(t *testing.T, f *ccFixture) {
 }
 
 // ------------------------------------------------------------------- fixtures
+
+// Account services use their real handlers in this fixture. Personal keys and
+// chain payments are disabled, and an ordinary bearer session must not gain
+// browser credential-management or operator authority.
+func oaAccountServiceExchanges(t *testing.T, recorder *oaRecorder, base, token string) {
+	t.Helper()
+	raw := &http.Client{Transport: recorder, Timeout: ccRequestBound}
+	t.Cleanup(raw.CloseIdleConnections)
+	for _, operation := range []struct {
+		method, path string
+		body         []byte
+		status       int
+	}{
+		{http.MethodGet, "/me/assistant-key", nil, http.StatusOK},
+		{http.MethodPut, "/me/assistant-key", []byte(`{"api_key":"fixture-personal-key"}`), http.StatusForbidden},
+		{http.MethodDelete, "/me/assistant-key", nil, http.StatusForbidden},
+		{http.MethodPost, "/me/assistant-key/test", nil, http.StatusForbidden},
+		{http.MethodGet, "/me/wallet?currency=SUI", nil, http.StatusServiceUnavailable},
+		{http.MethodPost, "/me/wallet/top-ups", []byte(`{"amount":"1000","refund_address":"0x1","idempotency_key":"contract"}`), http.StatusServiceUnavailable},
+		{http.MethodPost, "/operator/hosting-subsidy/top-ups", []byte(`{"amount":"1000","refund_address":"0x1","idempotency_key":"contract"}`), http.StatusForbidden},
+		{http.MethodPut, "/operator/accounts/00000000-0000-0000-0000-00000000dead/allowance-policy", []byte(`{"researcher":false,"approved_executor_ids":[]}`), http.StatusForbidden},
+	} {
+		oaRawWith(t, raw, operation.method, base+operation.path, operation.body,
+			map[string]string{"Authorization": "Bearer " + token})
+		exchanges := recorder.recorded()
+		if got := exchanges[len(exchanges)-1].status; got != operation.status {
+			t.Fatalf("%s %s: status %d, want %d", operation.method, operation.path, got, operation.status)
+		}
+	}
+}
 
 // oaServe runs one request through registered routes without a network.
 func oaServe(e *echo.Echo, method, target string, body []byte, headers map[string]string) *httptest.ResponseRecorder {

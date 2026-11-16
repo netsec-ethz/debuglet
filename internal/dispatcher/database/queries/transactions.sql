@@ -104,6 +104,7 @@ WHERE debuglet_order.transaction_id = sqlc.arg(transaction_id) AND debuglet_orde
       AND transactions.status = sqlc.arg(paid_status)
   )
   AND NOT EXISTS(SELECT 1 FROM community_topups d WHERE d.transaction_id=debuglet_order.transaction_id)
+  AND NOT EXISTS(SELECT 1 FROM prepaid_topups d WHERE d.transaction_id=debuglet_order.transaction_id)
   AND NOT EXISTS(
     SELECT 1 FROM community_funding f WHERE f.transaction_id=debuglet_order.transaction_id
       AND NOT EXISTS(SELECT 1 FROM community_members m

@@ -556,6 +556,10 @@ func startHTTPServer(ctx context.Context, lis net.Listener, manager *dispatcher.
 	if err != nil {
 		return err
 	}
+	personalAssistant, err := configuredPersonalAssistant(cfg.Studio.Assistant, db)
+	if err != nil {
+		return err
+	}
 	// The local development profile of the HTTP API needs both the operator's
 	// explicit opt-in and an environment this command recognises as local:
 	// blockchain payments disabled, the TLS listener disabled and both listeners
@@ -570,6 +574,7 @@ func startHTTPServer(ctx context.Context, lis net.Listener, manager *dispatcher.
 	handler := api.NewHandler(manager, db, logger,
 		api.Studio(cfg.Studio),
 		api.Assistant(assistant),
+		personalAssistant,
 		api.ExecutorOnboarding(cfg.ExecutorOnboarding, issuer),
 		api.AttributionTrustedProxies(trustedProxies),
 		api.MetricsStateDirectory(filepath.Dir(cfg.Database.Path)),

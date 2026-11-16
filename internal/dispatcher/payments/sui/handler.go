@@ -220,9 +220,10 @@ const (
 // submitted. Digest identifies the transaction on chain, so a caller can
 // record it before ExecuteTransfer and look the transfer up afterwards.
 type PreparedTransfer struct {
-	Digest    string
-	txBytes   []byte
-	signature string
+	Digest        string
+	GasBudgetMIST uint64
+	txBytes       []byte
+	signature     string
 }
 
 // Bytes returns the signed BCS transaction data, for persisting before
@@ -396,12 +397,19 @@ func buildTransfer(s *signer.Signer, coins []types.Coin, total uint64, amount ui
 		}
 		payment = append(payment, *ref)
 	}
-	sent := inputs[0]
-	if len(inputs) > 1 {
-		tx.MergeCoins(sent, inputs[1:])
-	}
-	if total > amount {
-		sent = tx.SplitCoins(sent, []transaction.Argument{tx.Pure(amount)})
+	// Native SUI splits the gas coin after gas smashing, so one wallet coin
+	// can fund both the transfer and gas without appearing twice as an input.
+	var sent transaction.Argument
+	if len(inputs) == 0 {
+		sent = tx.SplitCoins(tx.Gas(), []transaction.Argument{tx.Pure(amount)})
+	} else {
+		sent = inputs[0]
+		if len(inputs) > 1 {
+			tx.MergeCoins(sent, inputs[1:])
+		}
+		if total > amount {
+			sent = tx.SplitCoins(sent, []transaction.Argument{tx.Pure(amount)})
+		}
 	}
 	tx.TransferObjects([]transaction.Argument{sent}, tx.Pure(receiver))
 	tx.SetSigner(s)
@@ -433,10 +441,6 @@ func (h *SuiPaymentHandler) prepareTransfer(ctx context.Context, amount uint64, 
 		return nil, errors.New("no keypair loaded")
 	}
 	owner := h.signer.Address
-	coins, total, err := selectCoins(ctx, h.client.ListCoins, owner, coinType, amount, maxCoinPages*coinPageSize, nil)
-	if err != nil {
-		return nil, err
-	}
 
 	gp, err := h.client.GetReferenceGasPrice(ctx)
 	if err != nil {
@@ -451,20 +455,27 @@ func (h *SuiPaymentHandler) prepareTransfer(ctx context.Context, amount uint64, 
 	}
 	budget := price * transferGasUnits
 
-	// A coin is either transferred or pays gas, never both.
-	var exclude map[string]bool
+	var tx *transaction.Transaction
 	if coinType == types.SUI_TYPE_ARG {
-		exclude = make(map[string]bool, len(coins))
-		for _, coin := range coins {
-			exclude[coin.ObjectId] = true
+		if amount > math.MaxUint64-budget {
+			return nil, errors.New("native transfer plus gas exceeds supported range")
 		}
+		gas, _, gasErr := selectCoins(ctx, h.client.ListCoins, owner, coinType, amount+budget, maxGasCoins, nil)
+		if gasErr != nil {
+			return nil, fmt.Errorf("native transfer and gas: %w", gasErr)
+		}
+		tx, err = buildTransfer(h.signer, nil, 0, amount, receiver, gas, price, budget)
+	} else {
+		coins, total, coinErr := selectCoins(ctx, h.client.ListCoins, owner, coinType, amount, maxCoinPages*coinPageSize, nil)
+		if coinErr != nil {
+			return nil, coinErr
+		}
+		gas, _, gasErr := selectCoins(ctx, h.client.ListCoins, owner, types.SUI_TYPE_ARG, budget, maxGasCoins, nil)
+		if gasErr != nil {
+			return nil, fmt.Errorf("gas: %w", gasErr)
+		}
+		tx, err = buildTransfer(h.signer, coins, total, amount, receiver, gas, price, budget)
 	}
-	gas, _, err := selectCoins(ctx, h.client.ListCoins, owner, types.SUI_TYPE_ARG, budget, maxGasCoins, exclude)
-	if err != nil {
-		return nil, fmt.Errorf("gas: %w", err)
-	}
-
-	tx, err := buildTransfer(h.signer, coins, total, amount, receiver, gas, price, budget)
 	if err != nil {
 		return nil, err
 	}
@@ -481,7 +492,7 @@ func (h *SuiPaymentHandler) prepareTransfer(ctx context.Context, amount uint64, 
 	if err != nil {
 		return nil, fmt.Errorf("transaction digest: %w", err)
 	}
-	return &PreparedTransfer{Digest: digest, txBytes: txBytes, signature: sig.Signature}, nil
+	return &PreparedTransfer{Digest: digest, GasBudgetMIST: budget, txBytes: txBytes, signature: sig.Signature}, nil
 }
 
 // ExecuteTransfer submits a prepared transfer. An error wrapping
@@ -607,7 +618,7 @@ func normalizeCoinType(coinType string) string {
 
 func (h *SuiPaymentHandler) RefundDebuglet(debugletOrder *database.DebugletOrder, refundAddress string, ctx context.Context) error {
 
-	_, err := h.TransferCoins(uint64(debugletOrder.Price), GetCoinType("USDC", h.cfg.Sui.Network), debugletOrder.RefundAddress, ctx)
+	_, err := h.TransferCoins(uint64(debugletOrder.Price), GetCoinType(debugletOrder.Currency, h.cfg.Sui.Network), debugletOrder.RefundAddress, ctx)
 	if err != nil {
 		return err
 	}
