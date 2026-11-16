@@ -37,6 +37,13 @@ type AllocationReclamation struct {
 	ReclaimedAt models.UTCTime
 }
 
+type AllowanceEligibility struct {
+	UserID     int64
+	Researcher int64
+	ApprovedBy int64
+	UpdatedAt  int64
+}
+
 type AllowanceGrant struct {
 	ID             int64
 	UserID         int64
@@ -46,6 +53,17 @@ type AllowanceGrant struct {
 	Reason         string
 	IdempotencyKey string
 	GrantedAt      models.UTCTime
+}
+
+type AllowancePeriod struct {
+	UserID        int64
+	Period        string
+	Researcher    int64
+	EligibleNodes int64
+	Ceiling       int64
+	HostingBonus  int64
+	Granted       int64
+	DecidedAt     int64
 }
 
 type AssistantKey struct {
@@ -355,6 +373,21 @@ type ExperimentReadiness struct {
 	ReadyAtNs  int64
 }
 
+type HostingApproval struct {
+	ExecutorID string
+	UserID     int64
+	ApprovedBy int64
+	UpdatedAt  int64
+}
+
+type HostingAward struct {
+	ExecutorID string
+	Day        string
+	UserID     int64
+	Amount     int64
+	Network    string
+}
+
 type MeasurementExecution struct {
 	DebugletID         int64
 	StartedObservedNs  sql.NullInt64
@@ -389,6 +422,12 @@ type MeasurementSummary struct {
 	Label    interface{}
 	Children int64
 	State    string
+}
+
+type NativeGasReservation struct {
+	TransferID int64
+	Amount     int64
+	Network    string
 }
 
 type OauthIdentity struct {
@@ -476,6 +515,13 @@ type PendingIdentityLink struct {
 	ExpiresAt       models.UTCTime
 }
 
+type PersonalFunding struct {
+	TransactionID string
+	UserID        int64
+	Currency      string
+	Network       string
+}
+
 type PersonalTemplate struct {
 	ID          string
 	UserID      int64
@@ -486,6 +532,17 @@ type PersonalTemplate struct {
 	Document    string
 	Revision    int64
 	UpdatedAt   int64
+}
+
+type PrepaidTopup struct {
+	TransactionID  string
+	UserID         int64
+	Purpose        string
+	IdempotencyKey string
+	RefundAddress  string
+	Network        string
+	CoinType       string
+	IntentJson     string
 }
 
 type ProbeAddress struct {
