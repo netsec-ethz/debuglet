@@ -1,0 +1,22 @@
+{
+  "project": "CHOOSE_LAB_PROJECT",
+  "fleet": "research-01",
+  "operator": "CHOOSE_RESPONSIBLE_OPERATOR",
+  "approved_monthly_budget_usd": null,
+  "image": "CHOOSE_PINNED_UBUNTU_2404_AMD64_IMAGE",
+  "machine_type": "e2-small",
+  "disk_gb": 20,
+  "ssh_user": "CHOOSE_OS_LOGIN_USERNAME",
+  "nodes": [
+    {
+      "name": "netherlands",
+      "zone": "europe-west4-a",
+      "subnet": "projects/CHOOSE_LAB_PROJECT/regions/europe-west4/subnetworks/CHOOSE_SUBNET"
+    },
+    {
+      "name": "iowa",
+      "zone": "us-central1-a",
+      "subnet": "projects/CHOOSE_LAB_PROJECT/regions/us-central1/subnetworks/CHOOSE_SUBNET"
+    }
+  ]
+}
