@@ -53,6 +53,13 @@ rewards. Approval does not follow an executor transferred to another account.
 Set legacy `daily_per_node` and `public_trial` to zero when enabling managed
 credits. Manual grants remain available and are not automatically reduced.
 
+Before enabling credits on a previously unlimited dispatcher, inspect the
+existing TEST ledger. Old experiments may have consumed units without any
+allowance grants. Review outstanding reservations, then use explicit,
+idempotent operator grants to establish the intended opening balances. Keep
+the prior orders and grants intact; do not treat previously free usage as new
+credit debt. Complete this transition before enabling automatic issuance.
+
 ## Legacy allowance policy
 
 With `balance_cap = 0`, the existing optional researcher refill and public-trial
