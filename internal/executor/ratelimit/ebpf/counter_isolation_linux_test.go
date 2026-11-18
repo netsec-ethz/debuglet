@@ -29,6 +29,11 @@ func TestBPFCounterAssociationAndMissingRate(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer listener.Close()
+			// Queue the whole burst even when the receiver is not scheduled.
+			// Linux charges skb overhead as well as payload to SO_RCVBUF.
+			if err := listener.SetReadBuffer(4 * countedDatagrams * countedPayloadSize); err != nil {
+				t.Fatal(err)
+			}
 			client, err := net.DialUDP("udp4", nil, listener.LocalAddr().(*net.UDPAddr))
 			if err != nil {
 				t.Fatal(err)
@@ -40,18 +45,24 @@ func TestBPFCounterAssociationAndMissingRate(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			received := receiveAll(listener)
 			for range countedDatagrams {
 				if _, err := client.Write(make([]byte, countedPayloadSize)); err != nil {
 					t.Fatal(err)
 				}
 			}
+			// Drain after sending to exercise the fixture's worst-case backlog.
+			received := receiveAll(listener)
 			got, want := <-received, countedDatagrams
+			var wantDrops [2]uint64
 			if associated {
 				want = 0
+				wantDrops[1] = countedDatagrams // Missing rate rejects at egress.
 			}
 			if got != want {
 				t.Fatalf("observed %d/%d, expected %d", got, countedDatagrams, want)
+			}
+			if drops, _, err := counter.DropTotals(); err != nil || drops != wantDrops {
+				t.Fatalf("counter drop verdicts %v, expected %v: %v", drops, wantDrops, err)
 			}
 			var state countTbState
 			err = counter.objs.PacketSizeMap.Lookup(&countDebugletKey{Uuid: [16]byte(id), Ipv6: netip.MustParseAddr("127.0.0.1").As16()}, &state)
