@@ -93,6 +93,13 @@ func (h *Handler) GetMyAllowance(c echo.Context) error {
 	response := allowanceResponse(allowance)
 	if policy != nil {
 		response.Policy = &wire.AllowancePolicy{Kind: policy.Kind, Researcher: policy.Researcher, EligibleNodes: policy.EligibleNodes, DailyCeiling: strconv.FormatInt(policy.Ceiling, 10), HostingBonus: strconv.FormatInt(policy.HostingBonus, 10), Credited: strconv.FormatInt(policy.Credited, 10), NextReset: policy.NextReset}
+		if policy.Kind == "credits" {
+			response.Policy.DailyGrant = strconv.FormatInt(policy.DailyGrant, 10)
+			response.Policy.BalanceCap = strconv.FormatInt(policy.BalanceCap, 10)
+			response.Policy.HostingSeconds = strconv.FormatInt(policy.HostingSeconds, 10)
+			response.Policy.HostingRate = strconv.FormatInt(policy.HostingRate, 10)
+			response.Policy.HostingEarned = strconv.FormatInt(policy.HostingEarned, 10)
+		}
 	}
 	return c.JSON(http.StatusOK, response)
 }

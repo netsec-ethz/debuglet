@@ -1,7 +1,7 @@
 openapi: "3.0.3"
 info:
   title: "Debuglet dispatcher HTTP API"
-  version: "1.35"
+  version: "1.36"
   description: "Wire contract of the dispatcher's public HTTP API. Bandwidth values are bits per second, timeouts are milliseconds, TESLA delays are seconds, TESLA anchor timestamps are Unix nanoseconds and every other timestamp is Unix seconds unless a field says otherwise. A client states the contract version it requires with the Debuglet-API-Version request header, declared on every operation below; every response carries the version this dispatcher implements in the same header. Requests are authenticated with a server-issued session: a native client presents it as an Authorization bearer token, a browser client in the session_token cookie plus the X-Debuglet-CSRF header on state-changing requests. Each operation states its own 401 and 403. Run reads require ownership, operator authority or explicit community sharing to a current member; payment orders and run mutations remain owner-scoped. A hidden resource answers 404. A dispatcher explicitly configured for the local development profile additionally serves the unauthenticated routes below as its own local operator. See docs/api.md for the access matrix and the compatibility and deprecation policy."
 servers:
   - url: "/"
@@ -6426,7 +6426,7 @@ paths:
     get:
       operationId: "getMyAllowance"
       summary: "Report the account's usage allowance."
-      description: "Added in API 1.15. Requires an authenticated account, including when local development is enabled. Reports the caller's usage allowance in TEST units; answers 404 while allowances are not enabled. API 1.35 adds the optional daily or one-time trial policy, including credited hosting eligibility and next UTC reset. Reads apply an enabled policy idempotently."
+      description: "Added in API 1.15. Requires an authenticated account, including when local development is enabled. Reports the caller's usage allowance in TEST units; answers 404 while allowances are not enabled. API 1.35 adds the optional daily or one-time trial policy, including credited hosting eligibility and next UTC reset. API 1.36 adds managed credits: additive daily grants for every account, capped rollover including reservations, and observed hosting-time rewards. Reads apply an enabled policy idempotently."
       parameters:
         - name: "Debuglet-API-Version"
           in: "header"
@@ -14563,7 +14563,7 @@ components:
       properties:
         kind:
           type: string
-          enum: [daily, trial]
+          enum: [daily, trial, credits]
         researcher:
           type: boolean
         eligible_nodes:
@@ -14586,7 +14586,27 @@ components:
         next_reset:
           type: string
           format: date-time
-          description: Next UTC reset for a daily policy; absent for a one-time trial.
+          description: Next UTC daily allowance time. Credits roll over under the credits policy; absent for a one-time trial.
+        daily_grant:
+          type: string
+          pattern: "^[0-9]+$"
+          description: Configured daily credit grant in TEST pricing units; present for the credits policy.
+        balance_cap:
+          type: string
+          pattern: "^[0-9]+$"
+          description: Automatic grants stop at this unconsumed balance, including reserved credits.
+        hosting_seconds:
+          type: string
+          pattern: "^[0-9]+$"
+          description: Total observed eligible executor-seconds for this account. Dispatcher outages and unobserved session gaps do not earn time.
+        hosting_rate:
+          type: string
+          pattern: "^[0-9]+$"
+          description: Credit grant per eligible executor-hour, in TEST pricing units.
+        hosting_earned:
+          type: string
+          pattern: "^[0-9]+$"
+          description: Hosting credits actually granted after applying the balance cap.
     AllowanceEligibilityRequest:
       type: object
       additionalProperties: false
