@@ -74,14 +74,44 @@ func (p *PaymentHandler) SetAllowanceEligibility(ctx context.Context, account, o
 	if n != 1 {
 		return ErrUnknownAccount
 	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM hosting_approvals WHERE user_id=(SELECT id FROM users WHERE uuid=?)`, account); err != nil {
+	// Keep unchanged approvals: a settings update must not interrupt already
+	// observed hosting. Removing approval closes its interval immediately.
+	rows, err := tx.QueryContext(ctx, `SELECT executor_id FROM hosting_approvals WHERE user_id=(SELECT id FROM users WHERE uuid=?)`, account)
+	if err != nil {
 		return err
+	}
+	var removed []string
+	for rows.Next() {
+		var id uuid.UUID
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		if !seen[id] {
+			removed = append(removed, id.String())
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, id := range removed {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM hosting_approvals WHERE executor_id=? AND user_id=(SELECT id FROM users WHERE uuid=?)`, id, account); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE allowance_hosting SET incarnation='',session_id='',fingerprint='',observed_at=0 WHERE executor_id=? AND user_id=(SELECT id FROM users WHERE uuid=?)`, id, account); err != nil {
+			return err
+		}
 	}
 	for _, id := range ids {
 		result, err = tx.ExecContext(ctx, `INSERT INTO hosting_approvals(executor_id,user_id,approved_by,updated_at)
  SELECT e.executor_id,e.user_id,o.id,? FROM owned_executors e JOIN users u ON u.id=e.user_id
  JOIN users o ON o.uuid=? WHERE u.uuid=? AND e.executor_id=?
- ON CONFLICT(executor_id) DO UPDATE SET user_id=excluded.user_id,approved_by=excluded.approved_by,updated_at=excluded.updated_at`, time.Now().Unix(), operator, account, id.String())
+ ON CONFLICT(executor_id) DO UPDATE SET
+ approved_by=CASE WHEN hosting_approvals.user_id=excluded.user_id THEN hosting_approvals.approved_by ELSE excluded.approved_by END,
+ updated_at=CASE WHEN hosting_approvals.user_id=excluded.user_id THEN hosting_approvals.updated_at ELSE excluded.updated_at END,
+ user_id=excluded.user_id`, time.Now().Unix(), operator, account, id.String())
 		if err != nil {
 			return err
 		}

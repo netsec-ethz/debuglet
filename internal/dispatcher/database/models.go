@@ -55,6 +55,18 @@ type AllowanceGrant struct {
 	GrantedAt      models.UTCTime
 }
 
+type AllowanceHosting struct {
+	ExecutorID      string
+	UserID          int64
+	Incarnation     string
+	SessionID       string
+	Fingerprint     string
+	ObservedAt      int64
+	ObservedSeconds int64
+	Credited        int64
+	Remainder       int64
+}
+
 type AllowancePeriod struct {
 	UserID        int64
 	Period        string

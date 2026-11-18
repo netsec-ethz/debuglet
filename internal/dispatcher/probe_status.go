@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/netsec-ethz/debuglet/internal/dispatcher/database"
+	"github.com/netsec-ethz/debuglet/internal/dispatcher/payments"
 	"github.com/netsec-ethz/debuglet/internal/ipmetadata"
 	"github.com/netsec-ethz/debuglet/pkg/wire"
 	pb "github.com/netsec-ethz/debuglet/protocol"
@@ -138,9 +139,11 @@ func (d *Dispatcher) flushProbeStatusDue() {
 	d.probeFlushedAt = now
 	d.mu.RLock()
 	live := map[string]RegisteredExecutor{}
+	var hosting []payments.HostingObservation
 	for id, entry := range d.executors {
 		if !d.closed && entry.owner.Available() {
 			live[id] = snapshotLocked(entry, now)
+			hosting = append(hosting, payments.HostingObservation{ExecutorID: id, Binding: entry.owner.Binding(), Fingerprint: entry.owner.CredentialFingerprint(), Seen: entry.LastSeen})
 		}
 	}
 	d.mu.RUnlock()
@@ -185,6 +188,14 @@ func (d *Dispatcher) flushProbeStatusDue() {
 	})
 	if err != nil {
 		d.logger.Warn("Failed to record executor status", zap.Error(err))
+	}
+	// Credit accounting has its own transaction and cannot undo health history.
+	if d.Payment != nil {
+		creditCtx, creditCancel := context.WithTimeout(context.Background(), probeFlushTimeout)
+		defer creditCancel()
+		if err := d.Payment.ApplyHostingObservations(creditCtx, now, hosting); err != nil {
+			d.logger.Warn("Failed to account for executor hosting credits", zap.Error(err))
+		}
 	}
 }
 
