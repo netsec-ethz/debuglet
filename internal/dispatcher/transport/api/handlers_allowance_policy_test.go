@@ -65,3 +65,22 @@ func TestAllowancePolicyPublicTrialReadIsIdempotent(t *testing.T) {
 		}
 	}
 }
+
+func TestManagedCreditsNormalAccountRead(t *testing.T) {
+	issuer := uuid.New()
+	f := alNewFixtureWithAllowance(t, config.AllowanceConfig{Enabled: true, PolicyIssuer: issuer.String(), DailyBase: 100, BalanceCap: 500, HostingHourlyRate: 20})
+	if _, err := f.queries.CreateUserWithRole(t.Context(), database.CreateUserWithRoleParams{Uuid: issuer, Name: "issuer", Role: "operator"}); err != nil {
+		t.Fatal(err)
+	}
+	_, token, _ := authAccount(t, f, "credit user")
+	for range 2 {
+		status, _, a := alAllowance(t, f, token)
+		if status != http.StatusOK || a.Granted != "100" || a.Remaining != "100" || a.Policy == nil {
+			t.Fatalf("managed credit response: %d %+v", status, a)
+		}
+		p := a.Policy
+		if p.Kind != "credits" || p.DailyGrant != "100" || p.Credited != "100" || p.BalanceCap != "500" || p.HostingRate != "20" || p.HostingSeconds != "0" || p.HostingEarned != "0" || p.NextReset == nil {
+			t.Fatalf("managed policy: %+v", p)
+		}
+	}
+}

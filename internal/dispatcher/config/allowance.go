@@ -26,6 +26,10 @@ type AllowanceConfig struct {
 	DailyPerNode int64  `toml:"daily_per_node"`
 	DailyNodeCap int    `toml:"daily_node_cap"`
 	PublicTrial  int64  `toml:"public_trial"`
+	// A positive BalanceCap selects managed credits for every account. DailyBase
+	// is then an additive daily grant, and hosting is paid for observed time.
+	BalanceCap        int64 `toml:"balance_cap"`
+	HostingHourlyRate int64 `toml:"hosting_hourly_rate"`
 }
 
 // DefaultAllowanceGrant is the documented default of allowance.default_grant:
@@ -50,13 +54,19 @@ func (cfg AllowanceConfig) Validate() error {
 		return fmt.Errorf("allowance.default_grant must be 0 (the default of %d TEST units) or positive, got %d",
 			DefaultAllowanceGrant, cfg.DefaultGrant)
 	}
-	if cfg.DailyBase < 0 || cfg.DailyPerNode < 0 || cfg.PublicTrial < 0 || cfg.DailyNodeCap < 0 || cfg.DailyNodeCap > 100 {
+	if cfg.DailyBase < 0 || cfg.DailyPerNode < 0 || cfg.PublicTrial < 0 || cfg.BalanceCap < 0 || cfg.HostingHourlyRate < 0 || cfg.DailyNodeCap < 0 || cfg.DailyNodeCap > 100 {
 		return fmt.Errorf("allowance policy amounts must be non-negative and daily_node_cap must be between 0 and 100")
+	}
+	if cfg.BalanceCap > 0 && (cfg.DailyPerNode != 0 || cfg.PublicTrial != 0) {
+		return fmt.Errorf("managed credits replace daily_per_node and public_trial; set both to zero")
+	}
+	if cfg.HostingHourlyRate > 0 && cfg.BalanceCap == 0 {
+		return fmt.Errorf("hosting_hourly_rate requires a positive balance_cap")
 	}
 	if cfg.DailyNodeCap > 0 && cfg.DailyPerNode > (math.MaxInt64-cfg.DailyBase)/int64(cfg.DailyNodeCap) {
 		return fmt.Errorf("allowance daily ceiling overflows")
 	}
-	if cfg.PolicyIssuer != "" || cfg.DailyBase != 0 || cfg.DailyPerNode != 0 || cfg.PublicTrial != 0 {
+	if cfg.PolicyIssuer != "" || cfg.DailyBase != 0 || cfg.DailyPerNode != 0 || cfg.PublicTrial != 0 || cfg.BalanceCap != 0 || cfg.HostingHourlyRate != 0 {
 		id, err := uuid.Parse(cfg.PolicyIssuer)
 		if !cfg.Enabled || err != nil || id == uuid.Nil {
 			return fmt.Errorf("automatic allowances require enabled=true and a valid policy_issuer account UUID")
@@ -66,3 +76,5 @@ func (cfg AllowanceConfig) Validate() error {
 }
 
 func (cfg AllowanceConfig) Automatic() bool { return cfg.Enabled && cfg.PolicyIssuer != "" }
+
+func (cfg AllowanceConfig) ManagedCredits() bool { return cfg.Automatic() && cfg.BalanceCap > 0 }

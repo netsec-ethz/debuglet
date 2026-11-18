@@ -13,7 +13,7 @@ import (
 // These are real packaged schemas, not files with a changed version marker.
 // Startup must refuse them before any of the newly compiled queries can run.
 func TestDispatcherRolloutRequiresExplicitUpgrade(t *testing.T) {
-	for _, version := range []int64{35, 36, 37} {
+	for _, version := range []int64{35, 36, 37, 38} {
 		t.Run(strconv.FormatInt(version, 10), func(t *testing.T) {
 			path := fixture(t, Dispatcher, version)
 			before := digest(t, path)
@@ -29,7 +29,7 @@ func TestDispatcherRolloutRequiresExplicitUpgrade(t *testing.T) {
 				t.Fatalf("schema %d startup: %v", version, err)
 			}
 			unchanged(t, path, before)
-			if got, err := Upgrade(t.Context(), Dispatcher, path); err != nil || got != 38 {
+			if got, err := Upgrade(t.Context(), Dispatcher, path); err != nil || got != MinimumDispatcherVersion {
 				t.Fatalf("upgrade schema %d: version=%d err=%v", version, got, err)
 			}
 			db, err = OpenForService(t.Context(), Dispatcher, path)
@@ -47,7 +47,7 @@ func TestDispatcherRolloutRequiresExplicitUpgrade(t *testing.T) {
 	}
 }
 
-var rolloutTables = []string{"allowance_eligibility", "hosting_approvals", "allowance_periods", "prepaid_topups", "personal_funding", "hosting_awards", "native_gas_reservations", "assistant_keys"}
+var rolloutTables = []string{"allowance_eligibility", "hosting_approvals", "allowance_periods", "prepaid_topups", "personal_funding", "hosting_awards", "native_gas_reservations", "assistant_keys", "allowance_hosting"}
 
 func TestDispatcherRolloutDetectsIncompleteCurrentSchema(t *testing.T) {
 	path := fixture(t, Dispatcher, 0)

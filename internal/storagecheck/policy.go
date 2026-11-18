@@ -31,9 +31,10 @@ const (
 // an older database can then no longer answer them and must be refused instead
 // of failing later during service.
 const (
-	// Schemas 36–38 add daily allowances, native SUI credits and assistant keys.
+	// Schemas 36–39 add allowances, native SUI credits, assistant keys and
+	// observed hosting-time credit cursors.
 	// The dispatcher queries these tables; earlier schemas require an upgrade.
-	MinimumDispatcherVersion int64 = 38
+	MinimumDispatcherVersion int64 = 39
 	MinimumExecutorVersion   int64 = 9
 )
 
@@ -83,6 +84,7 @@ func PolicyFor(role Role) (Policy, error) {
 			"allowance_eligibility":      {"user_id", "researcher", "approved_by", "updated_at"},
 			"hosting_approvals":          {"executor_id", "user_id", "approved_by", "updated_at"},
 			"allowance_periods":          {"user_id", "period", "researcher", "eligible_nodes", "ceiling", "hosting_bonus", "granted", "decided_at"},
+			"allowance_hosting":          {"executor_id", "user_id", "incarnation", "session_id", "fingerprint", "observed_at", "observed_seconds", "credited", "remainder"},
 			"prepaid_topups":             {"transaction_id", "user_id", "purpose", "idempotency_key", "refund_address", "network", "coin_type", "intent_json"},
 			"personal_funding":           {"transaction_id", "user_id", "currency", "network"},
 			"hosting_awards":             {"executor_id", "day", "user_id", "amount", "network"},

@@ -162,6 +162,9 @@ func (s *Store) Revoke(ctx context.Context, executorID string) (Revoked, error) 
 		if err != nil {
 			return fmt.Errorf("delete executor enrollment: %w", err)
 		}
+		if err := q.ResetHostingCreditObservation(ctx, executorID); err != nil {
+			return fmt.Errorf("close hosting credit interval: %w", err)
+		}
 		removed = Revoked{Binding: binding != 0, Tokens: tokens}
 		return nil
 	})
