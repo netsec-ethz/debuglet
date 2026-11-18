@@ -48,6 +48,10 @@ func defaultCommandTimeout(command string, args ...string) time.Duration {
 		return 0
 	}
 	switch command {
+	case "login":
+		// Browser approval expires after 10 minutes; allow time to start it.
+		// The polling loop still honors the server's earlier expiry.
+		return 11 * time.Minute
 	case "up":
 		return 0 // Foreground lifetime; startup has a separate bound.
 	case "service", "drain", "backup", "restore":

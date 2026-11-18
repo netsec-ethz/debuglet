@@ -353,7 +353,7 @@ For example: `dbl --dispatcher research logs --after 10 --limit 100 ID`.
 | `--endpoint URL` | One-off endpoint; does not use a saved connection's credential. Use a saved connection for login. |
 | `--config FILE` | Connections file; Linux defaults to `$XDG_CONFIG_HOME/debuglet/config.json` or `$HOME/.config/debuglet/config.json`. |
 | `--output human\|json` | `human`; use `json` for scripts. |
-| `--timeout DURATION` | Whole-command deadline: normally `30s`, `60s` for `demo`, and `5m` for `service`/`drain`/`verify`. Foreground `up`, `dispatcher up` and `executor up` have no whole-command deadline unless supplied. |
+| `--timeout DURATION` | Whole-command deadline: normally `30s`, `60s` for `demo`, `5m` for `service`/`drain`/`verify`, and `11m` for `login` (browser approval still expires at the server's deadline, normally 10 minutes). An explicit value overrides the command default. Foreground `up`, `dispatcher up` and `executor up` have no whole-command deadline unless supplied. |
 
 ### Submit and read measurements
 
