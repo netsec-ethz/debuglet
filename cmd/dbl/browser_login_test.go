@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,36 @@ import (
 	"github.com/netsec-ethz/debuglet/internal/connections"
 	"github.com/netsec-ethz/debuglet/pkg/client"
 )
+
+func TestBrowserLoginCommandTimeout(t *testing.T) {
+	t.Setenv(accountKeyEnv, "")
+	previous := newClient
+	t.Cleanup(func() { newClient = previous })
+	for _, tc := range []struct {
+		args []string
+		want time.Duration
+	}{
+		{[]string{"login"}, 11 * time.Minute},
+		{[]string{"login", "--browser"}, 11 * time.Minute},
+		{[]string{"login", "--no-browser"}, 11 * time.Minute},
+		{[]string{"--timeout", "7s", "login", "--browser"}, 7 * time.Second},
+		{[]string{"--timeout", "15m", "login", "--no-browser"}, 15 * time.Minute},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			var timeout time.Duration
+			newClient = func(_ string, options client.Options) (*client.Client, error) {
+				timeout = options.RequestTimeout
+				return nil, errors.New("stop before browser login")
+			}
+			args := append([]string{"--endpoint", "https://dispatcher.example"}, tc.args...)
+			code, out, errout := runCLI(t.Context(), args...)
+			assertCode(t, code, exitUsage, out, errout)
+			if timeout != tc.want {
+				t.Fatalf("login timeout = %s, want %s", timeout, tc.want)
+			}
+		})
+	}
+}
 
 func TestBrowserLoginHeadlessStoresOnlyLocalCredential(t *testing.T) {
 	for _, storage := range []string{"file", "system"} {
